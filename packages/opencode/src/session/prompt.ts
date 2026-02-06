@@ -46,6 +46,8 @@ import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
 import { Truncate } from "@/tool/truncation"
+import { Config } from "@/config/config"
+import { Auth } from "@/auth"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1216,12 +1218,17 @@ export namespace SessionPrompt {
     // Original logic when experimental plan mode is disabled
     if (!Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE) {
       if (input.agent.name === "plan") {
+        const plan = Session.plan(input.session)
+        const exists = await Bun.file(plan).exists()
+        const reminder = input.agent.plan_reminder
+        if (reminder !== undefined && reminder.trim().length === 0) return input.messages
+        const text = reminder ? applyPlanTemplate(reminder, plan, exists) : PROMPT_PLAN
         userMessage.parts.push({
           id: Identifier.ascending("part"),
           messageID: userMessage.info.id,
           sessionID: userMessage.info.sessionID,
           type: "text",
-          text: PROMPT_PLAN,
+          text,
           synthetic: true,
         })
       }
@@ -1266,16 +1273,44 @@ export namespace SessionPrompt {
       const plan = Session.plan(input.session)
       const exists = await Bun.file(plan).exists()
       if (!exists) await fs.mkdir(path.dirname(plan), { recursive: true })
+      const reminder = input.agent.plan_reminder
+      if (reminder !== undefined && reminder.trim().length === 0) return input.messages
+      const text = reminder ? applyPlanTemplate(reminder, plan, exists) : defaultPlanReminder(plan, exists)
       const part = await Session.updatePart({
         id: Identifier.ascending("part"),
         messageID: userMessage.info.id,
         sessionID: userMessage.info.sessionID,
         type: "text",
-        text: `<system-reminder>
+        text,
+        synthetic: true,
+      })
+      userMessage.parts.push(part)
+      return input.messages
+    }
+    return input.messages
+  }
+
+  function planHint(plan: string, exists: boolean) {
+    return exists
+      ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.`
+      : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`
+  }
+
+  function applyPlanTemplate(text: string, plan: string, exists: boolean) {
+    const hint = planHint(plan, exists)
+    return text
+      .replaceAll("{plan_hint}", hint)
+      .replaceAll("{{plan_hint}}", hint)
+      .replaceAll("{plan}", plan)
+      .replaceAll("{{plan}}", plan)
+  }
+
+  function defaultPlanReminder(plan: string, exists: boolean) {
+    return `<system-reminder>
 Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supersedes any other instructions you have received.
 
 ## Plan File Info:
-${exists ? `A plan file already exists at ${plan}. You can read it and make incremental edits using the edit tool.` : `No plan file exists yet. You should create your plan at ${plan} using the write tool.`}
+${planHint(plan, exists)}
 You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
 ## Plan Workflow
@@ -1340,13 +1375,7 @@ This is critical - your turn should only end with either asking the user a quest
 **Important:** Use question tool to clarify requirements/approach, use plan_exit to request plan approval. Do NOT use question tool to ask "Is this plan okay?" - that's what plan_exit does.
 
 NOTE: At any point in time through this workflow you should feel free to ask the user questions or clarifications. Don't make large assumptions about user intent. The goal is to present a well researched plan to the user, and tie any loose ends before implementation begins.
-</system-reminder>`,
-        synthetic: true,
-      })
-      userMessage.parts.push(part)
-      return input.messages
-    }
-    return input.messages
+</system-reminder>`
   }
 
   export const ShellInput = z.object({
@@ -1619,10 +1648,172 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   export async function command(input: CommandInput) {
     log.info("command", input)
     const command = await Command.get(input.command)
-    const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
-
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
+
+    if (command.name === Command.Default.PROMPT) {
+      const templateCommand = await command.template
+      const templateParts = await resolvePromptParts(templateCommand)
+      const parts = [...templateParts, ...(input.parts ?? [])]
+
+      const config = await Config.get()
+      let agentName = input.agent ?? (await Agent.defaultAgent())
+      let modelRef = input.model ? Provider.parseModel(input.model) : await lastModel(input.sessionID)
+
+      if (args[0]) {
+        const maybeAgent = args[0].startsWith("@") ? args[0].slice(1) : args[0]
+        const agent = await Agent.get(maybeAgent)
+        if (agent) {
+          agentName = maybeAgent
+          args.shift()
+        }
+      }
+
+      if (args[0] && args[0].includes("/")) {
+        modelRef = Provider.parseModel(args[0])
+      }
+
+      const model = await Provider.getModel(modelRef.providerID, modelRef.modelID)
+      const agent = await Agent.get(agentName)
+      if (!agent) {
+        const available = await Agent.list().then((agents) => agents.filter((a) => !a.hidden).map((a) => a.name))
+        const hint = available.length ? ` Available agents: ${available.join(", ")}` : ""
+        const error = new NamedError.Unknown({ message: `Agent not found: "${agentName}".${hint}` })
+        Bus.publish(Session.Event.Error, {
+          sessionID: input.sessionID,
+          error: error.toObject(),
+        })
+        throw error
+      }
+
+      await Plugin.trigger(
+        "command.execute.before",
+        {
+          command: input.command,
+          sessionID: input.sessionID,
+          arguments: input.arguments,
+        },
+        { parts },
+      )
+
+      const userMessage = (await prompt({
+        sessionID: input.sessionID,
+        messageID: input.messageID,
+        model: modelRef,
+        agent: agentName,
+        parts,
+        variant: input.variant,
+        noReply: true,
+      })) as MessageV2.WithParts
+
+      const [provider, auth] = await Promise.all([Provider.getProvider(model.providerID), Auth.get(model.providerID)])
+      const isCodex = provider.id === "openai" && auth?.type === "oauth"
+      const providerPrompt = config.provider?.[modelRef.providerID]?.system_prompt
+      const promptHeader = providerPrompt ?? SystemPrompt.instructions()
+      const basePrompt =
+        agent.prompt ?? (isCodex ? promptHeader : providerPrompt ?? SystemPrompt.provider(model).join("\n"))
+      const environment = await SystemPrompt.environment(model)
+      const instructions = await InstructionPrompt.system()
+
+      const system = [
+        [basePrompt, ...environment, ...instructions].filter((x) => x).join("\n"),
+      ]
+      const lead = system[0]
+      const original = clone(system)
+      await Plugin.trigger("experimental.chat.system.transform", { sessionID: input.sessionID, model }, { system })
+      if (system.length === 0) {
+        system.push(...original)
+      }
+      if (system.length > 2 && system[0] === lead) {
+        const rest = system.slice(1)
+        system.length = 0
+        system.push(lead, rest.join("\n"))
+      }
+
+      const session = await Session.get(input.sessionID)
+      const plan = Session.plan(session)
+      const exists = await Bun.file(plan).exists()
+      const planReminder = (() => {
+        if (agent.name !== "plan") return
+        if (agent.plan_reminder !== undefined) {
+          if (!agent.plan_reminder.trim()) return
+          return applyPlanTemplate(agent.plan_reminder, plan, exists)
+        }
+        if (!Flag.OPENCODE_EXPERIMENTAL_PLAN_MODE) return PROMPT_PLAN
+        return defaultPlanReminder(plan, exists)
+      })()
+      const codex = isCodex ? promptHeader : undefined
+
+      const output = {
+        agent: agent.name,
+        model: modelRef,
+        base_prompt: basePrompt,
+        agent_prompt: agent.prompt,
+        provider_prompt: providerPrompt,
+        codex_instructions: codex,
+        environment,
+        instructions,
+        plan_reminder: planReminder,
+        system,
+      }
+      const wantsJson = args.some((arg) => arg === "--json" || arg === "json" || arg === "--debug" || arg === "debug")
+      const systemText =
+        system.length > 1
+          ? system.map((item, index) => `--- system ${index + 1} ---\n${item}`).join("\n\n")
+          : system[0] ?? ""
+      const codexText =
+        codex && agent.prompt ? `\n\n--- codex instructions ---\n${codex}` : ""
+      const planText = planReminder ? `\n\n--- plan reminder ---\n${planReminder}` : ""
+      const text = wantsJson
+        ? "```json\n" + JSON.stringify(output, null, 2) + "\n```"
+        : systemText + codexText + planText
+
+      const msg: MessageV2.Assistant = {
+        id: Identifier.ascending("message"),
+        sessionID: input.sessionID,
+        parentID: userMessage.info.id,
+        mode: agentName,
+        agent: agentName,
+        cost: 0,
+        path: {
+          cwd: Instance.directory,
+          root: Instance.worktree,
+        },
+        time: {
+          created: Date.now(),
+          completed: Date.now(),
+        },
+        role: "assistant",
+        tokens: {
+          input: 0,
+          output: 0,
+          reasoning: 0,
+          cache: { read: 0, write: 0 },
+        },
+        modelID: model.id,
+        providerID: model.providerID,
+      }
+      await Session.updateMessage(msg)
+      const part: MessageV2.Part = {
+        type: "text",
+        id: Identifier.ascending("part"),
+        messageID: msg.id,
+        sessionID: input.sessionID,
+        text,
+      }
+      await Session.updatePart(part)
+
+      Bus.publish(Command.Event.Executed, {
+        name: input.command,
+        sessionID: input.sessionID,
+        arguments: input.arguments,
+        messageID: msg.id,
+      })
+
+      return { info: msg, parts: [part] }
+    }
+
+    const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
 
     const templateCommand = await command.template
 

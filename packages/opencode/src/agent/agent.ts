@@ -40,6 +40,7 @@ export namespace Agent {
         .optional(),
       variant: z.string().optional(),
       prompt: z.string().optional(),
+      plan_reminder: z.string().optional(),
       options: z.record(z.string(), z.any()),
       steps: z.number().int().positive().optional(),
     })
@@ -218,6 +219,7 @@ export namespace Agent {
       if (value.model) item.model = Provider.parseModel(value.model)
       item.variant = value.variant ?? item.variant
       item.prompt = value.prompt ?? item.prompt
+      item.plan_reminder = value.plan_reminder ?? item.plan_reminder
       item.description = value.description ?? item.description
       item.temperature = value.temperature ?? item.temperature
       item.topP = value.top_p ?? item.topP

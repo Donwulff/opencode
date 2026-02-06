@@ -677,6 +677,10 @@ export namespace Config {
       temperature: z.number().optional(),
       top_p: z.number().optional(),
       prompt: z.string().optional(),
+      plan_reminder: z
+        .string()
+        .optional()
+        .describe("Override the plan mode reminder text shown when entering plan mode"),
       tools: z.record(z.string(), z.boolean()).optional().describe("@deprecated Use 'permission' field instead"),
       disable: z.boolean().optional(),
       description: z.string().optional().describe("Description of when to use the agent"),
@@ -709,6 +713,7 @@ export namespace Config {
         "model",
         "variant",
         "prompt",
+        "plan_reminder",
         "description",
         "temperature",
         "top_p",
@@ -992,6 +997,10 @@ export namespace Config {
         })
         .catchall(z.any())
         .optional(),
+      system_prompt: z
+        .string()
+        .optional()
+        .describe("Override system prompt for this provider when agent prompt is not set"),
     })
     .strict()
     .meta({

@@ -63,13 +63,15 @@ export namespace LLM {
       Auth.get(input.model.providerID),
     ])
     const isCodex = provider.id === "openai" && auth?.type === "oauth"
+    const providerPrompt = cfg.provider?.[input.model.providerID]?.system_prompt
+    const systemPrompt = providerPrompt ? [providerPrompt] : SystemPrompt.provider(input.model)
 
     const system = []
     system.push(
       [
         // use agent prompt otherwise provider prompt
         // For Codex sessions, skip SystemPrompt.provider() since it's sent via options.instructions
-        ...(input.agent.prompt ? [input.agent.prompt] : isCodex ? [] : SystemPrompt.provider(input.model)),
+        ...(input.agent.prompt ? [input.agent.prompt] : isCodex ? [] : systemPrompt),
         // any custom prompt passed into this call
         ...input.system,
         // any custom prompt from last user message
@@ -112,7 +114,7 @@ export namespace LLM {
       mergeDeep(variant),
     )
     if (isCodex) {
-      options.instructions = SystemPrompt.instructions()
+      options.instructions = providerPrompt ?? SystemPrompt.instructions()
     }
 
     const params = await Plugin.trigger(

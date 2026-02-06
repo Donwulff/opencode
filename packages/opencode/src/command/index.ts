@@ -54,6 +54,7 @@ export namespace Command {
   export const Default = {
     INIT: "init",
     REVIEW: "review",
+    PROMPT: "prompt",
   } as const
 
   const state = Instance.state(async () => {
@@ -78,6 +79,13 @@ export namespace Command {
         },
         subtask: true,
         hints: hints(PROMPT_REVIEW),
+      },
+      [Default.PROMPT]: {
+        name: Default.PROMPT,
+        description: "show resolved system prompt (add 'json' for details)",
+        source: "command",
+        template: "Show the resolved system prompt.",
+        hints: [],
       },
     }
 
