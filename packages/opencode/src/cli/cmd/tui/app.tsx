@@ -169,6 +169,8 @@ export function tui(input: {
         gatherStats: false,
         exitOnCtrlC: false,
         useKittyKeyboard: {},
+        useMouse: !Flag.OPENCODE_DISABLE_MOUSE,
+        enableMouseMovement: !Flag.OPENCODE_DISABLE_MOUSE,
         autoFocus: false,
         consoleOptions: {
           keyBindings: [{ name: "y", ctrl: true, action: "copy-selection" }],

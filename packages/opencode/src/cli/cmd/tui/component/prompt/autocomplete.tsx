@@ -481,9 +481,9 @@ export function Autocomplete(props: {
     })
   }
 
-  function hide() {
+  function hide(preserve = false) {
     const text = props.input().plainText
-    if (store.visible === "/" && !text.endsWith(" ") && text.startsWith("/")) {
+    if (!preserve && store.visible === "/" && !text.endsWith(" ") && text.startsWith("/")) {
       const cursor = props.input().logicalCursor
       props.input().deleteRange(0, 0, cursor.row, cursor.col)
       // Sync the prompt store immediately since onContentChange is async
@@ -563,6 +563,19 @@ export function Autocomplete(props: {
             return
           }
           if (name === "return") {
+            if (store.visible === "/") {
+              const text = props.input().plainText
+              const trim = text.trimEnd()
+              const end = props.input().cursorOffset === Bun.stringWidth(text)
+              if (end && trim === text && /^\/\S+$/.test(trim)) {
+                const cmd = trim.slice(1)
+                const isServer = sync.data.command.some((item) => item.name === cmd)
+                if (isServer) {
+                  hide(true)
+                  return
+                }
+              }
+            }
             select()
             e.preventDefault()
             return
