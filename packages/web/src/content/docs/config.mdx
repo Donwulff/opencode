@@ -260,6 +260,21 @@ Provider options can include `timeout` and `setCacheKey`:
 - `timeout` - Request timeout in milliseconds (default: 300000). Set to `false` to disable.
 - `setCacheKey` - Ensure a cache key is always set for designated provider.
 
+You can also set a provider-level system prompt that is used when an agent does not define its own prompt:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "local": {
+      "system_prompt": "{file:.opencode/llama4.txt}"
+    }
+  }
+}
+```
+
+`system_prompt` is applied as the base system prompt for that provider unless an agent prompt is explicitly set.
+
 You can also configure [local models](/docs/models#local). [Learn more](/docs/models).
 
 ---
@@ -337,6 +352,21 @@ You can configure specialized agents for specific tasks through the `agent` opti
 ```
 
 You can also define agents using markdown files in `~/.config/opencode/agents/` or `.opencode/agents/`. [Learn more here](/docs/agents).
+
+Plan agents can override the plan mode reminder text with `plan_reminder`:
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "agent": {
+    "plan": {
+      "plan_reminder": "{file:.opencode/plan-reminder.txt}"
+    }
+  }
+}
+```
+
+`plan_reminder` supports `{plan}` and `{plan_hint}` placeholders so the reminder can include the plan path or the default plan guidance text.
 
 ---
 
