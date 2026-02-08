@@ -85,6 +85,7 @@ export namespace Provider {
     autoload: boolean
     getModel?: CustomModelLoader
     options?: Record<string, any>
+    models?: Record<string, Model>
   }>
 
   const CUSTOM_LOADERS: Record<string, CustomLoader> = {
@@ -605,7 +606,7 @@ export namespace Provider {
             baseURL: apiURL,
           },
           async getModel(sdk: any, modelID: string) {
-            return sdk.chat(modelID)
+            return sdk.languageModel(modelID)
           },
           models,
         }
@@ -998,6 +999,7 @@ export namespace Provider {
         if (result.getModel) modelLoaders[providerID] = result.getModel
         const opts = result.options ?? {}
         const patch: Partial<Info> = providers[providerID] ? { options: opts } : { source: "custom", options: opts }
+        if (result.models) patch.models = result.models
         mergeProvider(providerID, patch)
       }
     }
