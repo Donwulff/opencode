@@ -1,5 +1,7 @@
 - Fast file pattern matching tool that works with any codebase size
 - Supports glob patterns like "**/*.js" or "src/**/*.ts"
+- Matching is case-sensitive by default; use `case_insensitive: true` to ignore case
+- If the exact extension is unknown, use patterns like "**/config.*" or "**/config*"
 - Returns matching file paths sorted by modification time
 - Use this tool when you need to find files by name patterns
 - When you are doing an open-ended search that may require multiple rounds of globbing and grepping, use the Task tool instead

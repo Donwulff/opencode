@@ -206,6 +206,7 @@ export namespace Ripgrep {
   export async function* files(input: {
     cwd: string
     glob?: string[]
+    iglob?: string[]
     hidden?: boolean
     follow?: boolean
     maxDepth?: number
@@ -220,6 +221,11 @@ export namespace Ripgrep {
     if (input.glob) {
       for (const g of input.glob) {
         args.push(`--glob=${g}`)
+      }
+    }
+    if (input.iglob) {
+      for (const g of input.iglob) {
+        args.push(`--iglob=${g}`)
       }
     }
 

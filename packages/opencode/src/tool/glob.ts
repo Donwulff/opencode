@@ -10,6 +10,10 @@ export const GlobTool = Tool.define("glob", {
   description: DESCRIPTION,
   parameters: z.object({
     pattern: z.string().describe("The glob pattern to match files against"),
+    case_insensitive: z
+      .boolean()
+      .optional()
+      .describe("Match case-insensitively using --iglob"),
     path: z
       .string()
       .optional()
@@ -35,10 +39,11 @@ export const GlobTool = Tool.define("glob", {
     const limit = 100
     const files = []
     let truncated = false
+    const matches = params.case_insensitive ? { iglob: [params.pattern] } : { glob: [params.pattern] }
     for await (const file of Ripgrep.files({
       cwd: search,
-      glob: [params.pattern],
       signal: ctx.abort,
+      ...matches,
     })) {
       if (files.length >= limit) {
         truncated = true
