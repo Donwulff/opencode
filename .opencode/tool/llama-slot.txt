@@ -1,0 +1,9 @@
+Manage llama.cpp slot cache via its HTTP API.
+
+Usage:
+- base_url must point to the llama-server root (do NOT include /v1). Example: http://127.0.0.1:8080
+- action: list | save | restore | erase
+- slot is required for save/restore/erase
+- filename is required for save/restore and is saved relative to --slot-save-path on the server
+- When action=list, you can set fail_on_no_slot=true to get 503 when all slots are busy
+- The server must be started with --slots and --slot-save-path for save/restore to work
