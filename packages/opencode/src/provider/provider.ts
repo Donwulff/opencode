@@ -528,6 +528,92 @@ export namespace Provider {
         },
       }
     },
+    "llama.cpp": async (input) => {
+      const config = await Config.get()
+      const providerConfig = config.provider?.["llama.cpp"]
+      const configURL =
+        providerConfig?.options?.baseURL ??
+        providerConfig?.options?.api ??
+        providerConfig?.api
+
+      if (!configURL) return { autoload: false }
+
+      const apiURL = iife(() => {
+        const trimmed = configURL.replace(/\/+$/, "")
+        return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`
+      })
+
+      try {
+        const response = await fetch(`${apiURL}/models`, {
+          headers: {
+            "User-Agent": Installation.USER_AGENT,
+          },
+        })
+
+        if (!response.ok) {
+          log.warn("Failed to fetch llama.cpp models", {
+            status: response.status,
+            url: `${baseURL}/v1/models`,
+          })
+          return { autoload: false }
+        }
+
+        const data = await response.json()
+        const modelsArray = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : []
+
+        const models: Record<string, Model> = {}
+
+        for (const model of modelsArray) {
+          const modelID = model.id ?? model.name ?? model.model
+          if (!modelID) continue
+          const context = iife(() => {
+            const ctx = Number(model?.meta?.n_ctx_train)
+            return Number.isFinite(ctx) && ctx > 0 ? ctx : 128000
+          })
+          models[modelID] = {
+            id: modelID,
+            providerID: "llama.cpp",
+            name: model.name ?? model.model ?? modelID.split("/").pop() ?? modelID,
+            family: "",
+            api: {
+              id: modelID,
+              url: apiURL,
+              npm: "@ai-sdk/openai-compatible",
+            },
+            status: "active",
+            headers: {},
+            options: {},
+            cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+            limit: { context, output: 4096 },
+            capabilities: {
+              temperature: true,
+              reasoning: false,
+              attachment: false,
+              toolcall: true,
+              input: { text: true, audio: false, image: false, video: false, pdf: false },
+              output: { text: true, audio: false, image: false, video: false, pdf: false },
+              interleaved: false,
+            },
+            variants: {},
+            release_date: new Date().toISOString().split("T")[0],
+          }
+        }
+
+        return {
+          autoload: true,
+          options: {
+            baseURL: apiURL,
+          },
+          async getModel(sdk: any, modelID: string) {
+            return sdk.chat(modelID)
+          },
+          models,
+        }
+      } catch (error) {
+        log.warn("Failed to discover llama.cpp models", { error })
+        return { autoload: false }
+      }
+    },
   }
 
   export const Model = z

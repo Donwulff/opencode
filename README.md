@@ -111,6 +111,24 @@ Learn more about [agents](https://opencode.ai/docs/agents).
 
 For more info on how to configure OpenCode, [**head over to our docs**](https://opencode.ai/docs).
 
+### Local Models (llama.cpp)
+
+If you're running a local `llama.cpp` server with the OpenAI-compatible API, OpenCode can auto-discover models from `/v1/models`.
+
+```json
+{
+  "provider": {
+    "llama.cpp": {
+      "options": {
+        "baseURL": "http://localhost:8080"
+      }
+    }
+  }
+}
+```
+
+After starting OpenCode, run `opencode models llama.cpp` to confirm discovery.
+
 ### Contributing
 
 If you're interested in contributing to OpenCode, please read our [contributing docs](./CONTRIBUTING.md) before submitting a pull request.
