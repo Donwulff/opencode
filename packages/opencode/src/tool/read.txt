@@ -4,7 +4,8 @@ Assume this tool is able to read all files on the machine. If the User provides 
 Usage:
 - The filePath parameter must be an absolute path, not a relative path
 - By default, it reads up to 2000 lines starting from the beginning of the file
-- You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters
+- Use a line offset and limit for long files; the tool prints a status line after the file block with the next offset to use
+- If you omit offset and re-read the same file after a truncated response, the tool will auto-advance to the next chunk and say which offset it used
 - Any lines longer than 2000 characters will be truncated
 - Results are returned using cat -n format, with line numbers starting at 1
 - You have the capability to call multiple tools in a single response. It is always better to speculatively read multiple files as a batch that are potentially useful.

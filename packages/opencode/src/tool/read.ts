@@ -13,6 +13,10 @@ import { InstructionPrompt } from "../session/instruction"
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
 const MAX_BYTES = 50 * 1024
+const seen = new Map<
+  string,
+  { requested: number; limit: number; truncated: boolean; cursor: number; explicitOffset: boolean }
+>()
 
 export const ReadTool = Tool.define("read", {
   description: DESCRIPTION,
@@ -94,44 +98,64 @@ export const ReadTool = Tool.define("read", {
     if (isBinary) throw new Error(`Cannot read binary file: ${filepath}`)
 
     const limit = params.limit ?? DEFAULT_READ_LIMIT
-    const offset = params.offset || 0
+    const hasOffset = params.offset !== undefined
+    const offset = hasOffset ? params.offset : 0
+    const key = `${ctx.sessionID}:${filepath}`
+    const prev = seen.get(key)
     const lines = await file.text().then((text) => text.split("\n"))
 
-    const raw: string[] = []
-    let bytes = 0
-    let truncatedByBytes = false
-    for (let i = offset; i < Math.min(lines.length, offset + limit); i++) {
-      const line = lines[i].length > MAX_LINE_LENGTH ? lines[i].substring(0, MAX_LINE_LENGTH) + "..." : lines[i]
-      const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
-      if (bytes + size > MAX_BYTES) {
-        truncatedByBytes = true
-        break
+    const slice = (start: number) => {
+      const raw: string[] = []
+      let bytes = 0
+      let truncatedByBytes = false
+      for (let i = start; i < Math.min(lines.length, start + limit); i++) {
+        const line = lines[i].length > MAX_LINE_LENGTH ? lines[i].substring(0, MAX_LINE_LENGTH) + "..." : lines[i]
+        const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
+        if (bytes + size > MAX_BYTES) {
+          truncatedByBytes = true
+          break
+        }
+        raw.push(line)
+        bytes += size
       }
-      raw.push(line)
-      bytes += size
+      const lastReadLine = start + raw.length
+      const totalLines = lines.length
+      const hasMoreLines = totalLines > lastReadLine
+      const truncated = hasMoreLines || truncatedByBytes
+      return {
+        raw,
+        truncatedByBytes,
+        lastReadLine,
+        totalLines,
+        hasMoreLines,
+        truncated,
+      }
     }
 
-    const content = raw.map((line, index) => {
-      return `${(index + offset + 1).toString().padStart(5, "0")}| ${line}`
+    const first = slice(offset)
+    const repeat = !hasOffset && prev && prev.truncated && !prev.explicitOffset && first.truncated
+    const start = repeat ? prev.cursor : offset
+    const result = repeat ? slice(start) : first
+    const content = result.raw.map((line, index) => {
+      return `${(index + start + 1).toString().padStart(5, "0")}| ${line}`
     })
-    const preview = raw.slice(0, 20).join("\n")
+    const preview = result.raw.slice(0, 20).join("\n")
 
     let output = "<file>\n"
     output += content.join("\n")
-
-    const totalLines = lines.length
-    const lastReadLine = offset + raw.length
-    const hasMoreLines = totalLines > lastReadLine
-    const truncated = hasMoreLines || truncatedByBytes
-
-    if (truncatedByBytes) {
-      output += `\n\n(Output truncated at ${MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${lastReadLine})`
-    } else if (hasMoreLines) {
-      output += `\n\n(File has more lines. Use 'offset' parameter to read beyond line ${lastReadLine})`
-    } else {
-      output += `\n\n(End of file - total ${totalLines} lines)`
-    }
     output += "\n</file>"
+
+    const status = result.truncatedByBytes
+      ? `Output truncated at ${MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${result.lastReadLine}.`
+      : result.hasMoreLines
+        ? `File has more lines. Use 'offset' parameter to read beyond line ${result.lastReadLine}.`
+        : `End of file - total ${result.totalLines} lines.`
+    const next = result.truncated ? `Next read: set offset to ${result.lastReadLine} (0-based).` : ""
+    const advanced = repeat ? `Offset not given; continuing from offset ${start} (0-based).` : ""
+
+    output += `\n\n(${status})`
+    if (next) output += `\n${next}`
+    if (advanced) output += `\n${advanced}`
 
     // just warms the lsp client
     LSP.touchFile(filepath, false)
@@ -141,12 +165,20 @@ export const ReadTool = Tool.define("read", {
       output += `\n\n<system-reminder>\n${instructions.map((i) => i.content).join("\n\n")}\n</system-reminder>`
     }
 
+    seen.set(key, {
+      requested: offset,
+      limit,
+      truncated: result.truncated,
+      cursor: result.lastReadLine,
+      explicitOffset: hasOffset,
+    })
+
     return {
       title,
       output,
       metadata: {
         preview,
-        truncated,
+        truncated: result.truncated,
         ...(instructions.length > 0 && { loaded: instructions.map((i) => i.filepath) }),
       },
     }
