@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$root"
+
+echo "Updating repository..."
+if ! git pull --no-rebase; then
+  if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+    echo "Merge in progress with conflicts."
+  else
+    echo "git pull failed. Resolve and re-run."
+    exit 1
+  fi
+fi
+
+conflicts=$(git diff --name-only --diff-filter=U || true)
+if [ -n "$conflicts" ]; then
+  echo "Conflicts detected:"
+  echo "$conflicts"
+  while [ -n "$conflicts" ]; do
+    read -rp "Resolve conflicts, then press Enter to continue (Ctrl+C to abort)..." _
+    conflicts=$(git diff --name-only --diff-filter=U || true)
+    if [ -n "$conflicts" ]; then
+      echo "Still conflicted:"
+      echo "$conflicts"
+    fi
+  done
+fi
+
+echo "Building opencode..."
+bun run --cwd packages/opencode script/build.ts --single
+
+disable_mouse="${OPENCODE_DISABLE_MOUSE:-1}"
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --mouse)
+      disable_mouse=0
+      ;;
+    --no-mouse)
+      disable_mouse=1
+      ;;
+    *)
+      args+=("$arg")
+      ;;
+  esac
+done
+if [ ${#args[@]} -eq 0 ]; then
+  args=(--continue)
+fi
+
+OPENCODE_DISABLE_MOUSE="$disable_mouse" ./packages/opencode/dist/opencode-linux-x64/bin/opencode "${args[@]}"
