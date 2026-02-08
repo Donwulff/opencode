@@ -5,12 +5,36 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
 
 echo "Updating repository..."
-if ! git pull --no-rebase; then
+branch="$(git rev-parse --abbrev-ref HEAD)"
+if ! git remote get-url upstream >/dev/null 2>&1; then
+  git remote add upstream https://github.com/anomalyco/opencode.git
+fi
+
+git fetch upstream
+upstream_ref="upstream/${branch}"
+if ! git show-ref --verify --quiet "refs/remotes/${upstream_ref}"; then
+  upstream_ref="upstream/dev"
+fi
+
+if ! git merge --no-edit "${upstream_ref}"; then
   if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
     echo "Merge in progress with conflicts."
   else
-    echo "git pull failed. Resolve and re-run."
+    echo "git merge ${upstream_ref} failed. Resolve and re-run."
     exit 1
+  fi
+fi
+
+git fetch origin
+origin_ref="origin/${branch}"
+if git show-ref --verify --quiet "refs/remotes/${origin_ref}"; then
+  if ! git merge --no-edit "${origin_ref}"; then
+    if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+      echo "Merge in progress with conflicts."
+    else
+      echo "git merge ${origin_ref} failed. Resolve and re-run."
+      exit 1
+    fi
   fi
 fi
 
