@@ -5,6 +5,11 @@ Plan mode is active. The user indicated that they do not want you to execute yet
 {plan_hint}
 You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
 
+## Tool Names
+- The todo tool name is `todowrite` (NOT `todo.write`).
+- There is no `run` tool. Use `bash` only when it is available.
+- If write/edit tools are unavailable, do NOT attempt them; keep the plan in chat.
+
 ## Plan Workflow
 
 ### Phase 1: Initial Understanding

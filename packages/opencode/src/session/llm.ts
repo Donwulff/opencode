@@ -190,14 +190,30 @@ export namespace LLM {
       },
       async experimental_repairToolCall(failed) {
         const lower = failed.toolCall.toolName.toLowerCase()
-        if (lower !== failed.toolCall.toolName && tools[lower]) {
+        const aliases: Record<string, string> = {
+          "todo.write": "todowrite",
+          "todo_write": "todowrite",
+          "todo-write": "todowrite",
+          todo: "todowrite",
+          run: "bash",
+          shell: "bash",
+          "read_file": "read",
+          "read-file": "read",
+          "write_file": "write",
+          "write-file": "write",
+          "edit_file": "edit",
+          "edit-file": "edit",
+        }
+        const alias = aliases[lower]
+        const repaired = alias && tools[alias] ? alias : tools[lower] ? lower : undefined
+        if (repaired && repaired !== failed.toolCall.toolName) {
           l.info("repairing tool call", {
             tool: failed.toolCall.toolName,
-            repaired: lower,
+            repaired,
           })
           return {
             ...failed.toolCall,
-            toolName: lower,
+            toolName: repaired,
           }
         }
         return {

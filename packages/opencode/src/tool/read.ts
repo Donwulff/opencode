@@ -141,7 +141,9 @@ export const ReadTool = Tool.define("read", {
     })
     const preview = result.raw.slice(0, 20).join("\n")
 
-    let output = "<file>\n"
+    const lineStart = start + 1
+    const lineEnd = start + Math.max(result.raw.length, 1)
+    let output = `<file-header>\nLines ${lineStart}-${lineEnd} (1-based, absolute). Use offset=(line-1) to read a specific line.\n</file-header>\n<file>\n`
     output += content.join("\n")
     output += "\n</file>"
 
@@ -151,7 +153,7 @@ export const ReadTool = Tool.define("read", {
         ? `File has more lines. Use 'offset' parameter to read beyond line ${result.lastReadLine}.`
         : `End of file - total ${result.totalLines} lines.`
     const next = result.truncated ? `Next read: set offset to ${result.lastReadLine} (0-based).` : ""
-    const advanced = repeat ? `Offset not given; continuing from offset ${start} (0-based).` : ""
+    const advanced = repeat ? `SYSTEM NOTICE: Offset not given; continuing from offset ${start} (0-based).` : ""
 
     output += `\n\n(${status})`
     if (next) output += `\n${next}`
