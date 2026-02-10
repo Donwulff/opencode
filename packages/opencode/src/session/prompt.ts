@@ -1745,8 +1745,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const isCodex = provider.id === "openai" && auth?.type === "oauth"
       const providerPrompt = config.provider?.[modelRef.providerID]?.system_prompt
       const promptHeader = providerPrompt ?? SystemPrompt.instructions()
-      const basePrompt =
-        agent.prompt ?? (isCodex ? promptHeader : providerPrompt ?? SystemPrompt.provider(model).join("\n"))
+      const basePrompt = agent.prompt ?? (isCodex ? "" : providerPrompt ?? SystemPrompt.provider(model).join("\n"))
       const environment = await SystemPrompt.environment(model)
       const instructions = await InstructionPrompt.system()
 
@@ -1796,8 +1795,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         system.length > 1
           ? system.map((item, index) => `--- system ${index + 1} ---\n${item}`).join("\n\n")
           : system[0] ?? ""
-      const codexText =
-        codex && agent.prompt ? `\n\n--- codex instructions ---\n${codex}` : ""
+      const codexText = codex ? `\n\n--- codex instructions ---\n${codex}` : ""
       const planText = planReminder ? `\n\n--- plan reminder ---\n${planReminder}` : ""
       const text = wantsJson
         ? "```json\n" + JSON.stringify(output, null, 2) + "\n```"
