@@ -1,8 +1,15 @@
 ---
 description: Extract non-obvious learnings from session to AGENTS.md files to build codebase understanding
+agent: build
 ---
 
 Analyze this session and extract non-obvious learnings to add to AGENTS.md files.
+
+Hard scope rule:
+
+- Only update `AGENTS.md` files.
+- Do not implement features, refactor code, run migrations, or revert/reset existing changes.
+- If a useful learning would require non-`AGENTS.md` edits, report it instead of making those edits.
 
 AGENTS.md files can exist at any directory level, not just the project root. When an agent reads a file, any AGENTS.md in parent directories are automatically loaded into the context of the tool read. Place learnings as close to the relevant code as possible:
 

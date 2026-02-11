@@ -17,6 +17,7 @@ import { Filesystem } from "../util/filesystem"
 import { Instance } from "../project/instance"
 import { Snapshot } from "@/snapshot"
 import { assertExternalDirectory } from "./external-directory"
+import { assertLearnPath } from "./command-guard"
 
 const MAX_DIAGNOSTICS_PER_FILE = 20
 
@@ -42,6 +43,7 @@ export const EditTool = Tool.define("edit", {
     }
 
     const filePath = path.isAbsolute(params.filePath) ? params.filePath : path.join(Instance.directory, params.filePath)
+    assertLearnPath(ctx, filePath)
     await assertExternalDirectory(ctx, filePath)
 
     let diff = ""

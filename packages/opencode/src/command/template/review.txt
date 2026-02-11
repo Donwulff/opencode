@@ -6,6 +6,16 @@ Input: $ARGUMENTS
 
 ---
 
+## Hard Rule
+
+This is review-only work. Do not modify files, do not create commits, and do not run mutating git or shell commands.
+
+- Never call `write`, `edit`, `multiedit`, `apply_patch`, or any tool that changes files.
+- Never run mutating git commands (`reset`, `restore`, `checkout`, `stash`, `clean`, `commit`, `rebase`, `merge`, `push`, etc.).
+- If you need additional context, gather it with read-only commands and read/search tools only.
+
+---
+
 ## Determining What to Review
 
 Based on the input provided, determine which type of review to perform:

@@ -100,6 +100,7 @@ export namespace SessionPrompt {
       ),
     system: z.string().optional(),
     variant: z.string().optional(),
+    command: z.string().optional(),
     parts: z.array(
       z.discriminatedUnion("type", [
         MessageV2.TextPart.omit({
@@ -683,12 +684,13 @@ export namespace SessionPrompt {
     using _ = log.time("resolveTools")
     const tools: Record<string, AITool> = {}
 
+    const command = [...input.messages].reverse().find((item) => item.info.role === "user")?.info.command
     const context = (args: any, options: ToolCallOptions): Tool.Context => ({
       sessionID: input.session.id,
       abort: options.abortSignal!,
       messageID: input.processor.message.id,
       callID: options.toolCallId,
-      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck },
+      extra: { model: input.model, bypassAgentCheck: input.bypassAgentCheck, command },
       agent: input.agent.name,
       messages: input.messages,
       metadata: async (val: { title?: string; metadata?: any }) => {
@@ -873,6 +875,7 @@ export namespace SessionPrompt {
       model,
       system: input.system,
       variant,
+      command: input.command,
     }
     using _ = defer(() => InstructionPrompt.clear(info.id))
 
@@ -1735,6 +1738,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         messageID: input.messageID,
         model: modelRef,
         agent: agentName,
+        command: input.command,
         parts,
         variant: input.variant,
         noReply: true,
@@ -1969,6 +1973,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       messageID: input.messageID,
       model: userModel,
       agent: userAgent,
+      command: input.command,
       parts,
       variant: input.variant,
     })) as MessageV2.WithParts

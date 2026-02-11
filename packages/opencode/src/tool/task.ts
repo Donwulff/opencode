@@ -10,6 +10,7 @@ import { iife } from "@/util/iife"
 import { defer } from "@/util/defer"
 import { Config } from "../config/config"
 import { PermissionNext } from "@/permission/next"
+import { assertLearnTask } from "./command-guard"
 
 const parameters = z.object({
   description: z.string().describe("A short (3-5 words) description of the task"),
@@ -43,6 +44,7 @@ export const TaskTool = Tool.define("task", async (ctx) => {
     description,
     parameters,
     async execute(params: z.infer<typeof parameters>, ctx) {
+      assertLearnTask(ctx)
       const config = await Config.get()
 
       // Skip permission check when user explicitly invoked via @ or command subtask
