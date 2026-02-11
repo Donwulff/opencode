@@ -31,6 +31,8 @@ import { Event } from "../server/event"
 import { PackageRegistry } from "@/bun/registry"
 import { proxied } from "@/util/proxied"
 import { iife } from "@/util/iife"
+import { auditLogger, setAuditLogEnabled } from "@/util/audit"
+import { SecurityConfig, validateUrlFromConfig } from "@/util/network"
 
 export namespace Config {
   const ModelId = z.string().meta({ $ref: "https://models.dev/model-schema.json#/$defs/Model" })
@@ -236,6 +238,10 @@ export namespace Config {
     }
 
     result.plugin = deduplicatePlugins(result.plugin ?? [])
+
+    if (result.security?.audit_log_enabled !== undefined) {
+      setAuditLogEnabled(result.security.audit_log_enabled)
+    }
 
     return {
       config: result,
@@ -1093,6 +1099,7 @@ export namespace Config {
         .record(z.string(), Provider)
         .optional()
         .describe("Custom provider configurations and model overrides"),
+      security: SecurityConfig.optional().describe("Network security and access control configuration"),
       mcp: z
         .record(
           z.string(),

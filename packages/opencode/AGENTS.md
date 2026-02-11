@@ -25,3 +25,10 @@
 - **Logging**: Use `Log.create({ service: "name" })` pattern
 - **Storage**: Use `Storage` namespace for persistence
 - **API Client**: The TypeScript TUI (built with SolidJS + OpenTUI) communicates with the OpenCode server using `@opencode-ai/sdk`. When adding/modifying server endpoints in `packages/opencode/src/server/server.ts`, run `./script/generate.ts` to regenerate the SDK and related files.
+
+## Security
+
+- URL validation occurs before fetch in all network-calling code (models.ts, webfetch.ts, websearch.ts, provider.ts)
+- Security validation happens at both provider load time (CUSTOM_LOADERS) and runtime HTTP requests (getSDK fetch wrapper)
+- Provider validation returns `disable: true` instead of throwing, so other providers can still load
+- Audit logger uses JSONL append format; field name is `providerId` (camelCase), not `providerID`

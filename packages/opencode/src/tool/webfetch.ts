@@ -3,6 +3,10 @@ import { Tool } from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { abortAfterAny } from "../util/abort"
+import { auditLogger } from "@/util/audit"
+import { validateUrlFromConfig } from "@/util/network"
+import type { SecurityConfigType } from "@/util/network"
+import { Config } from "@/config/config"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -19,9 +23,21 @@ export const WebFetchTool = Tool.define("webfetch", {
     timeout: z.number().describe("Optional timeout in seconds (max 120)").optional(),
   }),
   async execute(params, ctx) {
-    // Validate URL
+    // Validate URL format
     if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
       throw new Error("URL must start with http:// or https://")
+    }
+
+    // Validate URL against security config
+    const config = await Config.get()
+    const securityConfig = config.security as SecurityConfigType | undefined
+    if (securityConfig) {
+      const validation = validateUrlFromConfig(params.url, securityConfig)
+      if (!validation.allowed) {
+        auditLogger.logToolRequest(ctx.sessionID, "webfetch", params.url, "unknown", false, validation.reason)
+        throw new Error(validation.reason)
+      }
+      auditLogger.logToolRequest(ctx.sessionID, "webfetch", params.url, "unknown", true, "URL validated")
     }
 
     await ctx.ask({
@@ -62,12 +78,34 @@ export const WebFetchTool = Tool.define("webfetch", {
       "Accept-Language": "en-US,en;q=0.9",
     }
 
-    const initial = await fetch(params.url, { signal, headers })
+    const fetchWithRedirectValidation = async (url: string, opts: RequestInit): Promise<Response> => {
+      const MAX_REDIRECTS = 10
+      let current = url
+      for (let i = 0; i <= MAX_REDIRECTS; i++) {
+        const resp = await fetch(current, { ...opts, redirect: "manual" })
+        if (![301, 302, 303, 307, 308].includes(resp.status)) return resp
+        const location = resp.headers.get("location")
+        if (!location) return resp
+        const target = new URL(location, current).toString()
+        if (securityConfig) {
+          const check = validateUrlFromConfig(target, securityConfig)
+          if (!check.allowed) {
+            const reason = `Redirect blocked: ${check.reason}`
+            auditLogger.logToolRequest(ctx.sessionID, "webfetch", target, "unknown", false, reason)
+            throw new Error(`Redirect to ${target} blocked: ${check.reason}`)
+          }
+        }
+        current = target
+      }
+      throw new Error("Too many redirects")
+    }
+
+    const initial = await fetchWithRedirectValidation(params.url, { signal, headers })
 
     // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
     const response =
       initial.status === 403 && initial.headers.get("cf-mitigated") === "challenge"
-        ? await fetch(params.url, { signal, headers: { ...headers, "User-Agent": "opencode" } })
+        ? await fetchWithRedirectValidation(params.url, { signal, headers: { ...headers, "User-Agent": "opencode" } })
         : initial
 
     clearTimeout()

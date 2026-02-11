@@ -1,0 +1,402 @@
+---
+title: セキュリティ
+description: ネットワークセキュリティ制御、URL検証、監査ログ機能。
+---
+
+OpenCodeは、ネットワークアクセスを制限し、システムアクティビティを監視するための包括的なセキュリティ制御を提供します。これらの機能は、AIアシスタントが通信できる外部サービスを制御したい内部専用環境向けに設計されています。
+
+---
+
+## セキュリティモード
+
+OpenCodeは、ネットワークリクエストの検証方法を決定する3つのセキュリティモードをサポートしています：
+
+### `internal-only`（内部環境のデフォルト）
+
+ローカルホスト、プライベートIP、および設定された内部ドメインのみを許可します。明示的に許可されていないすべての外部URLはブロックされます。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+すべてのURLを許可しますが、監査目的で外部URLをログ記録します。このモードは、ブロッキングせずにネットワークアクティビティを監視する場合に便利です。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+明示的に設定されたドメイン（`external_domains`）、ローカルホスト、プライベートIP、内部DNSサフィックスに一致するURLのみを許可します。その他のすべてのURLはブロックされます。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## 設定オプション
+
+すべてのセキュリティ設定は、OpenCodeの設定ファイルの`security`キーの下に配置します。
+
+### `mode`
+
+セキュリティモードの選択。いずれかになります：`"internal-only"`、`"external-allowed"`、`"strict"`。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+許可する内部DNSサフィックスの配列。サブドメインマッチング用のワイルドカードを使用できます。
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+この設定により、`api.internal.corp.com`と`db.dev.internal`が許可されます。
+
+### `block_domain_regex`
+
+ブロックする特定のドメインやパターンに一致させるための正規表現の配列。
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+ローカルホストURLを許可する（デフォルト：`true`）。
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+プライベートIPアドレスを許可する（デフォルト：`true`）。
+
+カバーされるプライベートIP範囲：
+
+- `10.0.0.0/8`（クラスA）
+- `172.16.0.0/12`（クラスB）
+- `192.168.0.0/16`（クラスC）
+- `127.0.0.0/8`（ループバック）
+- `::1`（IPv6ループバック）
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+`models.dev`からモデルリストを取得するのを有効化する（デフォルト：`true`）。無効の場合、OpenCodeは最新のモデルリストをmodels.devから取得しようとしません。
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+監査ログを有効化する（デフォルト：`true`）。有効の場合、セキュリティイベントは`~/.config/opencode/audit.jsonl`にログ記録されます。
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+strictモードで明示的に許可する外部ドメイン。ワイルドカードパターンをサポートします。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+`*.azure.com`のパターンでは、`my-resource.openai.azure.com`のようなURLが許可されます。
+
+### `allow_external_ips`
+
+外部/パブリックIPアドレスを許可する（デフォルト：`false`）。`mode`が`"internal-only"`の場合にのみ適用されます。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+CIDR表記での追加許可IP範囲。
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## プロバイダーのセキュリティ
+
+セキュリティ制御は、以下のすべてのプロバイダー設定に適用されます：
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- ローカルモデル（llama.cpp、Ollama）
+- カスタムプロバイダー
+
+プロバイダーがカスタムの`baseURL`またはエンドポイントで設定されている場合、プロバイダーが読み込まれる前にURLがセキュリティ設定に対応して検証されます。
+
+### 例：カスタムエンドポイントでのOpenAI
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+`baseURL`が許可されたドメインに一致しない場合、プロバイダーはブロックされ、エラーがログ記録されます。
+
+---
+
+## 監査ログ
+
+監査ログは、`~/.config/opencode/audit.jsonl`にすべてのセキュリティ関連イベントを追跡します。
+
+### ログエントリの構造
+
+各エントリには以下が含まれます：
+
+- `timestamp`：ISO 8601形式のタイムスタンプ
+- `type`：イベントのカテゴリ（`url_check`、`provider_load`、`tool_request`、`blocked_access`など）
+- `level`：`info`または`warn`
+- `message`：人が読める形式の説明
+- `context`：追加のコンテキスト（URL、プロバイダーID、ツール名）
+- `metadata`：機械が読める形式のデータ（許可された状態、モデル数など）
+
+### イベントタイプ
+
+| タイプ                 | 説明                                               |
+| ---------------------- | -------------------------------------------------- |
+| `url_check`            | URL検証が成功しました                              |
+| `blocked_access`       | URL検証が失敗しました                              |
+| `provider_load`        | プロバイダー読み込みが試行されました               |
+| `model_access`         | モデルアクセスが試行されました                     |
+| `tool_request`         | ツールのネットワークリクエストが許可されました     |
+| `tool_blocked`         | ツールのネットワークリクエストがブロックされました |
+| `fetch_request`        | HTTPリクエストが実行されました                     |
+| `session_model_change` | セッションモデル変更が試行されました               |
+
+### 監査ログの例
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### 監査ログの表示
+
+監査ログは追加専用です。以下のコマンドで最近のエントリを表示できます：
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## 設定例
+
+### 内部アクセスを含む厳格なセキュリティ
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### 外部アクセスログ付きの開発環境
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### カスタムブロックリスト付きの内部のみモード
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev 制御
+
+`models_dev_enabled`オプションは、OpenCodeが`https://models.dev`から最新のモデルリストを取得できるかどうかを制御します。
+
+### 動作方法
+
+1. 起動時、OpenCodeは`models_dev_enabled`が`false`かどうかを確認します
+2. 無効の場合、最新のモデルの取得をスキップし、キャッシュ済み/既知のモデルのみを使用します
+3. 有効の場合、セキュリティ検証付きでmodels.devからモデルを取得します
+
+### models.devの無効化
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+無効の場合：
+
+- ログメッセージが表示されます：`"models.dev fetching is disabled by security configuration"`
+- OpenCodeが既知のモデルのみを使用できます
+- エアギャップ環境や利用可能なモデルを厳格に制御したい場合に便利です
+
+---
+
+## ツール実行
+
+### webfetch ツール
+
+`webfetch`ツールは、コンテンツを取得する前にセキュリティ設定に対してURLを検証します：
+
+1. URLフォーマットを確認（`http://`または`https://`で始まる必要があります）
+2. セキュリティ設定に対してURLを検証します
+3. ブロックされた場合：エラーを発生させ、ブロックされたアクセスをログ記録します
+4. 許可された場合： fetchを実行し、正常な検証をログ記録します
+
+### websearch ツール
+
+`websearch`ツールは、MCPエンドポイントURLを検証します：
+
+1. MCPエンドポイントURLを構築します：`https://mcp.exa.ai/mcp`
+2. セキュリティ設定に対して検証します
+3. ブロックされた場合：エラーを発生させ、ブロックされたアクセスをログ記録します
+4. 許可された場合：検索を実行し、正常な検証をログ記録します
+
+### ツール検証フロー
+
+```
+ツールリクエスト → 設定の取得 → セキュリティ検証 → 許可？ → フェッチ / エラー
+                                           ↓ はい
+                                      処理を続行
+                                           ↓ いいえ
+                                     ログ記録 & ブロック
+```
+
+---
+
+## 注記
+
+- セキュリティ検証は、ツール実行とプロバイダー読み込み**前**に実行されます
+- 監査ログは、結果に関係なく、有効な場合は**常に**適用されます
+- `strict`モードでは、明示的に`external_domains`、`allow_internal_dns_suffixes`内にあるもの、または`allowed_ip_ranges`に一致する場合を除いて、**何も**許可されません
+- `allow_local`と`allow_private_ip`のデフォルト値は`true`です
+- `allow_external_ips`のデフォルト値は`false`です

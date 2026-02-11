@@ -1,0 +1,402 @@
+---
+title: Zabezpečení
+description: Kontroly síťové bezpečnosti, validace URL a protokolování audity.
+---
+
+OpenCode poskytuje komplexní kontroly zabezpečení pro omezení přístupu k síti a monitorování aktivity systému. Tyto funkce jsou navrženy pro prostředí pouze pro interní použití, kde potřebujete ovládat s jakými externími službami může váš AI asistent komunikovat.
+
+---
+
+## Režimy zabezpečení
+
+OpenCode podporuje tři režimy zabezpečení, které určují, jak jsou síťové požadavky validovány:
+
+### `internal-only` (Výchozí pro interní prostředí)
+
+Povoluje pouze localhost, privátní IP adresy a nakonfigurované interní domény. Všechny externí URL jsou blokovány, pokud nejsou výslovně povoleny.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Povoluje všechny URL, ale protokoluje externí URL pro účely audity. Tento režim je užitečný pro monitorování síťové aktivity bez blokování.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Povoluje pouze URL, které odpovídají výslovně nakonfigurovaným doménám v `external_domains`, localhost, privátní IP adresy a interní DNS přípony. Všechny ostatní URL jsou blokovány.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Možnosti konfigurace
+
+Všechny konfigurace zabezpečení se nacházejí pod klíčem `security` v konfiguračním souboru OpenCode.
+
+### `mode`
+
+Výběr režimu zabezpečení. Možnosti: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Pole interních DNS přípon, které mají být povoleny. Může obsahovat zástupné znaky pro shodu s podsložkami.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+S touto konfigurací budou povoleny `api.internal.corp.com` a `db.dev.internal`.
+
+### `block_domain_regex`
+
+Pole regulárních výrazů pro shodu a blokování konkrétních domén nebo vzorů.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Povolit URL localhostu (výchozí: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Povolit privátní IP adresy (výchozí: `true`).
+
+Pokryté rozsahy privátních IP:
+
+- `10.0.0.0/8` (Třída A)
+- `172.16.0.0/12` (Třída B)
+- `192.168.0.0/16` (Třída C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Povolit načítání seznamu modelů z `models.dev` (výchozí: `true`). Pokud je vypnuto, OpenCode nebude pokoušet o načtení nejnovějšího seznamu modelů z models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Povolit protokolování audity (výchozí: `true`). Pokud je povoleno, bezpečnostní události jsou protokolovány do `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Výslovně povolené externí domény v režimu `strict`. Podporuje zástupné znaky.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+S vzorem `*.azure.com` budou povoleny URL jako `my-resource.openai.azure.com` (např. `api.example.com`).
+
+### `allow_external_ips`
+
+Povolit externí/veřejné IP adresy (výchozí: `false`). Platí pouze pokud `mode` je `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Další povolené rozsahy IP adres v notaci CIDR.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Zabezpečení poskytovatele
+
+Kontroly zabezpečení se vztahují na všechny konfigurace poskytovatele, včetně:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Lokální modely (llama.cpp, Ollama)
+- Vlastní poskytovatelé
+
+Když je poskytovatel nakonfigurován s vlastním `baseURL` nebo endpointem, URL je validována proti konfiguraci zabezpečení před načtením poskytovatele.
+
+### Příklad: OpenAI s vlastním endpointem
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Pokud `baseURL` neodpovídá povoleným doménám, poskytovatel bude blokován a chyba bude protokolována.
+
+---
+
+## Protokolování audity
+
+Protokolování auditu sleduje všechny bezpečnostní události do `~/.config/opencode/audit.jsonl`.
+
+### Struktura záznamu protokolu
+
+Každý záznam obsahuje:
+
+- `timestamp`: ISO 8601 časové razítko
+- `type`: Kategorie události (`url_check`, `provider_load`, `tool_request`, `blocked_access`, atd.)
+- `level`: `info` nebo `warn`
+- `message`: lidště čitelný popis
+- `context`: Další kontext (URL, ID poskytovatele, názvy nástrojů)
+- `metadata`: Strojově čitelná data ( povolení, počet modelů, atd.)
+
+### Typy událostí
+
+| Typ                    | Popis                              |
+| ---------------------- | ---------------------------------- |
+| `url_check`            | Validace URL úspěšná               |
+| `blocked_access`       | Validace URL neúspěšná             |
+| `provider_load`        | Pokus o načtení poskytovatele      |
+| `model_access`         | Pokus o přístup k modelu           |
+| `tool_request`         | Síťový požadavek nástroje povolen  |
+| `tool_blocked`         | Síťový požadavek nástroje blokován |
+| `fetch_request`        | HTTP požadavek proveden            |
+| `session_model_change` | Pokus o změnu modelu relace        |
+
+### Příklad protokolu auditu
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Prohlížení protokolů auditu
+
+Protokol auditu je pouze pro přidávání. Můžete zobrazit poslední záznamy s:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Příklady konfigurace
+
+### Strict zabezpečení s interním přístupem
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Vývoj s protokolováním externího přístupu
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-only s vlastním blokovacím seznamem
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Ovládání models.dev
+
+Možnost `models_dev_enabled` řídí, zda může OpenCode načítat nejnovější seznam modelů z `https://models.dev`.
+
+### Jak to funguje
+
+1. Při spuštění OpenCode zkontroluje, zda `models_dev_enabled` je `false`
+2. Pokud je vypnuto, přeskočí načítání nejnovějších modelů a použije pouze mezipaměť/známé modely
+3. Pokud je zapnuto, načte modely z `models.dev` s validací zabezpečení
+
+### Zakázání models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Když je zakázáno:
+
+- Zobrazí se zpráva protokolu: `"models.dev fetching is disabled by security configuration"`
+- Lze použít pouze modely, které jsou OpenCode již známé
+- Užitečné v prostředí bez připojení nebo když chcete přesně řídit dostupné modely
+
+---
+
+## Spuštění nástrojů
+
+### Nástroj webfetch
+
+Nástroj `webfetch` validuje URL proti konfiguraci zabezpečení před načtením obsahu:
+
+1. Zkontrolovat formát URL (musí začínat s `http://` nebo `https://`)
+2. Validovat URL proti konfiguraci zabezpečení
+3. Pokud je blokováno: vyvolat chybu a protokolovat blokovaný přístup
+4. Pokud je povoleno: pokračovat s načtením a protokolovat úspěšnou validaci
+
+### Nástroj websearch
+
+Nástroj `websearch` validuje URL endpointu MCP:
+
+1. Vytvořit URL endpointu MCP: `https://mcp.exa.ai/mcp`
+2. Validovat proti konfiguraci zabezpečení
+3. Pokud je blokováno: vyvolat chybu a protokolovat blokovaný přístup
+4. Pokud je povoleno: spustit vyhledávání a protokolovat úspěšnou validaci
+
+### Tok validace nástrojů
+
+```
+Požadavek nástroje → Konfigurace načtena → Zabezpečení validováno → Povoleno? → Načtení / Chyba
+                                           ↓ Ano
+                                      Pokračovat
+                                           ↓ Ne
+                                     Protokolovat a blokovat
+```
+
+---
+
+## Poznámky
+
+- Validace zabezpečení probíhá **před** spuštěním nástrojů a načtením poskytovatele
+- Protokolování auditu je **vždy** aplikováno, když je povoleno, bez ohledu na výsledek
+- V režimu `strict` není **nic** povoleno, pokud není výslovně v `external_domains`, `allow_internal_dns_suffixes` nebo neodpovídá `allowed_ip_ranges`
+- Výchozí hodnoty pro `allow_local` a `allow_private_ip` jsou `true`
+- Výchozí hodnota pro `allow_external_ips` je `false`

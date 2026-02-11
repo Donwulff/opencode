@@ -1,0 +1,402 @@
+---
+title: Ασφάλεια
+description: Έλεγχοι ασφαλείας δικτύου, επικύρωση URL και καταγραφή ελέγχου.
+---
+
+Το OpenCode παρέχει ολοκληρωμένους ελέγχους ασφαλείας για περιορισμό της πρόσβασης δικτύου και παρακολούθηση της δραστηριότητας συστήματος. Αυτά τα χαρακτηριστικά έχουν σχεδιαστεί για εσωτερικά περιβάλλοντα όπου χρειάζεστε να ελέγξετε με ποιες εξωτερικές υπηρεσίες μπορεί να επικοινωνήσει ο βοηθός σας AI.
+
+---
+
+## Λειτουργίες Ασφαλείας
+
+Το OpenCode υποστηρίζει τρεις λειτουργίες ασφαλείας που καθορίζουν πώς επικυρώνονται τα αιτήματα δικτύου:
+
+### `internal-only` (Προεπιλογή για εσωτερικά περιβάλλοντα)
+
+Επιτρέπει μόνο το localhost, ιδιωτικά IPs και διαμορφωμένα εσωτερικά πεδία. Όλες οι εξωτερικές URLs αποκλείονται εκτός αν επιτρέπονται ρητά.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Επιτρέπει όλες τις URLs αλλά καταγράφει τις εξωτερικές URLs για σκοπούς ελέγχου. Αυτή η λειτουργία είναι χρήσιμη για παρακολούθηση της δραστηριότητας δικτύου χωρίς αποκλεισμό.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Επιτρέπει μόνο URLs που αντιστοιχούν σε ρητά διαμορφωμένα πεδία στα `external_domains`, localhost, ιδιωτικά IPs και εσωτερικά ονόματα DNS. Όλες οι άλλες URLs αποκλείονται.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Επιλογές Διαμόρφωσης
+
+Όλες οι ρυθμίσεις ασφαλείας πηγαίνουν κάτω από το πλήκτρο `security` στη διαμόρφωση OpenCode σας.
+
+### `mode`
+
+Επιλογή λειτουργίας ασφαλείας. Ένα από: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Πίνακας εσωτερικών καταλήξεων DNS προς επιτροπή. Μπορεί να περιλαμβάνει wildcards για ταίριασμα υποπεδίων.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+Με αυτή τη διαμόρφωση, τα `api.internal.corp.com` και `db.dev.internal` θα επιτραπούν.
+
+### `block_domain_regex`
+
+Πίνακας κανονικών εκφράσεων για ταίριασμα και αποκλεισμό συγκεκριμένων πεδίων ή μοτίβων.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Επιτρέπει τις localhost URLs (`true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Επιτρέπει τις ιδιωτικές διευθύνσεις IP (`true`).
+
+Τα εύρη ιδιωτικής IP που καλύπτονται:
+
+- `10.0.0.0/8` (Κλάση A)
+- `172.16.0.0/12` (Κλάση B)
+- `192.168.0.0/16` (Κλάση C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Ενεργοποίηση ανάκτησης λίστας μοντέλων από `models.dev` (`true`). Όταν απενεργοποιηθεί, το OpenCode δεν θα προσπαθήσει να ανακτήσει την τελευταία λίστα μοντέλων από τα models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Ενεργοποίηση καταγραφής ελέγχου (`true`). Όταν ενεργοποιηθεί, τα συμβάντα ασφαλείας καταγράφονται στο `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Ρητά επιτρεπόμενα εξωτερικά πεδία σε κατάσταση strictly. Υποστηρίζει μοτίβα wildcards.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+Με το μοτίβο `*.azure.com`, URLs όπως `my-resource.openai.azure.com` θα επιτραπούν.
+
+### `allow_external_ips`
+
+Επιτρέπει εξωτερικές/δημόσιες διευθύνσεις IP (`false`). Εφαρμόζεται μόνο όταν η `mode` είναι `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Πρόσθετα επιτρεπόμενα τα εύρη IP σημειοθετημένα με CIDR.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Ασφάλεια Παρόχων
+
+Οι ελέγχοι ασφαλείας εφαρμόζονται σε όλες τις διαμορφώσεις παρόχων, συμπεριλαμβανομένων:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Τοπικά μοντέλα (llama.cpp, Ollama)
+- Προσαρμοσμένοι πάροχοι
+
+Όταν ένας πάροχος διαμορφώνεται με μια προσαρμοσμένη `baseURL` ή άκρη, η URL επικυρώνεται ενάντια στη διαμόρφωση ασφαλείας πριν από τη φόρτωση του παρόχου.
+
+### Παράδειγμα: OpenAI με προσαρμοσμένη άκρη
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Αν η `baseURL` δεν ταιριάζει στα επιτρεπόμενα πεδία, ο πάροχος θα αποκλειστεί και μια σφάλμα θα καταγραφεί.
+
+---
+
+## Καταγραφή Ελέγχου
+
+Η καταγραφή ελέγχου παρακολουθεί όλα τα συμβάντα που σχετίζονται με την ασφάλεια στο `~/.config/opencode/audit.jsonl`.
+
+### Δομή Καταγραφής
+
+Κάθε καταγραφή περιέχει:
+
+- `timestamp`: Ημερομηνία/ώρα ISO 8601
+- `type`: Κατηγορία συμβάντος (`url_check`, `provider_load`, `tool_request`, `blocked_access`, κλπ.)
+- `level`: `info` ή `warn`
+- `message`: Περιγραφή αναγνώσιμη ανθρώπου
+- `context`: Πρόσθετο περιεχόμενο (URLs, IDs παρόχων, ονόματα εργαλείων)
+- `metadata`: Μηχανικά αναγνώσιμα δεδομένα (κατάσταση επιτρεπόμενων, αριθμός μοντέλων, κλπ.)
+
+### Τύποι Συμβάντων
+
+| Τύπος                  | Περιγραφή                             |
+| ---------------------- | ------------------------------------- |
+| `url_check`            | Επιτυχής επικύρωση URL                |
+| `blocked_access`       | Αποτυχημένη επικύρωση URL             |
+| `provider_load`        | Προσπάθεια φόρτωσης παρόχου           |
+| `model_access`         | Προσπάθεια πρόσβασης μοντέλου         |
+| `tool_request`         | Επιτρεπόμενο αίτημα εργαλείου δικτύου |
+| `tool_blocked`         | Αποκλεισμένο αίτημα εργαλείου δικτύου |
+| `fetch_request`        | Πραγματοποιημένο αίτημα HTTP          |
+| `session_model_change` | Προσπάθεια αλλαγής μοντέλου συνεδρίας |
+
+### Παράδειγμα Καταγραφής Ελέγχου
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Προβολή Καταγραφών Ελέγχου
+
+Η καταγραφή ελέγχου είναι append-only. Μπορείτε να δείτε πρόσφατες καταγραφές με:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Παράδειγμα Διαμόρφωσης
+
+### Strict Ασφάλεια με Εσωτερική Πρόσβαση
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Ανάπτυξη με Καταγραφή Εξωτερικής Πρόσβασης
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-Only με Προσαρμοσμένη Λίστα Αποκλεισμού
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Ελέγχοι Models.dev
+
+Η επιλογή `models_dev_enabled` ελέγχει αν το OpenCode μπορεί να ανακτήσει την τελευταία λίστα μοντέλων από `https://models.dev`.
+
+### Πώς Λειτουργεί
+
+1. Στην έναρξη, το OpenCode ελέγχει αν το `models_dev_enabled` είναι `false`
+2. Αν είναι απενεργοποιημένο, παραλείπει την ανάκτηση των τελευταίων μοντέλων και χρησιμοποιεί μόνο εκκείμενα/γνωστά μοντέλα
+3. Αν είναι ενεργοποιημένο, ανακτά μοντέλα από τα `models.dev` με επικύρωση ασφαλείας
+
+### Απενεργοποίηση models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Όταν απενεργοποιηθεί:
+
+- Εμφανίζεται μήνυμα καταγραφής: `"models.dev fetching is disabled by security configuration"`
+- Μόνο τα μοντέλα που ήδη γνωρίζει το OpenCode μπορούν να χρησιμοποιηθούν
+- Χρήσιμο για αποσυνδεδεμένα περιβάλλοντα ή όταν θέλετε να ελέγξετε αυστηρά τα διαθέσιμα μοντέλα
+
+---
+
+## Εκτέλεση Εργαλείων
+
+### Εργαλείο webfetch
+
+Το εργαλείο `webfetch` επικυρώνει τα URLs ενάντια στη διαμόρφωση ασφαλείας πριν από την ανάκτηση περιεχομένου:
+
+1. Έλεγχος μορφής URL (πρέπει να αρχίζει με `http://` ή `https://`)
+2. Επικύρωση URL ενάντια στη διαμόρφωση ασφαλείας
+3. Αν αποκλειστεί: ανεβάζει σφάλμα και καταγράφει το αποκλεισμένη πρόσβαση
+4. Αν επιτραπεί: προχωρά με ανάκτηση και καταγράφει την επιτυχή επικύρωση
+
+### Εργαλείο websearch
+
+Το εργαλείο `websearch` επικυρώνει την URL της άκρης MCP:
+
+1. Κατασκευάζει URL άκρης MCP: `https://mcp.exa.ai/mcp`
+2. Επικυρώνεται ενάντια στη διαμόρφωση ασφαλείας
+3. Αν αποκλειστεί: ανεβάζει σφάλμα και καταγράφει το αποκλεισμένη πρόσβαση
+4. Αν επιτραπεί: εκτελεί αναζήτηση και καταγράφει την επιτυχή επικύρωση
+
+### Διαδικασία Επικύρωσης Εργαλείου
+
+```
+Αίτημα Εργαλείου → Προσλήφθηκε Διαμόρφωση → Επικυρώθηκε Ασφάλεια → Επιτρέπεται? → Ανάκτηση / Σφάλμα
+                                           ↓ Ναι
+                                      Συνέχεια
+                                           ↓ Όχι
+                                     Καταγραφή & Αποκλεισμός
+```
+
+---
+
+## Σημειώσεις
+
+- Η επικύρωση ασφαλείας συμβαίνει **πριν** από την εκτέλεση εργαλείου και τη φόρτωση παρόχου
+- Η καταγραφή ελέγχου είναι **πάντα** εφαρμόσιμη όταν είναι ενεργοποιημένη, ανεξάρτητα από το αποτέλεσμα
+- Σε κατάσταση `strict`, **τίποτα** δεν επιτρέπεται εκτός αν είναι ρητά στα `external_domains`, `allow_internal_dns_suffixes`, ή ταιριάζει στα `allowed_ip_ranges`
+- Οι προεπιλεγμένες τιμές για `allow_local` και `allow_private_ip` είναι `true`
+- Η προεπιλεγμένη τιμή για `allow_external_ips` είναι `false`

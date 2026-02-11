@@ -1,0 +1,402 @@
+---
+title: सुरक्षा
+description: नेटवर्क सुरक्षा नियंत्रण, URL वैधता, और ऑडिट लॉगिंग।
+---
+
+OpenCode नेटवर्क एक्सेस पर प्रतिबंध लगाने और सिस्टम गतिविधि की निगरानी के लिए व्यापक सुरक्षा नियंत्रण प्रदान करता है। ये सुविधाएँ आंतरिक-केवल वातावरण के लिए डिज़ाइन की गई हैं जहाँ आपको नियंत्रित करना होता है कि आपकी AI सहायक किन बाहरी सेवाओं के साथ संवाद कर सकती है।
+
+---
+
+## सुरक्षा मोड
+
+OpenCode तीन सुरक्षा मोड सपोर्ट करता है जो नेटवर्क अनुरोधों की वैधता की प्रक्रिया तय करते हैं:
+
+### `internal-only` (आंतरिक वातावरण के लिए डिफ़ॉल्ट)
+
+केवल localhost, प्राइवेट IPs, और कॉन्फ़िगर किए गए आंतरिक डोमेन की अनुमति देता है। बाहरी सभी URL को ब्लॉक कर दिया जाता है जब तक कि उन्हें स्पष्ट रूप से अनुमति न दी गई हो।
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+सभी URLs की अनुमति देता है लेकिन ऑडिट उद्देश्यों के लिए बाहरी URLs को लॉग करता है। यह मोड ब्लॉक किए बिना नेटवर्क गतिविधि की निगरानी करने के लिए उपयोगी है।
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+केवल उन URLs की अनुमति देता है जो स्पष्ट रूप से कॉन्फ़िगर किए गए डोमेन `external_domains`, localhost, प्राइवेट IPs, और आंतरिक DNS सuffix से मेल खाते हैं। अन्य सभी URLs को ब्लॉक कर दिया जाता है।
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## कॉन्फ़िगरेशन विकल्प
+
+सभी सुरक्षा कॉन्फ़िगरेशन अपने OpenCode कॉन्फ़िग में `security` की के अंतर्गत सम्मिलित होते हैं।
+
+### `mode`
+
+सुरक्षा मोड चयन। एक है: `"internal-only"`, `"external-allowed"`, `"strict"`।
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+अनुमत देने के लिए आंतरिक DNS सuffix की सरणी। सबडोमेन मैचिंग के लिए वाइल्डकार्ड शामिल किए जा सकते हैं।
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+इस कॉन्फ़िगरेशन के साथ, `api.internal.corp.com` और `db.dev.internal` की अनुमति दी जाएगी।
+
+### `block_domain_regex`
+
+विशिष्ट डोमेन या पैटर्न को मैच करने और ब्लॉक करने के लिए नियमित अभिव्यक्तियों की सरणी।
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+localhost URLs की अनुमति दें (डिफ़ॉल्ट: `true`)। इस विकल्प को "Allow" के रूप में अनुवादित किया गया है।
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+प्राइवेट IP address की अनुमति दें (डिफ़ॉल्ट: `true`)। इस विकल्प को "Allow" के रूप में अनुवादित किया गया है।
+
+कवर की गई प्राइवेट IP श्रेणियाँ:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+`models.dev` से मॉडल सूची प्राप्त करने के लिए सक्षम करें (डिफ़ॉल्ट: `true`)। जब अक्षम किया जाता है, तो OpenCode `models.dev` से नवीनतम मॉडल सूची प्राप्त करने का प्रयास नहीं करेगा।
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+ऑडिट लॉगिंग को सक्षम करें (डिफ़ॉल्ट: `true`)। सक्षम होने पर, सुरक्षा घटनाएँ `~/.config/opencode/audit.jsonl` में लॉग की जाती हैं।
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+`strict` मोड में स्पष्ट रूप से अनुमत बाहरी डोमेन। वाइल्डकार्ड पैटर्न सपोर्ट करता है।
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+`*.azure.com` पैटर्न के साथ, `my-resource.openai.azure.com` जैसे URLs की अनुमति दी जाएगी।
+
+### `allow_external_ips`
+
+बाहरी/सार्वजनिक IP address की अनुमति दें (डिफ़ॉल्ट: `false`)। केवल तभी लागू होता है जब `mode` `"internal-only"` हो।
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+CIDR notation (CIDR नोटेशन) में अतिरिक्त अनुमत IP श्रेणियाँ।
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## प्रोवाइडर सुरक्षा
+
+सुरक्षा नियंत्रण सभी प्रोवाइडर कॉन्फ़िगरेशन पर लागू होते हैं, जिनमें शामिल हैं:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- स्थानीय मॉडल (llama.cpp, Ollama)
+- कस्टम प्रोवाइडर
+
+जब कोई प्रोवाइडर कस्टम `baseURL` या एंडपॉइंट के साथ कॉन्फ़िगर किया जाता है, तो प्रोवाइडर लोड होने से पहले URL की सुरक्षा कॉन्फ़िगरेशन के खिलाफ वैधता प्राप्त की जाती है।
+
+### उदाहरण: कस्टम एंडपॉइंट के साथ OpenAI
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+यदि `baseURL` अनुमत डोमेन से मेल नहीं खाता, तो प्रोवाइडर को ब्लॉक कर दिया जाएगा और एक त्रुटि लॉग की जाएगी।
+
+---
+
+## ऑडिट लॉगिंग
+
+ऑडिट लॉगिंग सभी सुरक्षा संबंधी घटनाओं को `~/.config/opencode/audit.jsonl` में ट्रैक करती है।
+
+### लॉग एंट्री संरचना
+
+प्रत्येक एंट्री में शामिल है:
+
+- `timestamp`: ISO 8601 टाइमस्टैम्प
+- `type`: घटना की श्रेणी (`url_check`, `provider_load`, `tool_request`, `blocked_access`, आदि)
+- `level`: `info` या `warn`
+- `message`: मानव-पठनीय विवरण
+- `context`: अतिरिक्त संदर्भ (URL, प्रोवाइडर आईडी, टूल नाम)
+- `metadata`: मशीन-पठनीय डेटा (अनुमत स्थिति, मॉडल की संख्या, आदि)
+
+### घटना प्रकार
+
+| प्रकार                 | विवरण                      |
+| ---------------------- | -------------------------- |
+| `url_check`            | URL वैधता सफल रही          |
+| `blocked_access`       | URL वैधता विफल रही         |
+| `provider_load`        | प्रोवाइडर लोडिंग प्रयास    |
+| `model_access`         | मॉडल एक्सेस प्रयास         |
+| `tool_request`         | टूल नेटवर्क अनुरोध अनुमत   |
+| `tool_blocked`         | टूल नेटवर्क अनुरोध ब्लॉक्ड |
+| `fetch_request`        | HTTP अनुरोध किया गया       |
+| `session_model_change` | सत्र मॉडल परिवर्तन प्रयास  |
+
+### उदाहरण ऑडिट लॉग
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### ऑडिट लॉग देखना
+
+ऑडिट लॉग केवल-संलग्न (append-only) है। आप नवीनतम प्रविष्टियाँ देख सकते हैं:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## उदाहरण कॉन्फ़िगरेशन
+
+### आंतरिक एक्सेस के साथ सख्त सुरक्षा
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### बाहरी एक्सेस लॉगिंग के साथ विकास
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### कस्टम ब्लॉकलिस्ट के साथ आंतरिक-केवल
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev नियंत्रण
+
+`models_dev_enabled` विकल्प नियंत्रित करता है कि OpenCode नवीनतम मॉडल सूची `https://models.dev` से प्राप्त कर सकता है या नहीं।
+
+### यह कैसे काम करता है
+
+1. प्रारंभ पर, OpenCode जाँचता है कि `models_dev_enabled` `false` है या नहीं
+2. यदि अक्षम है, तो यह नवीनतम मॉडल प्राप्त करना छोड़ देता है और केवल कैश्ड/ज्ञात मॉडल का उपयोग करता है
+3. यदि सक्षम है, तो यो सुरक्षा वैधता के साथ `models.dev` से मॉडल प्राप्त करता है
+
+### models.dev अक्षम करना
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+अक्षम होने पर:
+
+- एक लॉग संदेश दिखाई देता है: `"models.dev fetching is disabled by security configuration"`
+- केवल वे ही मॉडल उपयोग किए जा सकते हैं जो पहले से OpenCode को ज्ञात हैं
+- सील/अलग वातावरण (air-gapped environment) या जब आप मॉडल की उपलब्धता को सख्ती से नियंत्रित करना चाहते हैं तो उपयोगी
+
+---
+
+## टूल निष्पादन
+
+### webfetch टूल
+
+`webfetch` (वेबफ़ेच) टूल कंटेंट फ़ेच करने से पहले सुरक्षा कॉन्फ़िगरेशन के खिलाफ URLs की वैधता लेता है:
+
+1. URL प्रारूप जाँचें (`http://` या `https://` के साथ प्रारंभ होना चाहिए)
+2. सुरक्षा कॉन्फ़िग के खिलाफ URL की वैधता लें
+3. यदि ब्लॉक्ड है: त्रुटि उठाएं और ब्लॉक किए गए एक्सेस को लॉग करें
+4. यदि अनुमत है: फ़ेच के साथ आगे बढ़ें और सफल वैधता को लॉग करें
+
+### websearch टूल
+
+`websearch` (वेबसर्च) टूल MCP एंडपॉइंट URL की वैधता लेता है:
+
+1. MCP एंडपॉइंट URL बनाएं: `https://mcp.exa.ai/mcp`
+2. सुरक्षा कॉन्फ़िग के खिलाफ वैधता लें
+3. यदि ब्लॉक्ड है: त्रुटि उठाएं और ब्लॉक किए गए एक्सेस को लॉग करें
+4. यदि अनुमत है: खोज निष्पादित करें और सफल वैधता को लॉग करें
+
+### टूल वैधता प्रवाह
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                           ↓ Yes
+                                      Proceed
+                                           ↓ No
+                                      Log & Block
+```
+
+---
+
+## नोट
+
+- सुरक्षा वैधता **टूल निष्पादन और प्रोवाइडर लोडिंग से पहले** होती है
+- ऑडिट लॉगिंग **हमेशा** लागू होती है जब सक्षम किया जाता है, परिणाम से स्वतंत्र
+- `strict` मोड में, **कुछ भी** अनुमत नहीं है जब तक कि स्पष्ट रूप से `external_domains`, `allow_internal_dns_suffixes` में न हो, या `allowed_ip_ranges` से मेल न खाए
+- `allow_local` और `allow_private_ip` के डिफ़ॉल्ट मान `true` हैं
+- `allow_external_ips` का डिफ़ॉल्ट मान `false` है

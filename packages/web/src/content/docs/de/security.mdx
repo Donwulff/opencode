@@ -1,0 +1,402 @@
+---
+title: Sicherheit
+description: Netzwerksicherheitskontrollen, URL-Validierung und Audit-Protokollierung.
+---
+
+OpenCode bietet umfassende Sicherheitskontrollen zur Einschränkung des Netzwerkzugriffs und zur Überwachung der Systemaktivität. Diese Funktionen sind für interne Umgebungen konzipiert, in denen Sie kontrollieren müssen, mit welchen externen Diensten Ihr Künstliche Intelligenz-Assistent kommunizieren darf.
+
+---
+
+## Sicherheitsmodi
+
+OpenCode unterstützt drei Sicherheitsmodi, die bestimmen, wie Netzwerkanfragen validiert werden:
+
+### `internal-only` (Standard für interne Umgebungen)
+
+Erlaubt nur Localhost private IPs und konfigurierte interne Domains. Alle externen URLs werden blockiert, es sei denn, sie sind explizit erlaubt.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Erlaubt alle URLs, protokolliert externe URLs aber zum Audit-Zweck. Dieser Modus ist nützlich, um Netzwerkaktivität zu überwachen, ohne zu blockieren.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Erlaubt nur URLs, die den entsprechenden URLs in `external_domains` konfigurierten Domains, Localhost, private IPs und interne DNS-Suffixe entsprechen. Alle anderen URLs werden blockiert.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Konfigurationsoptionen
+
+Alle Sicherheitskonfigurationen stehen unter dem `security`-Schlüssel in der OpenCode-Konfiguration.
+
+### `mode`
+
+Auswahl des Sicherheitsmodus. Mögliche Werte: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Array von internen DNS-Suffixen, die erlaubt sind. Darauf dürfen Platzhalter für Subdomain-Übereinstimmung verwendet werden.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+Mit dieser Konfiguration wären die Domains `api.internal.corp.com` und `db.dev.internal` erlaubt.
+
+### `block_domain_regex`
+
+Array von regulären Ausdrücken zur Übereinstimmung und Blockierung spezifischer Domains oder Muster.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Erlaubt Localhost-URLs (Standard: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Erlaubt private IP-Adressen (Standard: `true`).
+
+Folgende private IP-Bereiche werden abgedeckt:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 Loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Aktiviert das Abrufen der Modellliste von `models.dev` (Standard: `true`). Wenn deaktiviert, versucht OpenCode nicht, die neueste Modellliste von models.dev abzurufen.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Aktiviert Audit-Protokollierung (Standard: `true`). Bei Aktivierung werden Sicherheitsereignisse in `~/.config/opencode/audit.jsonl` protokolliert.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Explizit erlaubte externe Domains im Strict-Modus. Unterstützt Platzhaltermuster.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+Mit dem Muster `*.azure.com` wären URLs wie `my-resource.openai.azure.com` erlaubt.
+
+### `allow_external_ips`
+
+Erlaubt externe/public IP-Adressen (Standard: `false`). gilt nur im `mode` `"internal-only"` ist.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Zusätzliche erlaubte IP-Bereiche in CIDR-Notation.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Provider-Sicherheit
+
+Sicherheitskontrollen gelten für alle Provider-Konfigurationen, einschließlich:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Lokale Modelle (llama.cpp, Ollama)
+- benutzerdefinierte Provider
+
+Wenn ein Provider mit einer benutzerdefinierten `baseURL` oder Endpoint konfiguriert ist, wird die URL validiert, bevor der Provider geladen wird.
+
+### Beispiel: OpenAI mit benutzerdefiniertem Endpoint
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Wenn die `baseURL` nicht mit erlaubten Domains übereinstimmt, wird der Provider blockiert und ein Fehler protokolliert.
+
+---
+
+## Audit-Protokollierung
+
+Audit-Protokollierung verfolgt alle sicherheitsrelevanten Ereignisse in `~/.config/opencode/audit.jsonl`.
+
+### Protokolleintragstruktur
+
+Jeder Eintrag enthält:
+
+- `timestamp`: ISO 8601 Zeitstempel
+- `type`: Kategorie des Ereignisses (`url_check`, `provider_load`, `tool_request`, `blocked_access`, etc.)
+- `level`: `info` oder `warn`
+- `message`: Menschlich lesbare Beschreibung
+- `context`: Zusätzlicher Kontext (URLs, Provider-IDs, Tool-Namen)
+- `metadata`: Maschinenlesbare Daten (erlaubt-Status, Models-Anzahl, etc.)
+
+### Ereignistypen
+
+| Typ                    | Beschreibung                     |
+| ---------------------- | -------------------------------- |
+| `url_check`            | URL-Validierung erfolgreich      |
+| `blocked_access`       | URL-Validierung fehlgeschlagen   |
+| `provider_load`        | Versuch, Provider zu laden       |
+| `model_access`         | Versuch, auf Model zuzugreifen   |
+| `tool_request`         | Tool-Netzwerkanfrage erlaubt     |
+| `tool_blocked`         | Tool-Netzwerkanfrage blockiert   |
+| `fetch_request`        | HTTP-Anfrage durchgeführt        |
+| `session_model_change` | Versuch, Session-Model zu ändern |
+
+### Beispiel Audit-Protokoll
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Audit-Protokolle anzeigen
+
+Das Audit-Protokoll ist append-only. Sie können letzte Einträge anzeigen:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Beispielkonfiguration
+
+### Strict-Sicherheit mit internem Zugriff
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Entwicklung mit externem Zugriffs-Protokoll
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-Only mit benutzerdefinierter Blockliste
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev-Steuerungen
+
+Die Option `models_dev_enabled` steuert, ob OpenCode die neueste Modellliste von `https://models.dev` abrufen kann.
+
+### Funktionsweise
+
+1. Beim Start prüft OpenCode, ob `models_dev_enabled` `false` sei
+2. Wenn deaktiviert, werden die neuesten Models nicht abgerufen, sondern nur zwischengespeicherte/bekannte Models verwendet
+3. Wenn aktiviert, werden Models von `models.dev` mit Sicherheitsvalidierung abgerufen
+
+### Deaktivieren von models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Wenn deaktiviert:
+
+- Es erscheint eine Protokollmeldung: `"models.dev fetching is disabled by security configuration"`
+- Es können nur Models verwendet werden, die OpenCode bereits bekannt sind
+- Nützlich für luftgekoppelte Umgebungen oder wenn die verfügbaren Models strikt kontrolliert werden sollen
+
+---
+
+## Tool-Ausführung
+
+### webfetch Tool
+
+Das `webfetch` Tool validiert URLs gegen die Sicherheitskonfiguration, bevor Inhalte abgerufen werden:
+
+1. URL-Format prüfen (muss mit `http://` oder `https://` beginnen)
+2. URL gegen Sicherheitskonfiguration validieren
+3. Wenn blockiert: Fehler werfen und blockierten Zugriff protokollieren
+4. Wenn erlaubt: mit Abruf fortfahren und erfolgreiche Validierung protokollieren
+
+### websearch Tool
+
+Das `websearch` Tool validiert die MCP-Endpoint-URL:
+
+1. MCP-Endpoint-URL erstellen: `https://mcp.exa.ai/mcp`
+2. Gegen Sicherheitskonfiguration validieren
+3. Wenn blockiert: Fehler werfen und blockierten Zugriff protokollieren
+4. Wenn erlaubt: Suche ausführen und erfolgreiche Validierung protokollieren
+
+### Tool-Validierungsablauf
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                           ↓ Yes
+                                      Proceed
+                                           ↓ No
+                                     Log & Block
+```
+
+---
+
+## Hinweise
+
+- Die Sicherheitsvalidierung erfolgt **vor** Tool-Ausführung und Provider-Ladung
+- Die Audit-Protokollierung wird **immer** angewendet, wenn aktiviert, unabhängig vom Ergebnis
+- Im `strict`-Modus ist **nichts** erlaubt, es sei denn, es ist explizit in `external_domains`, `allow_internal_dns_suffixes` enthalten oder stimmt mit `allowed_ip_ranges` überein
+- Die Standardwerte für `allow_local` und `allow_private_ip` sind `true`
+- Der Standardwert für `allow_external_ips` ist `false`

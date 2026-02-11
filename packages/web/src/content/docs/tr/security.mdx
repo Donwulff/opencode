@@ -1,0 +1,402 @@
+---
+title: Güvenlik
+description: Ağ güvenlik kontrolleri, URL doğrulama ve denetlemesi.
+---
+
+OpenCode, ağ erişimini kısıtlamak ve sistem etkinliğini izlemek için kapsamlı güvenlik kontrolleri sağlar. Bu özellikler, yapay zeka asistanınızın hangi harici servislerle iletişim kurabileceğini kontrol etmeniz gereken yalnızca iç ortamlar için tasarlanmıştır.
+
+---
+
+## Güvenlik Modları
+
+OpenCode, ağ isteklerinin nasıl doğrulanacağını belirleyen üç güvenlik modu destekler:
+
+### `internal-only` (İç ortamlar için varsayılan)
+
+Yalnızca localhost, özel IP'ler ve yapılandırılmış iç etki alanlarını izin verir. Dış URL'ler açıkça izin verilmedikçe engellenir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Tüm URL'lere izin verir ancak denetleme amaçlı harici URL'leri kaydeder. Bu mod ağ etkinliğini engellemeksizin izlemek için hữustur.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Yalnızca `external_domains` ile açıkça yapılandırılan etki alanlarına, localhost'a, özel IP'lere ve iç DNS son eklerine uyan URL'lere izin verir. Diğer tüm URL'ler engellenir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Yapılandırma Seçenekleri
+
+Tüm güvenlik yapılandırması OpenCode yapılandırmanızdaki `security` anahtarının altında yer alır.
+
+### `mode`
+
+Güvenlik modu seçimi. Şunlardan biri olur: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+İzin verilecek iç DNS son eklerinin dizisi. Subdomain eşleştirmek için joker karakterler içerebilir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+Bu yapılandırma ile `api.internal.corp.com` ve `db.dev.internal` izin verilecektir.
+
+### `block_domain_regex`
+
+Eşleşecek ve engellemek için özel etki alanlarını veya kalıpları eşleştiren regular ifadelerin dizisi.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Localhost URL'lerine izin verir (varsayılan: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Özel IP adreslerine izin verir (varsayılan: `true`).
+
+Kapsadığı özel IP aralıkları:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+`models.dev` adresinden model listesini çekmeyi etkinleştirir (varsayılan: `true`). Devre dışı bırakıldığında OpenCode en son model listesini models.dev'den çekmeyecektir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Denetim günlüğünü etkinleştirir (varsayılan: `true`). Etkinleştirildiğinde güvenlik olayları `~/.config/opencode/audit.jsonl` dosyasına kaydedilir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+`strict` modunda açıkça izin verilen harici etki alanları. Joker karakter kalıpları destekler.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+`*.azure.com` kalıbı ile `my-resource.azure.com` gibi URL'ler izin verilecektir.
+
+### `allow_external_ips`
+
+Harici IP adreslerine izin verir (varsayılan: `false`). Yalnızca `mode` `"internal-only"` olduğunda geçerlidir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+CIDR notasyonunda ek izin verilen IP aralıkları.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Sağlayıcı Güvenliği
+
+Güvenlik kontrolleri tüm sağlayıcı yapılandırmalarına uygulanır:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Yerel modeller (llama.cpp, Ollama)
+- Özel sağlayıcılar
+
+Sağlayıcı özel `baseURL` veya endpoint ile yapılandırıldığında, sağlayıcı yüklenmeden önce URL güvenlik yapılandırmasına göre doğrulanır.
+
+### Örnek: Özel endpoint ile OpenAI
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+`baseURL` izin verilen etki alanlarıyla eşleşmezse sağlayıcı engellenecek ve bir hata kaydedilecektir.
+
+---
+
+## Denetim Günlüğü
+
+Denetim günlüğü `~/.config/opencode/audit.jsonl` dosyasına tüm güvenlik olaylarını kaydeder.
+
+### Kayıt Yapısı
+
+Her kayıt şunları içerir:
+
+- `timestamp`: ISO 8601 zaman damgası
+- `type`: Olayın kategorisi (`url_check`, `provider_load`, `tool_request`, `blocked_access`, vb.)
+- `level`: `info` veya `warn`
+- `message`: İnsan okuyabilir açıklama
+- `context`: Ek bağlam (URL'ler, sağlayıcı kimlikleri, araç isimleri)
+- `metadata`: Makine okuyabilir veri (izin verildi durumu, model sayısı, vb.)
+
+### Olay Tipleri
+
+| Tip                    | Açıklama                        |
+| ---------------------- | ------------------------------- |
+| `url_check`            | URL doğrulama başarılı          |
+| `blocked_access`       | URL doğrulama başarısız         |
+| `provider_load`        | Sağlayıcı yükleme denemesi      |
+| `model_access`         | Model erişim denemesi           |
+| `tool_request`         | Araç ağ isteği izin verildi     |
+| `tool_blocked`         | Araç ağ isteği engellendi       |
+| `fetch_request`        | HTTP isteği yapıldı             |
+| `session_model_change` | Oturum modeli değişimi denemesi |
+
+### Örnek Denetim Günlüğü
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Denetim Günlüklerini Görüntüleme
+
+Denetim günlüğü yalnızca ekleme (append-only) yapar. Son girişleri şununla görebilirsiniz:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Örnek Yapılandırma
+
+### İç Erişim ile Strict Güvenlik
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Dış Erişim Günlüğü ile Geliştirme
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Özel Engelleme Listesi ile Sadece İç
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev Kontrolleri
+
+`models_dev_enabled` seçeneği, OpenCode'un `https://models.dev` adresinden en son model listesini çekmek olup olmadığını kontrol eder.
+
+### Nasıl Çalışır
+
+1.  Başlangıçta OpenCode `models_dev_enabled`'in `false` olup olmadığını kontrol eder
+2.  Devre dışıysa, en yeni modelleri çekmeyi atlar ve yalnızca önbelleklenen/bilinen modelleri kullanır
+3.  Etkinse models.dev'den güvenlik doğrulaması ile modelleri çeker
+
+### models.dev'i Devre Dışı Bırakma
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Devre dışı bırakıldığında:
+
+- Log mesajı görünür: `"models.dev fetching is disabled by security configuration"`
+- Yalnızca zaten OpenCode'un bildiği modeller kullanılabilir
+- Hava ile izoleli ortamlar veya kullanılabilir modelleri kesin kontrol altına almak istendiği durumlar için faydalıdır
+
+---
+
+## Araç Çalıştırma
+
+### webfetch Aracı
+
+`webfetch` aracı içeriği çekmeden önce URL'yi güvenlik yapılandırmasına göre doğrular:
+
+1.  URL biçimini kontrol eder (`http://` veya `https://` ile başlamalıdır)
+2.  URL'yi güvenlik yapılandırmasına göre doğrular
+3.  Engellenmişse: hata verir ve engellenen erişimi kaydeder
+4.  İzin verilmişse: fetch işlemine devam eder ve başarılı doğrulamayı kaydeder
+
+### websearch Aracı
+
+`websearch` aracı MCP endpoint URL'ini doğrular:
+
+1.  MCP endpoint URL'i oluşturur: `https://mcp.exa.ai/mcp`
+2.  Güvenlik yapılandırmasına göre doğrular
+3.  Engellenmişse: hata verir ve engellenen erişimi kaydeder
+4.  İzin verilmişse: arama yapar ve başarılı doğrulamayı kaydeder
+
+### Araç Doğrulama Akışı
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                          ↓ Yes
+                                     Proceed
+                                          ↓ No
+                                    Log & Block
+```
+
+---
+
+## Notlar
+
+- Güvenlik doğrulama Araç çalıştırmasından ve sağlayıcı yüklemeden **önce** yapılır
+- Denetim günlüğü, sonucun ne olduğu fark etmeksizin etkinleştirildiğinde **her zaman** uygulanır
+- `strict` modunda, `external_domains`, `allow_internal_dns_suffixes` içinde açıkça belirtilmedikçe veya `allowed_ip_ranges` ile eşleşmedikçe **hiçbir şey** izin verilmez
+- `allow_local` ve `allow_private_ip` için varsayılan değerler `true`'dur
+- `allow_external_ips` için varsayılan değer `false`'dur

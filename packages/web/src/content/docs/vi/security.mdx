@@ -1,0 +1,404 @@
+---
+
+title: Bảo mật
+description: Các điều khiển bảo mật mạng, xác thực URL và ghi nhật ký kiểm toán.
+
+---
+
+OpenCode cung cấp các điều khiển bảo mật toàn diện để giới hạn truy cập mạng và giám sát hoạt động hệ thống. Các tính năng này được thiết kế cho các môi trường nội bộ doanh nghiệp, nơi bạn cần kiểm soát các dịch vụ bên ngoài mà trợ lý AI của bạn có thể giao tiếp.
+
+---
+
+## Các chế độ Bảo mật
+
+OpenCode hỗ trợ ba chế độ bảo mật xác định cách các yêu cầu mạng được xác thực:
+
+### \`internal-only\` (Mặc định cho môi trường nội bộ)
+
+Chỉ cho phép localhost, IP riêng và các tên miền nội bộ đã cấu hình. Tất cả các URL bên ngoài bị chặn trừ khi được cho phép rõ ràng.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"mode": "internal-only"
+}
+}
+\`\`\`
+
+### \`external-allowed\`
+
+Cho phép tất cả các URL nhưng ghi lại các URL bên ngoài để mục đích kiểm toán. Chế độ này hữu ích để giám sát hoạt động mạng mà không chặn các URL.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"mode": "external-allowed"
+}
+}
+\`\`\`
+
+### \`strict\`
+
+Chỉ cho phép các URL khớp với các tên miền đã cấu hình rõ ràng trong \`external_domains\`, localhost, IP riêng, và các các đuôi DNS nội bộ. Tất cả các URL khác bị chặn.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"mode": "strict"
+}
+}
+\`\`\`
+
+---
+
+## Tùy chọn Cấu hình
+
+Tất cả cấu hình bảo mật được đặt dưới khóa \`security\` trong tệp cấu hình OpenCode của bạn.
+
+### \`mode\`
+
+Lựa chọn chế độ bảo mật. Một trong: \`"internal-only"\`, \`"external-allowed"\`, \`"strict"\`.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"mode": "strict"
+}
+}
+\`\`\`
+
+### \`allow_internal_dns_suffixes\`
+
+Mảng các đuôi DNS nội bộ được cho phép. Có thể bao gồm wildcard để khớp với tên miền con.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+}
+}
+\`\`\`
+
+Với cấu hình này, \`api.internal.corp.com\` và \`db.dev.internal\` sẽ được phép.
+
+### \`block_domain_regex\`
+
+Mảng các biểu thức chính quy (regex) để khớp và chặn các tên miền hoặc mẫu cụ thể.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"block_domain_regex": [".*\\\\.evil\\\\.com\$", ".*\\\\.test\\\\.com\$"]
+}
+}
+\`\`\`
+
+### \`allow_local\`
+
+Cho phép các URL localhost (mặc định: \`true\`).
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"allow_local": true
+}
+}
+\`\`\`
+
+### \`allow_private_ip\$
+
+Cho phép các địa chỉ IP riêng (mặc định: \`true\`).
+
+Các dải IP lớp A riêng được bao gồm:
+
+- \`10.0.0.0/8\` (Class A)
+- \`172.16.0.0/12\` (Class B)
+- \`192.168.0.0/16\` (Class C)
+- \`127.0.0.0/8\` (Loopback)
+- \`::1\` (IPv6 loopback)
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"allow_private_ip": true
+}
+}
+\`\`\`
+
+### \`models_dev_enabled\`
+
+Bật việc lấy danh sách mô hình từ \`models.dev\` (mặc định: \`true\`). Khi bị tắt, OpenCode sẽ không cố gắng lấy danh sách mô hình mới nhất từ models.dev.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"models_dev_enabled": false
+}
+}
+\`\`\`
+
+### \`audit_log_enabled\$
+
+Bật ghi nhật ký kiểm toán (mặc định: \`true\`). Khi được bật, các sự kiện bảo mật được ghi vào \`~/.config/opencode/audit.jsonl file\`.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"audit_log_enabled": true
+}
+}
+\`\`\`
+
+### \`external_domains\`
+
+Các tên miền bên ngoài được cho phép rõ ràng trong chế độ strict. Hỗ trợ các mẫu wildcard.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"mode": "strict",
+"external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+}
+}
+\`\`\`
+
+Với mẫu \`\*.azure.com\`, các URL như \`my-resource.openai.azure.com\` sẽ được phép.
+
+### \`allow_external_ips\`
+
+Cho phép các địa chỉ IP bên ngoài/công cộng (mặc định: \`false\`). Chỉ áp dụng khi \`mode\` là \`"internal-only"\`.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"mode": "internal-only",
+"allow_external_ips": false
+}
+}
+\`\`\`
+
+### \`allowed_ip_ranges\`
+
+Các dải IP được cho phép bổ sung ở định dạng CIDR.
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+}
+}
+\`\`\`
+
+---
+
+## Bảo mật Nhà cung cấp
+
+Các điều khiển bảo mật áp dụng cho tất cả cấu hình nhà cung cấp, bao gồm:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Mô hình địa phương (llama.cpp, Ollama)
+- Nhà cung cấp tùy chỉnh
+
+Khi một nhà cung cấp được cấu hình với \`baseURL\` hoặc endpoint tùy chỉnh, URL được xác thực theo cấu hình bảo mật trước khi nhà cung cấp được tải.
+
+### Ví dụ: OpenAI với endpoint tùy chỉnh
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"mode": "strict",
+"external_domains": ["api.openai.com"]
+},
+"provider": {
+"openai": {
+"options": {
+"baseURL": "https://api.openai.com/v1"
+}
+}
+}
+}
+\`\`\`
+
+Nếu \`baseURL\` không khớp với các tên miền được cho phép, nhà cung cấp sẽ bị chặn và một lỗi được ghi lại.
+
+---
+
+## Ghi nhật ký Kiểm toán
+
+Ghi nhật ký kiểm toán theo dõi tất cả các sự kiện liên quan đến bảo mật vào \`~/.config/opencode/audit.jsonl\`.
+
+### Cấu trúc_ENTRIES Nhật ký
+
+Mỗi entry chứa:
+
+- \`timestamp\`: dấu thời gian ISO 8601
+- \`type\`: danh mục sự kiện (\`url_check\`, \`provider_load\`, \`tool_request\`, \`blocked_access\`, v.v.)
+- \`level\`: \`info\` hoặc \`warn\`
+- \`message\`: mô tả dễ đọc bởi con người
+- \`context\`: thông tin bổ sung (URL, ID nhà cung cấp, tên công cụ)
+- \`metadata\`: dữ liệu có thể đọc bởi máy (trạng thái được phép, số lượng mô hình, v.v.)
+
+### Các Loại Sự kiện
+
+| Type                     | Mô tả                         |
+| ------------------------ | ----------------------------- |
+| \`url_check\`            | Xác thực URL thành công       |
+| \`blocked_access\`       | Xác thực URL thất bại         |
+| \`provider_load\`        | Nỗ lực tải nhà cung cấp       |
+| \`model_access\`         | Nỗ lực truy cập mô hình       |
+| \`tool_request\`         | Cho phép yêu cầu mạng công cụ |
+| \`tool_blocked\`         | Chặn yêu cầu mạng công cụ     |
+| \`fetch_request\`        | HTTP request đã thực hiện     |
+| \`session_model_change\` | Nỗ lực thay đổi mô hình phiên |
+
+### Ví dụ Nhật ký Kiểm toán
+
+\`\`\`json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+\`\`\`
+
+### Xem Nhật ký Kiểm toán
+
+Nhật ký kiểm toán là append-only (chỉ được thêm vào – không thể sửa đổi hoặc xóa). Bạn có thể xem các entry gần đây với:
+
+\`\`\`bash
+tail ~/.config/opencode/audit.jsonl
+\`\`\`
+
+---
+
+## Ví dụ Cấu hình
+
+### Bảo mật Strict với Truy cập Nội bộ
+
+\`\`\`json title="opencode.json"
+{
+"\$schema": "https://opencode.ai/config.json",
+"security": {
+"mode": "strict",
+"allow_local": true,
+"allow_private_ip": true,
+"models_dev_enabled": true,
+"audit_log_enabled": true,
+"allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+"external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+"allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+},
+"provider": {
+"openai": {
+"options": {
+"apiKey": "{env:OPENAI_API_KEY}"
+}
+},
+"anthropic": {
+"options": {
+"apiKey": "{env:ANTHROPIC_API_KEY}"
+}
+}
+}
+}
+\`\`\`
+
+### Phát triển với Ghi log Truy cập External
+
+\`\`\`json title="opencode.json"
+{
+"\$schema": "https://opencode.ai/config.json",
+"security": {
+"mode": "external-allowed",
+"allow_local": true,
+"allow_private_ip": true,
+"audit_log_enabled": true
+}
+}
+\`\`\`
+
+### Internal-Only với Danh sách chặn Tùy chỉnh
+
+\`\`\`json title="opencode.json"
+{
+"\$schema": "https://opencode.ai/config.json",
+"security": {
+"mode": "internal-only",
+"allow_local": true,
+"allow_private_ip": true,
+"block_domain_regex": [".*\\\\.sandbox.*", ".*\\\\.test.*"],
+"allow_internal_dns_suffixes": [".corp.local"]
+}
+}
+\`\`\`
+
+---
+
+## Các Điều khiển Models.dev
+
+Tùy chọn \`models_dev_enabled\` kiểm soát liệu OpenCode có thể lấy danh sách mô hình mới nhất từ \`https://models.dev\` hay không.
+
+### Cách Hoạt động
+
+1. Khi khởi động, OpenCode kiểm tra xem \`models_dev_enabled\` có phải là \`false\` hay không
+2. Nếu bị tắt, nó bỏ qua việc lấy các mô hình mới nhất và chỉ sử dụng các mô hình đã biết/lưu trong bộ nhớ đệm
+3. Nếu được bật, nó lấy các mô hình từ \`models.dev\` với xác thực bảo mật
+
+### Tắt models.dev
+
+\`\`\`json title="opencode.json"
+{
+"security": {
+"models_dev_enabled": false
+}
+}
+\`\`\`
+
+Khi bị tắt:
+
+- Một thông báo log xuất hiện: "\`models.dev fetching is disabled by security configuration\`"
+- Chỉ các mô hình mà OpenCode đã biết mới có thể được sử dụng
+- Hữu ích cho môi trường air-gapped (môi trường completely isolated khỏi mạng Internet) hoặc khi bạn muốn kiểm soát chặt chẽ các mô hình khả dụng
+
+---
+
+## Thực thi Công cụ
+
+### Công cụ webfetch
+
+Công cụ \`webfetch\` xác thực URL theo cấu hình bảo mật trước khi lấy nội dung:
+
+1. Kiểm tra định dạng URL (phải bắt đầu bằng \`http://\` hoặc \`https://\`)
+2. Xác thực URL theo cấu hình bảo mật
+3. Nếu bị chặn: đưa ra lỗi và ghi lại quyền truy cập bị chặn
+4. Nếu được phép: thực hiện fetch và ghi lại xác thực thành công
+
+### Công cụ websearch
+
+Công cụ \`websearch\` xác thực URL endpoint MCP:
+
+1. Build URL endpoint MCP: \`https://mcp.exa.ai/mcp\`
+2. Xác thực theo cấu hình bảo mật
+3. Nếu bị chặn: đưa ra lỗi và ghi lại quyền truy cập bị chặn
+4. Nếu được phép: thực hiện tìm kiếm và ghi lại xác thực thành công
+
+### Quy trình Xác thực Công cụ
+
+\`\`\`
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+↓ Yes
+Proceed
+↓ No
+Log & Block
+\`\`\`
+
+---
+
+## Ghi chú
+
+- Xác thực bảo mật xảy ra **trước** việc thực thi công cụ và tải nhà cung cấp
+- Ghi nhật ký kiểm toán **luôn** được áp dụng khi được bật, bất kể kết quả
+- Trong chế độ \`strict\`, **không có gì** được cho phép trừ khi được liệt kê rõ ràng trong \`external_domains\`, \`allow_internal_dns_suffixes\`, hoặc khớp với \`allowed_ip_ranges\`
+- Giá trị mặc định của \`allow_local\` và \`allow_private_ip\` là \`true\`
+- Giá trị mặc định của \`allow_external_ips\` là \`false\`

@@ -14,6 +14,9 @@ import { Env } from "../env"
 import { Instance } from "../project/instance"
 import { Flag } from "../flag/flag"
 import { iife } from "@/util/iife"
+import { auditLogger } from "@/util/audit"
+import { validateUrlFromConfig } from "@/util/network"
+import type { SecurityConfigType } from "@/util/network"
 
 // Direct imports for bundled providers
 import { createAmazonBedrock, type AmazonBedrockProviderSettings } from "@ai-sdk/amazon-bedrock"
@@ -537,10 +540,7 @@ export namespace Provider {
     "llama.cpp": async (input) => {
       const config = await Config.get()
       const providerConfig = config.provider?.["llama.cpp"]
-      const configURL =
-        providerConfig?.options?.baseURL ??
-        providerConfig?.options?.api ??
-        providerConfig?.api
+      const configURL = providerConfig?.options?.baseURL ?? providerConfig?.options?.api ?? providerConfig?.api
 
       if (!configURL) return { autoload: false }
 
@@ -559,7 +559,7 @@ export namespace Provider {
         if (!response.ok) {
           log.warn("Failed to fetch llama.cpp models", {
             status: response.status,
-            url: `${baseURL}/v1/models`,
+            url: `${apiURL}/v1/models`,
           })
           return { autoload: false }
         }
@@ -1111,6 +1111,52 @@ export namespace Provider {
           const combined = signals.length > 1 ? AbortSignal.any(signals) : signals[0]
 
           opts.signal = combined
+        }
+
+        // Extract URL for security validation
+        let urlToValidate: string = ""
+        try {
+          if (typeof input === "string") {
+            urlToValidate = input
+          } else if (input instanceof URL) {
+            urlToValidate = input.href
+          } else if (input instanceof Request) {
+            urlToValidate = input.url
+          } else if (typeof input === "object" && "url" in input) {
+            urlToValidate = String((input as any).url)
+          } else {
+            urlToValidate = String(input)
+          }
+
+          // Validate URL against security config
+          const config = await Config.get()
+          const securityConfig = config.security as SecurityConfigType | undefined
+          if (securityConfig) {
+            const validation = validateUrlFromConfig(urlToValidate, securityConfig)
+            if (!validation.allowed) {
+              auditLogger.logToolRequest(
+                "unknown",
+                "sdk-fetch",
+                urlToValidate,
+                model.providerID,
+                false,
+                validation.reason,
+              )
+              throw new Error(validation.reason)
+            }
+            auditLogger.logToolRequest("unknown", "sdk-fetch", urlToValidate, model.providerID, true, "URL validated")
+          }
+        } catch (e) {
+          // If URL extraction fails, block the request
+          auditLogger.logToolRequest(
+            "unknown",
+            "sdk-fetch",
+            urlToValidate ?? "unknown",
+            model.providerID,
+            false,
+            `Failed to extract/validate URL: ${e}`,
+          )
+          throw e
         }
 
         // Strip openai itemId metadata following what codex does

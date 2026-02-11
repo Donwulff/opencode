@@ -1,0 +1,402 @@
+---
+title: Sikkerhed
+description: Netværkssikkerhedsstyring, URL-validering og revisionslogning.
+---
+
+OpenCode tilbyder omfattende sikkerhedsstyring for at begrænse netværkstilgang og overvåge systemaktivitet. Disse funktioner er designet til interne miljøer, hvor du har brug for at kontrollere, hvilke eksterne tjenester din AI-assistant må kommunikere med.
+
+---
+
+## Sikkerhedstilstande
+
+OpenCode understøtter tre sikkerhedstilstande, der afgør, hvordan netværksanmodninger valideres:
+
+### `internal-only` (Standard for interne miljøer)
+
+Tillader kun localhost, private IP'er og konfigurerede interne domæner. Alle eksterne URLs blokeres, med mindre de eksplicit er tilladt.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Tillader alle URLs, men logger eksterne URLs til revisionsformål. Denne tilstand er nyttig til at overvåge netværksaktivitet uden at blokere.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Tillader kun URLs, der matcher eksplicit konfigurerede domæner i `external_domains`, localhost, private IP'er og interne DNS-suffikser. Alle andre URLs blokeres.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Konfigurationsindstillinger
+
+Alle sikkerhedsindstillinger placeres under `security`-nøglen i din OpenCode-konfiguration.
+
+### `mode`
+
+Valg af sikkerhedstilstand. En af: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Array af interne DNS-suffikser, der skal tillades. Kan inkludere jokertegn til subdomænematching.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+Med denne konfiguration ville `api.internal.corp.com` og `db.dev.internal` være tilladt.
+
+### `block_domain_regex`
+
+Array af regulære udtryk til at matche og blokere specifikke domæner eller mønstre.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Tillader localhost-URL'er (standard: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Tillader private IP-adresser (standard: `true`).
+
+Private IP-intervaller dækket:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Aktiverer hentning af modelliste fra `models.dev` (standard: `true`). Når deaktiveret, vil OpenCode ikke forsøge at hente den seneste modelliste fra models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Aktiverer revisionslogning (standard: `true`). Når aktiveret, logges sikkerhedsbegivenheder til `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Eksplicit tilladte eksterne domæner i strict-tilstand. Understøtter jokertegnmønstre.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+Med mønstret `*.azure.com` ville URLs som `my-resource.openai.azure.com` være tilladt.
+
+### `allow_external_ips`
+
+Tillader eksterne/publikum IP-adresser (standard: `false`). Gælder kun, når `mode` er `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Yderligere tilladte IP-intervaller i CIDR-notion.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Provider-sikkerhed
+
+Sikkerhedsstyring gælder for alle provider-konfigurationer, herunder:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Lokale modeller (llama.cpp, Ollama)
+- Brugerdefinerede providers
+
+Når en provider er konfigureret med en brugerdefineret `baseURL` eller endpoint, valideres URL'en mod sikkerhedskonfigurationen, før provideren indlæses.
+
+### Eksempel: OpenAI med brugerdefineret endpoint
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Hvis `baseURL` ikke matcher tilladte domæner, blokeres provideren, og der logges en fejl.
+
+---
+
+## Revisionslogning
+
+Revisionslogning holder styr på alle sikkerhedsrelaterede begivenheder til `~/.config/opencode/audit.jsonl`.
+
+### Logindlæsningsstruktur
+
+Hvert indlæsningspost indeholder:
+
+- `timestamp`: ISO 8601-timestamp
+- `type`: Kategori af begivenhed (`url_check`, `provider_load`, `tool_request`, `blocked_access`, mv.)
+- `level`: `info` eller `warn`
+- `message`: Menneskeligt læselig beskrivelse
+- `context`: Yderligere kontekst (URL'er, provider-ID'er, værktøjsnavne)
+- `metadata`: Maskinlæselig data (tilladt status, antal modeller, mv.)
+
+### Begivenhedstyper
+
+| Type                   | Beskrivelse                        |
+| ---------------------- | ---------------------------------- |
+| `url_check`            | URL-validering lykkedes            |
+| `blocked_access`       | URL-validering mislykkedes         |
+| `provider_load`        | Forsøg på at indlæse provider      |
+| `model_access`         | Forsøg på modeladgang              |
+| `tool_request`         | Værktøjsnetværksanmodning tilladt  |
+| `tool_blocked`         | Værktøjsnetværksanmodning blokeret |
+| `fetch_request`        | HTTP-anmodning udført              |
+| `session_model_change` | Forsøg på ændring af sessionsmodel |
+
+### Eksempel på revisionslog
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL ikke i allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider indlæst: openai (brugerdefineret, 150 modeller)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Se revisionslogge
+
+Revisionsloggen er append-only. Du kan se seneste logposter med:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Eksempel på konfiguration
+
+### Strict sikkerhed med intern adgang
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Udvikling med ekstern adgangslogning
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-only med brugerdefineret blokliste
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev-styring
+
+Indstillingen `models_dev_enabled` styrer, om OpenCode kan hente den nyeste modelliste fra `https://models.dev`.
+
+### Hvordan det fungerer
+
+1. Ved opstart kontrollerer OpenCode, om `models_dev_enabled` er `false`
+2. Hvis deaktiveret, springes hentning af de nyeste modeller over, og kun caching/ kendte modeller bruges
+3. Hvis aktiveret, hentes modeller fra `models.dev` med sikkerhedsvalidering
+
+### Deaktivere models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Når deaktiveret:
+
+- En logbesked vises: `"models.dev-hentning er deaktiveret af sikkerhedskonfiguration"`
+- Kun modeller, som OpenCode allerede kender, kan bruges
+- Nyttigt for luftgapede miljøer eller når du stramt vil kontrollere tilgængelige modeller
+
+---
+
+## Værktøjskørsel
+
+### webfetch-værktøj
+
+`webfetch`-værktøjet validerer URL'er mod sikkerhedskonfigurationen, før indhold hentes:
+
+1. Kontroller URL-format (skal starte med `http://` eller `https://`)
+2. Valider URL mod sikkerhedsconfig
+3. Hvis blokeret: fejl og blokeret adgang logges
+4. Hvis tilladt: fortsæt med hentning og log vellykket validering
+
+### websearch-værktøj
+
+`websearch`-værktøjet validerer MCP-endpoint-URL'en:
+
+1. Opret MCP-endpoint-URL: `https://mcp.exa.ai/mcp`
+2. Valider mod sikkerhedsconfig
+3. Hvis blokeret: fejl og blokeret adgang logges
+4. Hvis tilladt: udfør søgning og log vellykket validering
+
+### Værktøjsvalideringsflow
+
+```
+Værktøjsanmodning → Config hentet → Sikkerhed validéret → Tilladt? → Hent / Fejl
+                                               ↓ Ja
+                                          Fortsæt
+                                               ↓ Nej
+                                          Log & Bloker
+```
+
+---
+
+## Noter
+
+- Sikkerhedsvalidering sker **før** værktøjskørsel og providerindlæsning
+- Revisionslogning er **altid** gældende, når den er aktiveret, uanset udfald
+- I `strict`-tilstand tillades **intet** medmindre det eksplicit er i `external_domains`, `allow_internal_dns_suffixes` eller matcher `allowed_ip_ranges`
+- Standardværdierne for `allow_local` og `allow_private_ip` er `true`
+- Standardværdien for `allow_external_ips` er `false`

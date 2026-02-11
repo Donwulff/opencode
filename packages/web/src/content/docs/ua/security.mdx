@@ -1,0 +1,402 @@
+---
+title: Безпека
+description: Контроль мережевої безпеки, валідація URL та журнал аудиту.
+---
+
+OpenCode надає комплексні засоби безпеки для обмеження доступу до мережі та моніторингу активності системи. Ці функції розроблені для внутрішніх середовищ, де потрібно контролювати, з якими зовнішніми сервісами може взаємодіяти AI-асистент.
+
+---
+
+## Режими безпеки
+
+OpenCode підтримує три режими безпеки, які визначають, як валидуються мережеві запити:
+
+### `internal-only` (Типовий для внутрішніх середовищ)
+
+Дозволяє лише localhost, приватні IP-адреси та налаштовані внутрішні домени. Усі зовнішні URL-адреси блокуються, якщо вони явно не дозволені.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Дозволяє усі URL-адреси, але логує зовнішні URL-адреси для цілей аудиту. Цей режим корисний для моніторингу мережевої активності без блокування.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Дозволяє лише URL-адреси, які відповідають явно налаштованим доменам в `external_domains`, localhost, приватні IP-адреси та внутрішні суфікси DNS. Усі інші URL-адреси блокуються.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Параметри конфігурації
+
+Усі параметри конфігурації безпеки розміщуються в ключі `security` у вашому конфіг OpenCode.
+
+### `mode`
+
+Вибір режиму безпеки. Один із: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Масив внутрішніх DNS-суфіксів для дозволу. Може містити символи підстановки для зіставлення піддоменів.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+З цією конфігурацією `api.internal.corp.com` та `db.dev.internal` будуть дозволені.
+
+### `block_domain_regex`
+
+Масив регулярних виразів для зіставлення та блокування певних доменів або шаблонів.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Дозволити URL-адреси localhost (типово: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Дозволити приватні IP-адреси (типово: `true`).
+
+Покриті діапазони приватних IP-адрес:
+
+- `10.0.0.0/8` (клас A)
+- `172.16.0.0/12` (клас B)
+- `192.168.0.0/16` (клас C)
+- `127.0.0.0/8` (loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Увімкнути отримання моделей з `models.dev` (типово: `true`). Коли вимкнено, OpenCode не отримуватиме оновлений список моделей.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Увімкнути журнал аудиту (типово: `true`). Коли увімкнено, події безпеки записуються до журналу в `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Явно дозволені зовнішні домени в режимі strict. Підтримує шаблони підстановки.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+Зі шаблоном `*.azure.com` URL-адреси як `my-resource.openai.azure.com` будуть дозволені.
+
+### `allow_external_ips`
+
+Дозволити зовнішні/публічні IP-адреси (типово: `false`). Застосовується лише коли `mode` дорівнює `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Додаткові дозволені IP-діапазони в нотації CIDR.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Безпека провайдерів
+
+Контрольні засоби безпеки застосовуються до всіх конфігурацій провайдерів, включаючи:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Локальні моделі (llama.cpp, Ollama)
+- Власні провайдери
+
+Коли провайдер налаштований з власним `baseURL` або endpoint, URL-адреса валідується відповідно до конфігурації безпеки перед завантаженням провайдера.
+
+### Приклад: OpenAI з власним endpoint
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Якщо `baseURL` не відповідає дозволеним доменам, провайдер буде заблоковано, і помилку буде залоговано.
+
+---
+
+## Журнал аудиту
+
+Журнал аудиту відстежує всі події, пов'язані з безпекою до `~/.config/opencode/audit.jsonl`.
+
+### Структура запису журналу
+
+Кожен запис містить:
+
+- `timestamp`: Timestamp у форматі ISO 8601
+- `type`: Категорія події (`url_check`, `provider_load`, `tool_request`, `blocked_access` тощо)
+- `level`: `info` або `warn`
+- `message`: Опис події зрозумілий людині
+- `context`: Додатковий контекст (URL-адреси, ID провайдерів, назви інструментів)
+- `metadata`: Машинно-читані дані (статус дозволу, кількість моделей тощо)
+
+### Типи подій
+
+| Тип                    | Опис                                                |
+| ---------------------- | --------------------------------------------------- |
+| `url_check`            | Успішна валідація URL-адреси                        |
+| `blocked_access`       | Невдала валідація URL-адреси                        |
+| `provider_load`        | Спроба завантаження провайдера                      |
+| `model_access`         | Спроба доступу до моделі                            |
+| `tool_request`         | Доступ до мережевого запиту інструменту дозволено   |
+| `tool_blocked`         | Доступ до мережевого запиту інструменту заблоковано |
+| `fetch_request`        | HTTP-запит здійснено                                |
+| `session_model_change` | Спроба зміни моделі сесії                           |
+
+### Приклад журналу аудиту
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Перегляд журналів аудиту
+
+Журнал аудиту є тільки для дописування. Ви можете переглянути останні записи за допомогою:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Приклад конфігурації
+
+### Strict-безпека з внутрішнім доступом
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Розробка з логуванням зовнішнього доступу
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-only зі списком заборонених доменів
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Контролі models.dev
+
+Параметр `models_dev_enabled` контролює, може чи OpenCode отримувати оновлений список моделей з `https://models.dev`.
+
+### Як це працює
+
+1. Під час запуску OpenCode перевіряє, чи `models_dev_enabled` дорівнює `false`
+2. Якщо вимкнено, він пропускає отримання оновлених моделей і використовує тільки кешовані/відомі моделі
+3. Якщо увімкнено, він отримує моделі з `models.dev` із валідацією безпеки
+
+### Вимкнення models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Коли вимкнено:
+
+- Записується повідомлення в журнал: `"models.dev fetching is disabled by security configuration"`
+- Можна використовувати лише моделі, вже відомі OpenCode
+- Корисно для повністю автономних середовищ або коли потрібно суворо контролювати доступні моделі
+
+---
+
+## Виконання інструментів
+
+### Інструмент webfetch
+
+Інструмент `webfetch` валідує URL-адреси відповідно до конфігурації безпеки перед отриманням контенту:
+
+1. Перевірка формату URL-адреси (має починатися з `http://` або `https://`)
+2. Валідація URL-адреси відповідно до конфігурації безпеки
+3. Якщо заблоковано: виникає помилка та записується заблокований доступ до журналу
+4. Якщо дозволено: продовжується отримання та записується успішна валідація до журналу
+
+### Інструмент websearch
+
+Інструмент `websearch` валідує URL-адресу endpoint MCP:
+
+1. Створення URL-адреси endpoint MCP: `https://mcp.exa.ai/mcp`
+2. Валідація відповідно до конфігурації безпеки
+3. Якщо заблоковано: виникає помилка та записується заблокований доступ до журналу
+4. Якщо дозволено: виконується пошук та записується успішна валідація до журналу
+
+### Потік валідації інструментів
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                             ↓ Yes
+                                        Proceed
+                                             ↓ No
+                                       Log & Block
+```
+
+---
+
+## Примітки
+
+- Валідація безпеки відбувається **перед** виконанням інструментів та завантаженням провайдерів
+- Журнал аудиту **завжди** застосовується, коли ввімкнено, незалежно від результату
+- У режимі `strict` **ніщо** не дозволено, якщо воно явно не вказано в `external_domains`, `allow_internal_dns_suffixes` або не відповідає `allowed_ip_ranges`
+- Типові значення `allow_local` та `allow_private_ip` — `true`
+- Типове значення `allow_external_ips` — `false`

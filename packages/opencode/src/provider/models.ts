@@ -5,6 +5,10 @@ import z from "zod"
 import { Installation } from "../installation"
 import { Flag } from "../flag/flag"
 import { lazy } from "@/util/lazy"
+import { Config } from "@/config/config"
+import { auditLogger } from "@/util/audit"
+import { validateUrlFromConfig } from "@/util/network"
+import type { SecurityConfigType } from "@/util/network"
 
 // Try to import bundled snapshot (generated at build time)
 // Falls back to undefined in dev mode when snapshot doesn't exist
@@ -94,7 +98,42 @@ export namespace ModelsDev {
       .catch(() => undefined)
     if (snapshot) return snapshot
     if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
-    const json = await fetch(`${url()}/api.json`).then((x) => x.text())
+
+    const config = await Config.get()
+    const securityConfig = config.security as SecurityConfigType | undefined
+    const modelsUrl = `${url()}/api.json`
+
+    if (securityConfig?.models_dev_enabled === false) {
+      log.info("models.dev fetching is disabled by security configuration")
+      auditLogger.logProviderLoad("models.dev", "api", 0, false, "models_dev disabled")
+      return {}
+    }
+
+    if (securityConfig) {
+      const validation = validateUrlFromConfig(url(), securityConfig)
+      if (!validation.allowed) {
+        log.error("models.dev access blocked by security configuration", {
+          url: url(),
+          reason: validation.reason,
+        })
+        auditLogger.logUrlCheck(modelsUrl, false, validation.reason, {
+          providerId: "models.dev",
+          source: "config",
+        })
+
+        if (securityConfig.mode === "strict") {
+          auditLogger.logProviderLoad("models.dev", "api", 0, false, validation.reason)
+          return {}
+        }
+        return {}
+      }
+      auditLogger.logUrlCheck(modelsUrl, true, validation.reason, {
+        providerId: "models.dev",
+        source: "config",
+      })
+    }
+
+    const json = await fetch(modelsUrl).then((x) => x.text())
     return JSON.parse(json)
   })
 
@@ -104,8 +143,44 @@ export namespace ModelsDev {
   }
 
   export async function refresh() {
+    const config = await Config.get()
+    const securityConfig = config.security as SecurityConfigType | undefined
+    const modelsUrl = `${url()}/api.json`
+
+    // Check if models_dev is enabled
+    if (securityConfig?.models_dev_enabled === false) {
+      log.info("models.dev fetching is disabled by security configuration")
+      auditLogger.logProviderLoad("models.dev", "api", 0, false, "models_dev disabled")
+      return
+    }
+
+    // Validate URL before fetch
+    if (securityConfig && !Flag.OPENCODE_DISABLE_MODELS_FETCH) {
+      const validation = validateUrlFromConfig(url(), securityConfig)
+      if (!validation.allowed) {
+        log.error("models.dev access blocked by security configuration", {
+          url: url(),
+          reason: validation.reason,
+        })
+        auditLogger.logUrlCheck(modelsUrl, false, validation.reason, {
+          providerId: "models.dev",
+          source: "config",
+        })
+
+        if (securityConfig.mode === "strict") {
+          auditLogger.logProviderLoad("models.dev", "api", 0, false, validation.reason)
+          return
+        }
+        return
+      }
+      auditLogger.logUrlCheck(modelsUrl, true, validation.reason, {
+        providerId: "models.dev",
+        source: "config",
+      })
+    }
+
     const file = Bun.file(filepath)
-    const result = await fetch(`${url()}/api.json`, {
+    const result = await fetch(modelsUrl, {
       headers: {
         "User-Agent": Installation.USER_AGENT,
       },
@@ -114,19 +189,30 @@ export namespace ModelsDev {
       log.error("Failed to fetch models.dev", {
         error: e,
       })
+      auditLogger.logProviderLoad("models.dev", "api", 0, false, `Failed to fetch: ${e}`)
     })
+
     if (result && result.ok) {
       await Bun.write(file, await result.text())
       ModelsDev.Data.reset()
+      auditLogger.logProviderLoad("models.dev", "api", 0, true, "Updated models list")
     }
   }
 }
 
 if (!Flag.OPENCODE_DISABLE_MODELS_FETCH) {
-  ModelsDev.refresh()
+  ModelsDev.refresh().catch(() => {})
   setInterval(
     async () => {
-      await ModelsDev.refresh()
+      try {
+        const config = await Config.get()
+        const securityConfig = config.security as SecurityConfigType | undefined
+        if (securityConfig?.models_dev_enabled !== false) {
+          await ModelsDev.refresh()
+        }
+      } catch {
+        // Config not available in test environment
+      }
     },
     60 * 1000 * 60,
   ).unref()

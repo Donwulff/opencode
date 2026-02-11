@@ -1,0 +1,402 @@
+---
+title: Безопасность
+description: Контроль сетевой безопасности, валидация URL и аудит логов.
+---
+
+OpenCode предоставляет комплексные средства контроля безопасности для ограничения сетевого доступа и мониторинга системной активности. Эти функции предназначены для внутренних сред, где необходимо контролировать, с какими внешними сервисами может общаться ваш AI-ассистент.
+
+---
+
+## Режимы безопасности
+
+OpenCode поддерживает три режима безопасности, определяющих, как валидируются сетевые запросы:
+
+### `internal-only` Режим по умолчанию для внутренних сред
+
+Разрешает только localhost, приватные IP-адреса и указанные внутренние домены. Все внешние URL заблокированы, если не добавлены в белый список.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Разрешает все URL, но логирует внешние URL в целях аудита. Этот режим полезен для мониторинга сетевой активности без блокировки.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Разрешает только URL, соответствующие явно настроенным доменам в `external_domains`, localhost, приватные IP-адреса и внутридоменные DNS-суффиксы. Все остальные URL заблокированы.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Параметры конфигурации
+
+Вся конфигурация безопасности размещается в ключе `security` в конфигурационном файле OpenCode.
+
+### `mode`
+
+Выбор режима безопасности. Одно из значений: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Массив внутренних DNS-суффиксов для разрешения. Может содержать шаблоны для сопоставления поддоменов.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+С этой конфигурацией `api.internal.corp.com` и `db.dev.internal` будут разрешены.
+
+### `block_domain_regex`
+
+Массив регулярных выражений для сопоставления и блокировки конкретных доменов или паттернов.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Разрешить localhost URL (по умолчанию: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Разрешить приватные IP-адреса (по умолчанию: `true`).
+
+Охватываемые диапазоны приватных IP:
+
+- `10.0.0.0/8`
+- `172.16.0.0/12`
+- `192.168.0.0/16`
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Включить получение списка моделей с `models.dev` (по умолчанию: `true`). Когда отключено, OpenCode не будет пытаться получить актуальный список моделей с models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Включить аудит логирование (по умолчанию: `true`). Когда включено, события безопасности логируются в `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Явно разрешенные внешние домены в режиме strict. Поддерживает wildcard-паттерны.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+С паттерном `*.azure.com` URL-ы типа `my-resource.openai.azure.com` будут разрешены.
+
+### `allow_external_ips`
+
+Разрешить внешние/публичные IP-адреса (по умолчанию: `false`). Применяется только когда `mode` равен `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Дополнительные разрешенные IP-диапазоны в CIDR-нотации.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Безопасность провайдеров
+
+Контроль безопасности применяется ко всем конфигурациям провайдеров, включая:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Локальные модели (llama.cpp, Ollama)
+- Пользовательские провайдеры
+
+Когда провайдер настроен с кастомным `baseURL` или endpoint, происходит валидация URL согласно конфигурации безопасности перед загрузкой провайдера.
+
+### Пример: OpenAI с кастомным endpoint
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Если `baseURL` не соответствует разрешенным доменам, провайдер будет заблокирован и записана ошибка в лог.
+
+---
+
+## Аудит логирование
+
+Аудит логирование отслеживает все события, связанные с безопасностью, в `~/.config/opencode/audit.jsonl` файле.
+
+### Структура записи лога
+
+Каждая запись содержит:
+
+- `timestamp`: ISO 8601 timestamp
+- `type`: Категория события (`url_check`, `provider_load`, `tool_request`, `blocked_access` и т.д.)
+- `level`: `info` или `warn`
+- `message`: Человеко-читаемое описание
+- `context`: Дополнительный контекст (URL, ID провайдеров, имена инструментов)
+- `metadata`: Машинно-читаемые данные (статус разрешения, количество моделей и т.д.)
+
+### Типы событий
+
+| Тип                    | Описание                        |
+| ---------------------- | ------------------------------- |
+| `url_check`            | Успешная валидация URL          |
+| `blocked_access`       | Неудачная валидация URL         |
+| `provider_load`        | Попытка загрузки провайдера     |
+| `model_access`         | Попытка доступа к модели        |
+| `tool_request`         | Запрос инструмента разрешен     |
+| `tool_blocked`         | Запрос инструмента заблокирован |
+| `fetch_request`        | HTTP-запрос выполнен            |
+| `session_model_change` | Попытка смены модели сессии     |
+
+### Пример аудит лога
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Просмотр аудит логов
+
+Аудит лог является только для дополнения. Вы можете просмотреть последние записи с помощью:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Примеры конфигурации
+
+### Strict безопасность с внутренним доступом
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Development с логированием внешнего доступа
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-only с пользовательским блэклистом
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Контроль models.dev
+
+Опция `models_dev_enabled` управляет тем, может ли OpenCode получать актуальный список моделей с `https://models.dev`.
+
+### Как это работает
+
+1. При запуске OpenCode проверяет, равно ли `models_dev_enabled` значению `false`
+2. Если отключено, он пропускает получение актуальных моделей и использует только кэшированные/известные модели
+3. Если включено, он получает модели с `models.dev` с проверкой безопасности
+
+### Отключение models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Когда отключено:
+
+- Появляется сообщение в логе: `"models.dev fetching is disabled by security configuration"`
+- Можно использовать только модели, уже известные OpenCode
+- Полезно для изолированных условий или когда необходимо строго контролировать доступные модели
+
+---
+
+## Выполнение инструментов
+
+### Инструмент webfetch
+
+Инструмент `webfetch` валидирует URL согласно конфигурации безопасности перед получением контента:
+
+1. Проверка формата URL (должен начинаться с `http://` или `https://`)
+2. Валидация URL против конфигурации безопасности
+3. Если заблокирован: ошибка и запись заблокированного доступа
+4. Если разрешен: выполнение fetch и запись успешной валидации
+
+### Инструмент websearch
+
+Инструмент `websearch` валидирует URL endpoint MCP:
+
+1. Построение URL endpoint MCP: `https://mcp.exa.ai/mcp`
+2. Валидация против конфигурации безопасности
+3. Если заблокирован: ошибка и запись заблокированного доступа
+4. Если разрешен: выполнение поиска и запись успешной валидации
+
+### Поток валидации инструментов
+
+```
+Запрос инструмента → Конфигурация получена → Безопасность проверена → Разрешено? → Fetch / Ошибка
+                                           ↓ Да
+                                      Продолжить
+                                           ↓ Нет
+                                     Записать & Блокировать
+```
+
+---
+
+## Примечания
+
+- Валидация безопасности происходит **до** выполнения инструментов и загрузки провайдеров
+- Аудит логирование **всегда** применяется когда включено, независимо от результата
+- В режиме `strict` **ничего** не разрешено, если явно не указано в `external_domains`, `allow_internal_dns_suffixes` или не соответствует `allowed_ip_ranges`
+- Значения по умолчанию для `allow_local` и `allow_private_ip` — `true`
+- Значение по умолчанию для `allow_external_ips` — `false`

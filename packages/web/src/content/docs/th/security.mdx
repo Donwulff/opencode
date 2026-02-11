@@ -1,0 +1,402 @@
+---
+title: ความปลอดภัย
+description: การควบคุมความปลอดภัยของเครือข่าย การตรวจสอบ URL และการบันทึกการตรวจสอบ
+---
+
+OpenCode มีการควบคุมความปลอดภัยที่ครอบคลุม เพื่อจำกัดการเข้าถึงเครือข่ายและการเฝ้าระวังกิจกรรมของระบบ คุณสมบัติเหล่านี้ออกแบบมาสำหรับสภาพแวดล้อมที่ใช้งานภายในเท่านั้น โดยที่คุณต้องควบคุมว่าบริการภายนอกใดที่ผู้ช่วย AI ของคุณสามารถสื่อสารได้
+
+---
+
+## โหมดความปลอดภัย
+
+OpenCode รองรับสามโหมดความปลอดภัยที่กำหนดวิธีการตรวจสอบคำขอเครือข่าย:
+
+### `internal-only` (ค่าเริ่มต้นสำหรับสภาพแวดล้อมภายใน)
+
+อนุญาตเฉพาะ localhost, IP ภายใน และโดเมนภายในที่กำหนดค่าไว้เท่านั้น บล็อก URL ภายนอกทั้งหมดเว้นแต่จะได้รับอนุญาตอย่างชัดเจน
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+อนุญาต URL ทั้งหมดแต่บันทึกการตรวจสอบ URL ภายนอกเพื่อวัตถุประสงค์ในการตรวจสอบ โหมดนี้มีประโยชน์สำหรับการเฝ้าระวังกิจกรรมเครือข่ายโดยไม่ต้องบล็อก
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+อนุญาตเฉพาะ URL ที่ตรงกับโดเมนที่กำหนดค่าไว้อย่างชัดเจนใน `external_domains`, localhost, IP ภายใน และคำต่อท้าย DNS ภายในเท่านั้น บล็อก URL อื่นๆ ทั้งหมด
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## ตัวเลือกการกำหนดค่า
+
+การกำหนดค่าความปลอดภัยทั้งหมดอยู่ภายใต้คีย์ `security` ในไฟล์กำหนดค่า OpenCode
+
+### `mode`
+
+การเลือกโหมดความปลอดภัย คือหนึ่งใน: `"internal-only"`, `"external-allowed"`, `"strict"`
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+ลำดับของคำต่อท้าย DNS ภายในที่อนุญาต ใช้สัญลักษณ์ wildcard สำหรับการจับคู่ subdomain
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+เมื่อกำหนดค่านี้ `api.internal.corp.com` และ `db.dev.internal` จะสามารถเข้าถึงได้
+
+### `block_domain_regex`
+
+ลำดับของ expressions แบบ regular expression เพื่อจับคู่และบล็อกโดเมนหรือรูปแบบเฉพาะ
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+อนุญาต URL ของ localhost (ค่าเริ่มต้น: `true`)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+อนุญาตที่อยู่ IP ภายใน (ค่าเริ่มต้น: `true`)
+
+ช่วงที่อยู่ IP ภายในที่ครอบคลุม:
+
+- `10.0.0.0/8` (คลาส A)
+- `172.16.0.0/12` (คลาส B)
+- `192.168.0.0/16` (คลาส C)
+- `127.0.0.0/8` (ลูปแบ็ค)
+- `::1` (IPv6 ลูปแบ็ค)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+อนุญาตให้ดึงรายการโมเดลจาก `models.dev` (ค่าเริ่มต้น: `true`) หากปิดการใช้งาน OpenCode จะไม่พยายามดึงรายการโมเดลที่ใหม่ที่สุดจาก models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+เปิดการใช้งานการบันทึกการตรวจสอบ (ค่าเริ่มต้น: `true`) เมื่อเปิดการใช้งาน เหตุการณ์ความปลอดภัยจะถูกบันทึกใน `~/.config/opencode/audit.jsonl`
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+โดเมนภายนอกที่อนุญาตอย่างชัดเจนในโหมด strict รองรับรูปแบบ wildcard
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+ด้วยรูปแบบ `*.azure.com` URLs เช่น `my-resource.openai.azure.com` จะสามารถเข้าถึงได้
+
+### `allow_external_ips`
+
+อนุญาตที่อยู่ IP ภายนอกหรือสาธารณะ (ค่าเริ่มต้น: `false`) ค่านี้มีผลเฉพาะเมื่อ `mode` เป็น `"internal-only"`
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+ช่วงที่อยู่ IP ที่อนุญาตเพิ่มเติมในรูปแบบ CIDR notation
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## ความปลอดภัยของผู้ให้บริการ
+
+การควบคุมความปลอดภัยใช้กับการกำหนดค่าผู้ให้บริการทั้งหมด รวมถึง:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- โมเดล local (llama.cpp, Ollama)
+- ผู้ให้บริการแบบกำหนดเอง
+
+เมื่อกำหนดค่าผู้ให้บริการด้วย `baseURL` หรือ endpoint ที่กำหนดเอง URL จะถูกตรวจสอบตามการกำหนดค่าความปลอดภัยก่อนที่ผู้ให้บริการจะถูกโหลด
+
+### ตัวอย่าง: OpenAI ด้วย endpoint ที่กำหนดเอง
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+หาก `baseURL` ไม่ตรงกับโดเมนที่อนุญาต ผู้ให้บริการจะถูกบล็อกและบันทึกข้อผิดพลาด
+
+---
+
+## การบันทึกการตรวจสอบ
+
+การบันทึกการตรวจสอบติดตามเหตุการณ์ที่เกี่ยวข้องกับความปลอดภัยทั้งหมดใน `~/.config/opencode/audit.jsonl`
+
+### โครงสร้างของรายการบันทึก
+
+แต่ละรายการมี:
+
+- `timestamp`: วันที่และเวลาในรูปแบบ ISO 8601
+- `type`: หมวดหมู่ของเหตุการณ์ (`url_check`, `provider_load`, `tool_request`, `blocked_access`, เป็นต้น)
+- `level`: `info` หรือ `warn`
+- `message`: คำอธิบายที่อ่านได้โดยมนุษย์
+- `context`: ข้อมูลเพิ่มเติม (URLs, IDs ของผู้ให้บริการ, ชื่อ tool)
+- `metadata`: ข้อมูลที่อ่านได้โดยเครื่อง (สถานะที่อนุญาต, จำนวนโมเดล, เป็นต้น)
+
+### ประเภทของเหตุการณ์
+
+| ประเภท                 | คำอธิบาย                              |
+| ---------------------- | ------------------------------------- |
+| `url_check`            | การตรวจสอบ URL สำเร็จ                 |
+| `blocked_access`       | การตรวจสอบ URL ล้มเหลว                |
+| `provider_load`        | การพยายามโหลดผู้ให้บริการ             |
+| `model_access`         | การพยายามเข้าถึงโมเดล                 |
+| `tool_request`         | คำขอเครือข่ายของ tool ที่ได้รับอนุญาต |
+| `tool_blocked`         | คำขอเครือข่ายของ tool ที่ถูกปิดกั้น   |
+| `fetch_request`        | คำขอ HTTP ที่ดำเนินการ                |
+| `session_model_change` | การพยายามเปลี่ยนโมเดลของ session      |
+
+### ตัวอย่างบันทึกการตรวจสอบ
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### การดูบันทึกการตรวจสอบ
+
+บันทึกการตรวจสอบมีลักษณะแบบ append-only คุณสามารถดูรายการล่าสุดได้โดยใช้คำสั่ง:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## ตัวอย่างการกำหนดค่า
+
+### ความปลอดภัยแบบ strict พร้อมการเข้าถึงภายใน
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### พัฒนาระบบด้วยการบันทึกการเข้าถึงภายนอก
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### ภายในเท่านั้น (internal-only) พร้อม blocklist ที่กำหนดเอง
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## การควบคุม models.dev
+
+ตัวเลือก `models_dev_enabled` ควบคุมว่า OpenCode สามารถดึงรายการโมเดลที่ใหม่ที่สุดจาก `https://models.dev` ได้หรือไม่
+
+### วิธีการทำงาน
+
+1.  เมื่อเริ่มต้นระบบ OpenCode จะตรวจสอบว่า `models_dev_enabled` เป็น `false` หรือไม่
+2.  หากปิดการใช้งาน จะข้ามการดึงโมเดลล่าสุดและใช้โมเดลที่แคชไว้หรือรู้จักเท่านั้น
+3.  หากเปิดการใช้งาน จะดึงโมเดลจาก `models.dev` โดยมีการตรวจสอบความปลอดภัย
+
+### การปิดการใช้งาน models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+เมื่อปิดการใช้งาน:
+
+- มีข้อความบันทึก: `"models.dev fetching is disabled by security configuration"`
+- ใช้งานได้เฉพาะโมเดลที่ OpenCode รู้จักอยู่แล้วเท่านั้น
+- เหมาะสำหรับสภาพแวดล้อมที่ไม่เชื่อมต่ออินเทอร์เน็ต หรือเมื่อต้องการควบคุมโมเดลที่มีอยู่อย่างเข้มงวด
+
+---
+
+## การดำเนินการ Tool
+
+### Tool webfetch
+
+Tool `webfetch` ตรวจสอบ URL ตามการกำหนดค่าความปลอดภัยก่อนดึงเนื้อหา:
+
+1. ตรวจสอบรูปแบบ URL (ต้องขึ้นต้นด้วย `http://` หรือ `https://`)
+2. ตรวจสอบ URL ตามการกำหนดค่าความปลอดภัย
+3. หากถูกบล็อก: สร้างข้อผิดพลาดและบันทึกการเข้าถึงที่ถูกบล็อก
+4. หากอนุญาต: ดำเนินการดึงข้อมูลและบันทึกการตรวจสอบที่สำเร็จ
+
+### Tool websearch
+
+Tool `websearch` ตรวจสอบ URL endpoint ของ MCP:
+
+1. สร้าง URL endpoint MCP: `https://mcp.exa.ai/mcp`
+2. ตรวจสอบตามการกำหนดค่าความปลอดภัย
+3. หากถูกบล็อก: สร้างข้อผิดพลาดและบันทึกการเข้าถึงที่ถูกบล็อก
+4. หากอนุญาต: ดำเนินการค้นหาและบันทึกการตรวจสอบที่สำเร็จ
+
+### ขั้นตอนการตรวจสอบของ Tool
+
+```
+คำขอ Tool → ดึงข้อมูล Config → ตรวจสอบความปลอดภัย → ผลการตรวจสอบ? → ดึงข้อมูล / ข้อผิดพลาด
+                                           ↓ ใช่
+                                      ดำเนินการต่อ
+                                           ↓ ไม่
+                                     บันทึกและบล็อก
+```
+
+---
+
+## หมายเหตุ
+
+- การตรวจสอบความปลอดภัยเกิดขึ้น **ก่อน** การดำเนินการ tool และการโหลดผู้ให้บริการ
+- การบันทึกการตรวจสอบจะ **เสมอ** ถูกดำเนินการเมื่อเปิดการใช้งาน ไม่ว่าผลลัพธ์จะเป็นเช่นใด
+- ในโหมด `strict` **ไม่มีสิ่งใด** ที่อนุญาตเว้นแต่จะอยู่ใน `external_domains`, `allow_internal_dns_suffixes` หรือตรงกับ `allowed_ip_ranges` เท่านั้น
+- ค่าเริ่มต้นของ `allow_local` และ `allow_private_ip` คือ `true`
+- ค่าเริ่มต้นของ `allow_external_ips` คือ `false`

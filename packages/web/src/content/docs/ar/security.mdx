@@ -1,0 +1,402 @@
+---
+title: الأمان
+description: تحكمّات أمنية للشبكة، التحقق من عناوين URL، وسجلات التدقيق.
+---
+
+يوفر OpenCode تحكمات أمنية شاملة لتقييد الوصول إلى الشبكة ومراقبة نشاط النظام. تم تصميم هذه الميزات للبيئات الداخلية فقط حيث تحتاج إلى التحكم في الخدمات الخارجية التي يمكن لمساعد الذكاء الاصطناعي الخاص بك التواصل معها.
+
+---
+
+## وضعيات الأمان (Security Modes)
+
+يدعم OpenCode ثلاثة وضعيات أمان تحدد كيفية التحقق من طلبات الشبكة:
+
+### `internal-only` (للبيئات الداخلية فقط)
+
+يسمح فقط بعناوين localhost والعناوين الخاصة والإعدادات الداخلية المُكوَّنة. يتم حظر جميع عناوين URL الخارجية ما عدا ما يُسمح به صراحة.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+يسمح بجميع عناوين URL ولكن يسجل عناوين URL الخارجية لأغراض التدقيق. هذا الوضع مفيد لمراقبة نشاط الشبكة دون الحظر.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict` (صارم - موصى به للإنتاج)
+
+يسمح فقط بعناوين URL التي تطابق النطاقات المُكوَّنة بشكل صريح في `external_domains`، وlocalhost وعناوين IP خاصة وامتدادات DNS الداخلية. يتم حظر جميع عناوين URL الأخرى.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## خيارات الإعداد
+
+جميع إعدادات الأمان تأتي تحت مفتاح `security` في ملف إعداد OpenCode الخاص بك.
+
+### `mode` (الوضع)
+
+اختيار وضع الأمان. إحدى القيم التالية: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes` (суفركسات DNS الداخلية)
+
+مصفوفة من امتدادات DNS الداخلية المسموح بها. يمكن أن تتضمن أحرف بديلة لمطابقة النطاقات الفرعية.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+مع هذا الإعداد، سيتم السماح بـ `api.internal.corp.com` و `db.dev.internal`.
+
+### `block_domain_regex` (حظر النطاق باستخدام التعبيرات النمطية)
+
+مصفوفة من التعبيرات النمطية لمطابقة وحظر نطاقات أو أنماط محددة.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local` (السماح بالمحلي)
+
+السماح بعناوين URL المحلية (الافتراضي: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip` (السماح بعناوين IP الخاصة)
+
+السماح بعناوين IP الخاصة (الافتراضي: `true`).
+
+النطاقات المغطاة لعناوين IP الخاصة:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled` (تفعيل models.dev)
+
+تمكين جلب قائمة النماذج من `models.dev` (الافتراضي: `true`). عند التعطيل، لن يحاول OpenCode جلب أحدث قائمة نماذج من models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled` (تفعيل سجلات التدقيق)
+
+تمكين سجلات التدقيق (الافتراضي: `true`). عند التمكين، يتم تسجيل أحداث الأمان في `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains` (النطاقات الخارجية المسموحة)
+
+النطاقات الخارجية المسموح بها بشكل صريح في وضع strict. يدعم أنماط الأحرف البديلة.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+مع النمط `*.azure.com`، سيتم السماح بعناوين مثل `my-resource.openai.azure.com`.
+
+### `allow_external_ips` (السماح بعناوين IP الخارجية)
+
+السماح بعناوين IP الخارجية/العامة (الافتراضي: `false`). ينطبق فقط عندما يكون `mode` هو `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges` (نطاقات IP المسموحة)
+
+نطاقات IP إضافية مسموح بها في تدوين CIDR.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## أمان مزودي الخدمة (Service Provider Security)
+
+تطبق تحكمات الأمان على جميع تكوينات مزودي الخدمة، بما في ذلك:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- النماذج المحلية (llama.cpp، Ollama)
+- مزودي خدمة مخصصين
+
+عند إعداد مزود خدمة مع `baseURL` أو نقطة نهاية مخصصة، يتم التحقق من عنوان URL ضد تكوين الأمان قبل تحميل المزود.
+
+### مثال: OpenAI بنقطة نهاية مخصصة (Example: OpenAI with Custom Endpoint)
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+إذا لم يطابق `baseURL` النطاقات المسموح بها، سيتم حظر المزود وتسجيل خطأ.
+
+---
+
+## سجلات التدقيق (Audit Logs)
+
+سجلات التدقيق تتبع جميع الأحداث المتعلقة بالأمن إلى `~/.config/opencode/audit.jsonl`.
+
+### هيكل إدخال السجل (Record Structure)
+
+يحتوي كل إدخال على:
+
+- `timestamp`: ختم زمني بتنسيق ISO 8601
+- `type`: فئة الحدث (`url_check`, `provider_load`, `tool_request`, `blocked_access`, إلخ)
+- `level`: `info` أو `warn` (مستوى الأهمية)
+- `message`: وصف قابل للقراءة
+- `context`: سياق إضافي (عناوين URLs، معرفات المزود، أسماء الأدوات) (Additional Context)
+- `metadata`: بيانات قابلة للقراءة آليا (حالة السماح، عدد النماذج، إلخ) (Machine-readable Metadata)
+
+### أنواع الأحداث (Event Types)
+
+| النوع                  | الوصف                     |
+| ---------------------- | ------------------------- |
+| `url_check`            | التحقق من عنوان URL ناجح  |
+| `blocked_access`       | فشل التحقق من عنوان URL   |
+| `provider_load`        | محاولة تحميل المزود       |
+| `model_access`         | محاولة الوصول للنموذج     |
+| `tool_request`         | طلب أداة الشبكة مسموح     |
+| `tool_blocked`         | طلب أداة الشبكة مرفوض     |
+| `fetch_request`        | طلب HTTP تم تنفيذه        |
+| `session_model_change` | محاولة تغيير نموذج الجلسة |
+
+### مثال على سجل التدقيق (Audit Log Example)
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### عرض سجلات التدقيق (عرض السجلات)
+
+سجل التدقيق هو append-only. يمكنك عرض الإدخالات الحديثة مع:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## أمثلة على الإعداد
+
+### أمان صارم مع وصول داخلي (Strict Security with Internal Access)
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### تطوير مع تسجيل الوصول الخارجي (Development with External Access Logging)
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### داخلي-فقط مع قائمة حظر مخصصة (Internal-Only with Custom Blocklist)
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## تحكمات models.dev (models.dev Controls)
+
+يتحكم خيار `models_dev_enabled` في ما إذا كان يمكن لـ OpenCode جلب أحدث قائمة نماذج من `https://models.dev`.
+
+### آلية العمل (How It Works)
+
+1. عند بدء التشغيل، يتحقق OpenCode مما إذا كان `models_dev_enabled` هو `false`
+2. إذا تم التعطيل، يتجاوز جلب أحدث النماذج ويستخدم النماذج المخزنة/المعروفة فقط
+3. إذا تم التمكين، يجلب النماذج من `models.dev` مع التحقق الأمني
+
+### تعطيل models.dev (Disabling models.dev)
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+عند التعطيل:
+
+- تظهر رسالة سجل: `"models.dev fetching is disabled by security configuration"`
+- يمكن استخدام النماذج المعروفة فقط لـ OpenCode
+- مفيد لبيئات العزل أو عندما تريد التحكم الصارم في النماذج المتاحة
+
+---
+
+## تنفيذ أدوات الأمان (Tool Implementation)
+
+### أداة webfetch (webfetch Tool)
+
+تطبق أداة `webfetch` التحقق من الأمان على عناوين URL قبل جلب المحتوى:
+
+1. التحقق من تنسيق عنوان URL (يجب أن يبدأ بـ `http://` أو `https://`)
+2. التحقق من عنوان URL ضد تكوين الأمان
+3. إذا تم الحظر: رفع خطأ وتسجيل الحظر
+4. إذا كان مسموحاً: المتابعة مع الجلب وتسجيل التحقق الناجح
+
+### أداة websearch (websearch Tool)
+
+تطبق أداة `websearch` التحقق من عنوان URL لنقطة نهاية MCP:
+
+1. بناء عنوان URL لنقطة نهاية MCP: `https://mcp.exa.ai/mcp`
+2. التحقق ضد تكوين الأمان
+3. إذا تم الحظر: رفع خطأ وتسجيل الحظر
+4. إذا كان مسموحاً: تنفيذ البحث وتسجيل التحقق الناجح
+
+### مسار تنفيذ الأداة (Tool Execution Flow)
+
+```
+طلب الأداة → استرجاع التكوين → التحقق الأمني → مسموح؟ → Fetch / Error
+                                            ↓ نعم
+                                       المتابعة
+                                            ↓ لا
+                                      التسجيل والحظر
+```
+
+---
+
+## ملاحظات (Notes)
+
+- يحدث التحقق الأمني **قبل** تنفيذ الأداة وتحميل المزود
+- يتم تسجيل سجلات التدقيق **دوماً** عند التمكين، بغض النظر عن النتيجة
+- في وضع `strict`، **لا شيء** مسموح إلا إذا كان صريحاً في `external_domains` أو `allow_internal_dns_suffixes` أو يطابق `allowed_ip_ranges`
+- القيم الافتراضية لـ `allow_local` و `allow_private_ip` هي `true`
+- القيمة الافتراضية لـ `allow_external_ips` هي `false`

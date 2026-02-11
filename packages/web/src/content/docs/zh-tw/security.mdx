@@ -1,0 +1,402 @@
+---
+title: 安全性
+description: 網路安全性控制、URL 驗證和稽核日誌。
+---
+
+OpenCode 提供完整的安全性控制，用於限制網路存取和監控系統活動。這些功能專為內部使用環境設計，當你需要控制 AI 助手可以與哪些外部服務通訊時非常有用。
+
+---
+
+## 安全模式
+
+OpenCode 支援三種安全模式，決定網路請求的驗證方式：
+
+### `internal-only`（內部環境的預設值）
+
+只允許本機主機、私有 IP 位址和已設定的內部網域。除非明確允許，否則所有外部 URL 都會被封鎖。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`（外部允許）
+
+允許所有 URL，但會記錄外部 URL 以供稽核。此模式適合在不封鎖的情況下監控網路活動。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`（嚴格模式）
+
+只允許符合明確設定的網域（`external_domains`）、本機主機、私有 IP 位址和內部 DNS 後綴的 URL。其他所有 URL 都會被封鎖。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## 設定選項
+
+所有安全性設定都放在 OpenCode 設定檔案的 `security` 鍵下。
+
+### `mode`
+
+安全性模式選擇。可選值：`"internal-only"`、`"external-allowed"`、`"strict"`。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+允許的內部 DNS 後綴陣列。可包含萬用字元以進行子網域比對。
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+使用此設定時，`api.internal.corp.com` 和 `db.dev.internal` 將被允許。
+
+### `block_domain_regex`
+
+用於匹配並封鎖特定網域或模式的正則表達式陣列。
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+允許本機網址（預設：`true`）。
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+允許私有 IP 位址（預設：`true`）。
+
+涵盖以下私有 IP 位址範圍：
+
+- `10.0.0.0/8`（A 類）
+- `172.16.0.0/12`（B 類）
+- `192.168.0.0/16`（C 類）
+- `127.0.0.0/8`（環回）
+- `::1`（IPv6 環回）
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+啟用從 `models.dev` 獲取模型列表（預設：`true`）。當停用時，OpenCode 將不會嘗試從 models.dev 獲取最新的模型列表。
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+啟用稽核日誌（預設：`true`）。啟用後，安全性事件將記錄到 `~/.config/opencode/audit.jsonl`。
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+嚴格模式下明確允許的外部網域。支援萬用字元模式。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+使用 \*.azure.com 通配符(pattern)時，`my-resource.openai.azure.com` 等 URL 將被允許。
+
+### `allow_external_ips`
+
+允許外部/公有 IP 位址（預設：`false`）。僅在 `mode` 為 `"internal-only"` 時生效。
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+以 CIDR 表示法表示的其他允許 IP 範圍。
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## 提供者安全性
+
+安全性控制適用於所有提供者配置，包括：
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- 本地模型（llama.cpp、Ollama）
+- 自訂提供者
+
+當提供者配置了自訂 `baseURL` 或端點時，會在載入提供者之前驗證 URL 是否符合安全性設定。
+
+### 範例：使用自訂端點的 OpenAI
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+如果 `baseURL` 不符合允許的網域，提供者將被封鎖並記錄錯誤。
+
+---
+
+## 稽核日誌
+
+稽核日誌會追蹤所有與安全性相關的事件至 `~/.config/opencode/audit.jsonl`。
+
+### 日誌項目結構
+
+每個項目包含：
+
+- `timestamp`：ISO 8601 時間戳記
+- `type`：事件類別（`url_check`、`provider_load`、`tool_request`、`blocked_access` 等）
+- `level`：`info` 或 `warn`
+- `message`：人類可讀的描述
+- `context`：額外的上下文（URL、提供者 ID、工具名稱）
+- `metadata`：機器可讀的資料（允許狀態、模型數量等）
+
+### 事件類型
+
+| 類型                   | 說明                 |
+| ---------------------- | -------------------- |
+| `url_check`            | URL 驗證成功         |
+| `blocked_access`       | URL 驗證失敗         |
+| `provider_load`        | 提供者載入嘗試       |
+| `model_access`         | 模型存取嘗試         |
+| `tool_request`         | 工具網路請求已允許   |
+| `tool_blocked`         | 工具網路請求已封鎖   |
+| `fetch_request`        | HTTP 請求已發出      |
+| `session_model_change` | 工作階段模型變更嘗試 |
+
+### 稽核日誌範例
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### 查看稽核日誌
+
+稽核日誌為追加模式。你可以使用以下命令查看最近的項目：
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## 範例配置
+
+### 具有內部存取權的嚴格安全性
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### 具有外部存取權 logging 的開發環境
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### 具有自訂封鎖清單的僅限內部模式
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev 控制
+
+`models_dev_enabled` 選項控制 OpenCode 是否可以從 `https://models.dev` 獲取最新的模型列表。
+
+### 工作原理
+
+1. 啟動時，OpenCode 會檢查 `models_dev_enabled` 是否為 `false`
+2. 如果停用，它會跳過獲取最新的模型，僅使用快取/已知模型
+3. 如果啟用，它會從 `models.dev` 獲取模型並進行安全性驗證
+
+### 停用 models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+停用時：
+
+- 會顯示日誌訊息：`"models.dev fetching is disabled by security configuration"`
+- 僅可使用 OpenCode 已知的模型
+- 適用於空氣隔離環境或需要严格控制可用模型的情況
+
+---
+
+## 工具執行
+
+### webfetch 工具
+
+`webfetch` 工具在擷取內容之前會根據安全性配置驗證 URL：
+
+1. 檢查 URL 格式（必須以 `http://` 或 `https://` 開頭）
+2. 驗證 URL 是否符合安全性配置
+3. 如果被封鎖：引發錯誤並記錄封鎖的存取
+4. 如果允許：繼續擷取並記錄成功驗證
+
+### websearch 工具
+
+`websearch` 工具驗證 MCP 端點 URL：
+
+1. 建立 MCP 端點 URL：`https://mcp.exa.ai/mcp`
+2. 根據安全性配置驗證
+3. 如果被封鎖：引發錯誤並記錄封鎖的存取
+4. 如果允許：執行搜尋並記錄成功驗證
+
+### 工具驗證流程
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                           ↓ Yes
+                                      Proceed
+                                           ↓ No
+                                     Log & Block
+```
+
+---
+
+## 注意
+
+- 安全性驗證在工具執行和提供者載入**之前**發生
+- 無論結果如何，稽核日誌在**啟用時都會套用**
+- 在 `strict` 模式下，**除非明確在** `external_domains`、`allow_internal_dns_suffixes` 或符合 `allowed_ip_ranges`，否則**不允許任何內容**
+- `allow_local` 和 `allow_private_ip` 的預設值為 `true`
+- `allow_external_ips` 的預設值為 `false`

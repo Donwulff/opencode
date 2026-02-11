@@ -2,6 +2,10 @@ import z from "zod"
 import { Tool } from "./tool"
 import DESCRIPTION from "./websearch.txt"
 import { abortAfterAny } from "../util/abort"
+import { auditLogger } from "@/util/audit"
+import { validateUrlFromConfig } from "@/util/network"
+import type { SecurityConfigType } from "@/util/network"
+import { Config } from "@/config/config"
 
 const API_CONFIG = {
   BASE_URL: "https://mcp.exa.ai",
@@ -63,6 +67,20 @@ export const WebSearchTool = Tool.define("websearch", async () => {
         .describe("Maximum characters for context string optimized for LLMs (default: 10000)"),
     }),
     async execute(params, ctx) {
+      // Validate URL against security config (websearch calls internal MCP endpoint)
+      const config = await Config.get()
+      const securityConfig = config.security as SecurityConfigType | undefined
+      if (securityConfig) {
+        // Validate the MCP endpoint URL
+        const mcpUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.SEARCH}`
+        const validation = validateUrlFromConfig(mcpUrl, securityConfig)
+        if (!validation.allowed) {
+          auditLogger.logToolRequest(ctx.sessionID, "websearch", mcpUrl, "unknown", false, validation.reason)
+          throw new Error(validation.reason)
+        }
+        auditLogger.logToolRequest(ctx.sessionID, "websearch", mcpUrl, "unknown", true, "MCP endpoint validated")
+      }
+
       await ctx.ask({
         permission: "websearch",
         patterns: [params.query],

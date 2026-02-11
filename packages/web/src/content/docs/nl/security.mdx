@@ -1,0 +1,402 @@
+---
+title: Beveiliging
+description: Beveiligingsinstellingen, URL-validatie en auditlogging.
+---
+
+OpenCode biedt uitgebreide beveiligingscontroles om netwerktoegang te beperken en systeemactiviteit te monitoren. Deze functies zijn ontworpen voor interne omgevingen waar u moet beheersen met welke externe services uw AI-assistent mag communiceren.
+
+---
+
+## Beveiligingsmodi
+
+OpenCode ondersteunt drie beveiligingsmodi die bepalen hoe netwerkverzoeken worden gevalideerd:
+
+### `internal-only` (Standaard voor interne omgevingen)
+
+Staat alleen localhost, privé-IP-adressen en geconfigureerde interne domeinen toe. Alle externe URL's zijn geblokkeerd tenzij expliciet toegestaan.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Staat alle URL's toe maar logt externe URL's voor auditdoeleinden. Deze modus is nuttig voor het monitoren van netwerkactiviteit zonder blokkade.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Staat alleen URL's toe die overeenkomen met expliciet geconfigureerde domeinen in `external_domains`, localhost, privé-IP-adressen en interne DNS-suffixen. Alle andere URL's worden geblokkeerd.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Configuratieopties
+
+Alle beveiligingsconfiguratie komt onder de `security`-sleutel in uw OpenCode-configuratiebestand.
+
+### `mode`
+
+Selectie van beveiligingsmodus. Een van: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Array met interne DNS-suffixen die zijn toegestaan. Kan wildcards bevatten voor subdomeinmatching.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+Met deze configuratie zouden `api.internal.corp.com` en `db.dev.internal` toegestaan zijn.
+
+### `block_domain_regex`
+
+Array met reguliere expressies om specifieke domeinen of patronen te matchen en te blokkeren.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Laat localhost-URL's toe (standaard: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Laat privé-IP-adressen toe (standaard: `true`).
+
+Privé-IP-bereiken die worden ondersteund:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Schakel het ophalen van models lijst van `models.dev` in (standaard: `true`). Wanneer uitgeschakeld, zal OpenCode niet proberen de nieuwste modellenlijst van models.dev op te halen.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Schakel auditlogging in (standaard: `true`). Wanneer ingeschakeld, worden beveiligingsgebeurtenissen gelogd naar `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Expliciet toegestane externe domeinen in strict modus. Ondersteunt wildcard patronen.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+Met het patroon `*.azure.com` zouden URL's zoals `my-resource.openai.azure.com` toegestaan zijn.
+
+### `allow_external_ips`
+
+Laat externe/publieke IP-adressen toe (standaard: `false`). Geldt alleen wanneer `mode` gelijk is aan `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Aanvullende toegestane IP-bereiken in CIDR-notatie.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Providerbeveiliging
+
+Beveiligingscontroles zijn van toepassing op alle providerconfiguraties, inclusief:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Lokale modellen (llama.cpp, Ollama)
+- Aangepaste providers
+
+Wanneer een provider is geconfigureerd met een aangepaste `baseURL` of endpoint, wordt de URL gevalideerd tegen de beveiligingsconfiguratie voordat de provider wordt geladen.
+
+### Voorbeeld: OpenAI met aangepast endpoint
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Als de `baseURL` niet overeenkomt met toegestane domeinen, wordt de provider geblokkeerd en wordt een foutmelding gelogd.
+
+---
+
+## Auditlogging
+
+Auditlogging houdt alle beveiligingsgerelateerde gebeurtenissen bij in `~/.config/opencode/audit.jsonl`.
+
+### Logboekentrystructuur
+
+Elke entry bevat:
+
+- `timestamp`: ISO 8601 tijdsstempel
+- `type`: Categorie van gebeurtenis (`url_check`, `provider_load`, `tool_request`, `blocked_access`, etc.)
+- `level`: `info` of `warn`
+- `message`: Menselijk leesbare beschrijving
+- `context`: Aanvullende context (URL's, provider-ID's, toolnamen)
+- `metadata`: Machineleesbare data (toegelaten status, aantal modellen, etc.)
+
+### Gebeurtenistypes
+
+| Type                   | Beschrijving                        |
+| ---------------------- | ----------------------------------- |
+| `url_check`            | URL-validatie geslaagd              |
+| `blocked_access`       | URL-validatie mislukt               |
+| `provider_load`        | Poging tot laden van provider       |
+| `model_access`         | Poging tot toegang tot model        |
+| `tool_request`         | Tool netwerkverzoek toegestaan      |
+| `tool_blocked`         | Tool netwerkverzoek geblokkeerd     |
+| `fetch_request`        | HTTP verzoek uitgevoerd             |
+| `session_model_change` | Poging tot wijzigen van sessiemodel |
+
+### Voorbeeld auditlogboek
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Auditlogboeken bekijken
+
+Het auditlogboek is alleen-toevoeging. U kunt recente entries bekijken met:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Voorbeeldconfiguratie
+
+### Strict beveiliging met interne toegang
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Development met externe toegangslogging
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-only met aangepaste blokkeerlijst
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev Controles
+
+De `models_dev_enabled` optie bepaalt of OpenCode de nieuwste modelslijst kan ophalen van `https://models.dev`.
+
+### Hoe het werkt
+
+1.  Bij opstarting controleert OpenCode of `models_dev_enabled` gelijk is aan `false`
+2.  Indien uitgeschakeld, slaat het het ophalen van de nieuwste models over en gebruikt het alleen de bekende models uit de cache
+3.  Indien ingeschakeld, haalt het models op van `models.dev` met beveiligingsvalidatie
+
+### Models.dev uitschakelen
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Wanneer uitgeschakeld:
+
+- verschijnt een logbericht: `"models.dev ophalen is uitgeschakeld door beveiligingsconfiguratie"`
+- kunt u alleen modellen gebruiken die reeds bekend zijn bij OpenCode
+- nuttig voor air-gapped-omgevingen of wanneer u de beschikbare modellen strikt wilt beheersen
+
+---
+
+## Tooluitvoering
+
+### webfetch Tool
+
+De `webfetch` tool valideert URL's tegen de beveiligingsconfiguratie voordat inhoud wordt opgehaald:
+
+1. Controleer URL-formaat (moet beginnen met `http://` of `https://`)
+2. Validatie van URL tegen beveiligingsconfig
+3. Indien geblokkeerd: geef foutmelding en log geblokkeerde toegang
+4. Indien toegestaan: voer fetch uit en log geslaagde validatie
+
+### websearch Tool
+
+De `websearch` tool valideert het MCP endpoint URL:
+
+1.  Bouw MCP endpoint URL: `https://mcp.exa.ai/mcp`
+2.  Validatie tegen beveiligingsconfig
+3.  Indien geblokkeerd: geef foutmelding en log de geblokkeerde toegang
+4.  Indien toegestaan: voer zoekopdracht uit en log de geslaagde validatie
+
+### Toolvalidatieflow
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                           ↓ Yes
+                                      Proceed
+                                           ↓ No
+                                     Log & Block
+```
+
+---
+
+## Opmerkingen
+
+- Beveiligingsvalidatie vindt plaats **voordat** tooluitvoering en providerlading
+- Auditlogging wordt **altijd** toegepast wanneer ingeschakeld, ongeacht de uitkomst
+- In `strict` modus wordt **niets** toegestaan tenzij het uitdrukkelijk in `external_domains`, `allow_internal_dns_suffixes` staat of overeenkomt met `allowed_ip_ranges`
+- De standaardwaarden voor `allow_local` en `allow_private_ip` zijn `true`
+- De standaardwaarde voor `allow_external_ips` is `false`

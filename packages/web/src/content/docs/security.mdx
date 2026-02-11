@@ -1,0 +1,402 @@
+---
+title: Security
+description: Network security controls, URL validation, and audit logging.
+---
+
+OpenCode provides comprehensive security controls to restrict network access and monitor system activity. These features are designed for internal-only environments where you need to control which external services your AI assistant can communicate with.
+
+---
+
+## Security Modes
+
+OpenCode supports three security modes that determine how network requests are validated:
+
+### `internal-only` (Default for internal environments)
+
+Only allows localhost, private IPs, and configured internal domains. All external URLs are blocked unless explicitly allowed.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Allows all URLs but logs external URLs for audit purposes. This mode is useful for monitoring network activity without blocking.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Only allows URLs that match explicitly configured domains in `external_domains`, localhost, private IPs, and internal DNS suffixes. All other URLs are blocked.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Configuration Options
+
+All security configuration goes under the `security` key in your OpenCode config.
+
+### `mode`
+
+Security mode selection. One of: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Array of internal DNS suffixes to allow. Can include wildcards for subdomain matching.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+With this configuration, `api.internal.corp.com` and `db.dev.internal` would be allowed.
+
+### `block_domain_regex`
+
+Array of regular expressions to match and block specific domains or patterns.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Allow localhost URLs (default: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Allow private IP addresses (default: `true`).
+
+Private IP ranges covered:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Enable fetching models list from `models.dev` (default: `true`). When disabled, OpenCode will not attempt to fetch the latest model list from models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Enable audit logging (default: `true`). When enabled, security events are logged to `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Explicitly allowed external domains in strict mode. Supports wildcard patterns.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+With the pattern `*.azure.com`, URLs like `my-resource.openai.azure.com` would be allowed.
+
+### `allow_external_ips`
+
+Allow external/public IP addresses (default: `false`). Only applies when `mode` is `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Additional allowed IP ranges in CIDR notation.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Provider Security
+
+Security controls apply to all provider configurations, including:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Local models (llama.cpp, Ollama)
+- Custom providers
+
+When a provider is configured with a custom `baseURL` or endpoint, the URL is validated against the security configuration before the provider is loaded.
+
+### Example: OpenAI with custom endpoint
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+If the `baseURL` doesn't match allowed domains, the provider will be blocked and an error logged.
+
+---
+
+## Audit Logging
+
+Audit logging tracks all security-related events to `~/.config/opencode/audit.jsonl`.
+
+### Log Entry Structure
+
+Each entry contains:
+
+- `timestamp`: ISO 8601 timestamp
+- `type`: Category of event (`url_check`, `provider_load`, `tool_request`, `blocked_access`, etc.)
+- `level`: `info` or `warn`
+- `message`: Human-readable description
+- `context`: Additional context (URLs, provider IDs, tool names)
+- `metadata`: Machine-readable data (allowed status, models count, etc.)
+
+### Event Types
+
+| Type                   | Description                  |
+| ---------------------- | ---------------------------- |
+| `url_check`            | URL validation succeeded     |
+| `blocked_access`       | URL validation failed        |
+| `provider_load`        | Provider loading attempt     |
+| `model_access`         | Model access attempt         |
+| `tool_request`         | Tool network request allowed |
+| `tool_blocked`         | Tool network request blocked |
+| `fetch_request`        | HTTP request made            |
+| `session_model_change` | Session model change attempt |
+
+### Example Audit Log
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Viewing Audit Logs
+
+The audit log is append-only. You can view recent entries with:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Example Configuration
+
+### Strict Security with Internal Access
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Development with External Access Logging
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-Only with Custom Blocklist
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Models.dev Controls
+
+The `models_dev_enabled` option controls whether OpenCode can fetch the latest model list from `https://models.dev`.
+
+### How It Works
+
+1. On startup, OpenCode checks if `models_dev_enabled` is `false`
+2. If disabled, it skips fetching the latest models and uses cached/known models only
+3. If enabled, it fetches models from `models.dev` with security validation
+
+### Disabling models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+When disabled:
+
+- A log message appears: `"models.dev fetching is disabled by security configuration"`
+- Only models already known to OpenCode can be used
+- Useful for air-gapped environments or when you want to strictly control available models
+
+---
+
+## Tool Execution
+
+### webfetch Tool
+
+The `webfetch` tool validates URLs against security configuration before fetching content:
+
+1. Check URL format (must start with `http://` or `https://`)
+2. Validate URL against security config
+3. If blocked: raise error and log blocked access
+4. If allowed: proceed with fetch and log successful validation
+
+### websearch Tool
+
+The `websearch` tool validates the MCP endpoint URL:
+
+1. Build MCP endpoint URL: `https://mcp.exa.ai/mcp`
+2. Validate against security config
+3. If blocked: raise error and log blocked access
+4. If allowed: execute search and log successful validation
+
+### Tool Validation Flow
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                          ↓ Yes
+                                     Proceed
+                                          ↓ No
+                                    Log & Block
+```
+
+---
+
+## Notes
+
+- Security validation happens **before** tool execution and provider loading
+- Audit logging is **always** applied when enabled, regardless of outcome
+- In `strict` mode, **nothing** is allowed unless explicitly in `external_domains`, `allow_internal_dns_suffixes`, or matches `allowed_ip_ranges`
+- The default values for `allow_local` and `allow_private_ip` are `true`
+- The default value for `allow_external_ips` is `false`

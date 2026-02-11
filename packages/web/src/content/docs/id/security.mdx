@@ -1,0 +1,402 @@
+---
+title: Keamanan
+description: Kontrol keamanan jaringan, validasi URL, dan logging audit.
+---
+
+OpenCode menyediakan kontrol keamanan komprehensif untuk membatasi akses jaringan dan memantau aktivitas sistem. Fitur-fitur ini dirancang untuk lingkungan internal-only di mana Anda perlu mengontrol layanan eksternal mana yang dapat dikomunikasikan oleh asisten AI Anda.
+
+---
+
+## Mode Keamanan
+
+OpenCode mendukung tiga mode keamanan yang menentukan bagaimana permintaan jaringan divalidasi:
+
+### `internal-only` (Default untuk lingkungan internal)
+
+Hanya mengizinkan localhost, IP pribadi, dan domain internal yang dikonfigurasi. Semua URL eksternal diblokir kecuali izin secara eksplisit diberikan.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Mengizinkan semua URL tetapi mencatat URL eksternal untuk tujuan audit. Mode ini berguna untuk memantau aktivitas jaringan tanpa memblokir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Hanya mengizinkan URL yang telah dikonfigurasi secara eksplisit di `external_domains`, localhost, IP pribadi, dan sufiks DNS internal. Semua URL lain diblokir.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Opsi Konfigurasi
+
+Semua konfigurasi keamanan berada di bawah kunci `security` di konfigurasi OpenCode Anda.
+
+### `mode`
+
+Pemilihan mode keamanan. Salah satu dari: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Array sufiks DNS internal yang diizinkan. Dapat mencakup wildcard untuk pencocokan subdomain.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+Dengan konfigurasi ini, `api.internal.corp.com` dan `db.dev.internal` akan dapat diizinkan.
+
+### `block_domain_regex`
+
+Array ekspresi reguler untuk mencocokkan dan memblokir domain atau pola tertentu.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Izinkan URL localhost (default: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Izinkan alamat IP pribadi (default: `true`).
+
+Rentang IP pribadi yang mencakup:
+
+- `10.0.0.0/8` (Class A)
+- `172.16.0.0/12` (Class B)
+- `192.168.0.0/16` (Class C)
+- `127.0.0.0/8` (Loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Aktifkan pengambilan daftar model dari `models.dev` (default: `true`). Ketika dinonaktifkan, OpenCode tidak akan mencoba mengambil daftar model terbaru dari models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Aktifkan logging audit (default: `true`). Ketika diaktifkan, event keamanan dicatat ke `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Domain eksternal yang diizinkan secara eksplisit di mode strict. Mendukung pola wildcard.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+Dengan pola `*.azure.com`, URL seperti `my-resource.openai.azure.com` akan dapat diizinkan.
+
+### `allow_external_ips`
+
+Izinkan alamat IP eksternal/publik (default: `false`). Hanya berlaku ketika `mode` adalah `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Rentang IP yang diizinkan tambahan dalam notasi CIDR.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Keamanan Provider
+
+Kontrol keamanan berlaku untuk semua konfigurasi provider, termasuk:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Model lokal (llama.cpp, Ollama)
+- Custom provider
+
+Ketika provider dikonfigurasi dengan `baseURL` atau endpoint kustom, URL divalidasi terhadap konfigurasi keamanan sebelum provider dimuat.
+
+### Contoh: OpenAI dengan endpoint kustom
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Jika `baseURL` tidak cocok dengan domain yang diizinkan, provider akan diblokir dan error dicatat.
+
+---
+
+## Logging Audit
+
+Logging audit melacak semua event yang terkait keamanan ke `~/.config/opencode/audit.jsonl`.
+
+### Struktur Entri Log
+
+Setiap entri berisi:
+
+- `timestamp`: Timestamp ISO 8601
+- `type`: Kategori event (`url_check`, `provider_load`, `tool_request`, `blocked_access`, dll.)
+- `level`: `info` atau `warn`
+- `message`: Deskripsi yang dapat dibaca manusia
+- `context`: Konteks tambahan (URL, ID provider, nama tool)
+- `metadata`: Data yang dapat dibaca mesin (status allowed, jumlah model, dll.)
+
+### Tipe Event
+
+| Tipe                   | Deskripsi                          |
+| ---------------------- | ---------------------------------- |
+| `url_check`            | Validasi URL berhasil              |
+| `blocked_access`       | Validasi URL gagal                 |
+| `provider_load`        | Percobaan pemuatan provider        |
+| `model_access`         | Percobaan akses model              |
+| `tool_request`         | Permintaan jaringan tool diizinkan |
+| `tool_blocked`         | Permintaan jaringan tool diblokir  |
+| `fetch_request`        | HTTP request dilakukan             |
+| `session_model_change` | Percobaan perubahan model sesi     |
+
+### Contoh Log Audit
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Melihat Audit Log
+
+Log audit bersifat append-only. Anda dapat melihat entri terbaru dengan:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Contoh Konfigurasi
+
+### Keamanan Strict dengan Akses Internal
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Pengembangan dengan Logging Akses Eksternal
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Internal-Only dengan Blocklist Kustom
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Kontrol Models.dev
+
+Opsi `models_dev_enabled` mengontrol apakah OpenCode dapat mengambil daftar model terbaru dari `https://models.dev`.
+
+### Cara Kerja
+
+1. Pada saat startup, OpenCode memeriksa apakah `models_dev_enabled` adalah `false`
+2. Jika dinonaktifkan, ia melewati pengambilan model terbaru dan hanya menggunakan model yang sudah diketahui/diangggap
+3. Jika diaktifkan, ia mengambil model dari `models.dev` dengan validasi keamanan
+
+### Menonaktifkan models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Ketika dinonaktifkan:
+
+- Pesan log muncul: `"models.dev fetching is disabled by security configuration"`
+- Hanya model yang sudah diketahui OpenCode yang dapat digunakan
+- Berguna untuk lingkungan air-gapped atau ketika Anda ingin mengontrol model yang tersedia secara ketat
+
+---
+
+## Eksekusi Tool
+
+### Tool webfetch
+
+Tool `webfetch` memvalidasi URL terhadap konfigurasi keamanan sebelum mengambil konten:
+
+1. Cek format URL (harus diawali dengan `http://` atau `https://`)
+2. Validasi URL terhadap konfigurasi keamanan
+3. Jika diblokir: munculkan error dan catat akses yang diblokir
+4. Jika diizinkan: lanjutkan dengan fetch dan catat validasi yang berhasil
+
+### Tool websearch
+
+Tool `websearch` memvalidasi URL endpoint MCP:
+
+1. Bangun URL endpoint MCP: `https://mcp.exa.ai/mcp`
+2. Validasi terhadap konfigurasi keamanan
+3. Jika diblokir: munculkan error dan catat akses yang diblokir
+4. Jika diizinkan: jalankan pencarian dan catat validasi yang berhasil
+
+### Alur Validasi Tool
+
+```
+Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch / Error
+                                           ↓ Yes
+                                      Proceed
+                                           ↓ No
+                                     Log & Block
+```
+
+---
+
+## Catatan
+
+- Validasi keamanan terjadi **sebelum** eksekusi tool dan pemuatan provider
+- Logging audit **selalu** diterapkan ketika diaktifkan, terlepas dari hasilnya
+- Di mode `strict`, **tidak ada yang diizinkan** kecuali secara eksplisit di `external_domains`, `allow_internal_dns_suffixes`, atau cocok dengan `allowed_ip_ranges`
+- Nilai default untuk `allow_local` dan `allow_private_ip` adalah `true`
+- Nilai default untuk `allow_external_ips` adalah `false`
