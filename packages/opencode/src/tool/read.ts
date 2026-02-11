@@ -99,7 +99,7 @@ export const ReadTool = Tool.define("read", {
 
     const limit = params.limit ?? DEFAULT_READ_LIMIT
     const hasOffset = params.offset !== undefined
-    const offset = hasOffset ? params.offset : 0
+    const offset = params.offset ?? 0
     const key = `${ctx.sessionID}:${filepath}`
     const prev = seen.get(key)
     const lines = await file.text().then((text) => text.split("\n"))
