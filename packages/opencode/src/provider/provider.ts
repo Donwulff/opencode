@@ -1128,6 +1128,10 @@ export namespace Provider {
             urlToValidate = String(input)
           }
 
+          if (!urlToValidate.startsWith("http://") && !urlToValidate.startsWith("https://")) {
+            throw new Error("URL must start with http:// or https://")
+          }
+
           // Validate URL against security config
           const config = await Config.get()
           const securityConfig = config.security as SecurityConfigType | undefined

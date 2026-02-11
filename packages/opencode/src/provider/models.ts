@@ -85,7 +85,11 @@ export namespace ModelsDev {
   export type Provider = z.infer<typeof Provider>
 
   function url() {
-    return Flag.OPENCODE_MODELS_URL || "https://models.dev"
+    const u = Flag.OPENCODE_MODELS_URL || "https://models.dev"
+    if (!u.startsWith("http://") && !u.startsWith("https://")) {
+      throw new Error("models.dev URL must start with http:// or https://")
+    }
+    return u
   }
 
   export const Data = lazy(async () => {

@@ -8,6 +8,8 @@
 - ModelsDev.Data() and ModelsDev.refresh() must have identical security validation — they are separate code paths to the same fetch
 - Audit logging uses `providerId` (camelCase); data structures use `providerID` (PascalCase)
 - `allow_external_ips` only applies to literal IP addresses, not DNS names (checked with `isIP()`)
+- `models_dev_enabled` config flag disables models.dev auto-refresh and `Data()` lazy evaluation
+- ModelsDev refresh interval is `60 * 1000 * 60` (60 min) with `.unref()` to avoid hanging the process
 
 ## Provider Loading
 

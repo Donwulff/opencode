@@ -67,12 +67,14 @@ export const WebSearchTool = Tool.define("websearch", async () => {
         .describe("Maximum characters for context string optimized for LLMs (default: 10000)"),
     }),
     async execute(params, ctx) {
+      const mcpUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.SEARCH}`
+      if (!mcpUrl.startsWith("http://") && !mcpUrl.startsWith("https://")) {
+        throw new Error("URL must start with http:// or https://")
+      }
       // Validate URL against security config (websearch calls internal MCP endpoint)
       const config = await Config.get()
       const securityConfig = config.security as SecurityConfigType | undefined
       if (securityConfig) {
-        // Validate the MCP endpoint URL
-        const mcpUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.SEARCH}`
         const validation = validateUrlFromConfig(mcpUrl, securityConfig)
         if (!validation.allowed) {
           auditLogger.logToolRequest(ctx.sessionID, "websearch", mcpUrl, "unknown", false, validation.reason)
