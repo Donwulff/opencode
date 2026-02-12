@@ -123,3 +123,26 @@ git stash apply stash@{0}
 - Prefer small PRs touching hot files (`provider.ts`, `session/prompt.ts`, `tool/*`).
 - Keep local/private policy (`opencode.json`, local scripts) out of upstream PRs.
 - Rebase frequently on `upstream/dev` while preparing the stack.
+
+## Optional: implementation provenance log
+
+If you want reproducible history for later rework, keep a short local note with:
+
+- date/time range
+- model(s) used (exact IDs/quantization)
+- workflow used (implement, review-only, fix cycles)
+- major failures/recoveries (for example accidental revert + stash restore)
+- which reviewer feedback changed behavior
+
+Keep it concise. This is mainly useful for local traceability and process tuning, not usually required in upstream PR text.
+
+Example:
+
+```md
+## Provenance (local)
+- Initial implementation: Qwen3-Coder-Next (iterative implement/review/fix cycles)
+- Review feedback cycles: 2 rounds from Codex reviewer
+- Recovery event: model reverted uncommitted changes; restored from stash snapshot
+- Final stabilization: Claude Code 3.6
+- Upstream planning/docs pass: Codex
+```
