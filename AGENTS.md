@@ -1,4 +1,5 @@
 - To regenerate the JavaScript SDK, run `./packages/sdk/js/script/build.ts`.
+- In sandboxed assistant runs, SDK generation can fail with `EACCES` on `~/.local/share/opencode/log/dev.log`; rerun the script with escalated permissions.
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.

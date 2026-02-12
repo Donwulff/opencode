@@ -22,10 +22,13 @@ export const ReadTool = Tool.define("read", {
   description: DESCRIPTION,
   parameters: z.object({
     filePath: z.string().describe("The absolute path to the file or directory to read"),
-    offset: z.coerce.number().describe("The 0-based line offset to start reading from").optional(),
+    offset: z.coerce.number().describe("The line number to start reading from (1-indexed)").optional(),
     limit: z.coerce.number().describe("The maximum number of lines to read (defaults to 2000)").optional(),
   }),
   async execute(params, ctx) {
+    if (params.offset !== undefined && params.offset < 1) {
+      throw new Error("offset must be greater than or equal to 1")
+    }
     let filepath = params.filePath
     if (!path.isAbsolute(filepath)) {
       filepath = path.resolve(Instance.directory, filepath)
@@ -82,9 +85,10 @@ export const ReadTool = Tool.define("read", {
       entries.sort((a, b) => a.localeCompare(b))
 
       const limit = params.limit ?? DEFAULT_READ_LIMIT
-      const offset = params.offset || 0
-      const sliced = entries.slice(offset, offset + limit)
-      const truncated = offset + sliced.length < entries.length
+      const offset = params.offset ?? 1
+      const start = offset - 1
+      const sliced = entries.slice(start, start + limit)
+      const truncated = start + sliced.length < entries.length
 
       const output = [
         `<path>${filepath}</path>`,
@@ -143,12 +147,15 @@ export const ReadTool = Tool.define("read", {
 
     const limit = params.limit ?? DEFAULT_READ_LIMIT
     const hasOffset = params.offset !== undefined
-    const offset = params.offset ?? 0
+    const offset = params.offset ?? 1
     const key = `${ctx.sessionID}:${filepath}`
     const prev = seen.get(key)
     const lines = await file.text().then((text) => text.split("\n"))
+    const start = offset - 1
+    if (start >= lines.length) throw new Error(`Offset ${offset} is out of range for this file (${lines.length} lines)`)
 
-    const slice = (start: number) => {
+    const slice = (startOffset: number) => {
+      const start = startOffset - 1
       const raw: string[] = []
       let bytes = 0
       let truncatedByBytes = false
@@ -162,7 +169,7 @@ export const ReadTool = Tool.define("read", {
         raw.push(line)
         bytes += size
       }
-      const lastReadLine = start + raw.length
+      const lastReadLine = startOffset + raw.length - 1
       const totalLines = lines.length
       const hasMoreLines = totalLines > lastReadLine
       const truncated = hasMoreLines || truncatedByBytes
@@ -173,15 +180,16 @@ export const ReadTool = Tool.define("read", {
         totalLines,
         hasMoreLines,
         truncated,
+        nextOffset: lastReadLine + 1,
       }
     }
 
     const first = slice(offset)
     const repeat = !hasOffset && prev && prev.truncated && !prev.explicitOffset && first.truncated
-    const start = repeat ? prev.cursor : offset
-    const result = repeat ? slice(start) : first
+    const readOffset = repeat ? prev.cursor : offset
+    const result = repeat ? slice(readOffset) : first
     const content = result.raw.map((line, index) => {
-      return `${index + start + 1}: ${line}`
+      return `${index + readOffset}: ${line}`
     })
     const preview = result.raw.slice(0, 20).join("\n")
 
@@ -193,8 +201,8 @@ export const ReadTool = Tool.define("read", {
       : result.hasMoreLines
         ? `File has more lines. Use 'offset' parameter to read beyond line ${result.lastReadLine}.`
         : `End of file - total ${result.totalLines} lines.`
-    const next = result.truncated ? `Next read: set offset to ${result.lastReadLine} (0-based).` : ""
-    const advanced = repeat ? `SYSTEM NOTICE: Offset not given; continuing from offset ${start} (0-based).` : ""
+    const next = result.truncated ? `Next read: set offset to ${result.nextOffset} (1-indexed).` : ""
+    const advanced = repeat ? `SYSTEM NOTICE: Offset not given; continuing from offset ${readOffset} (1-indexed).` : ""
 
     output += `\n\n(${status})`
     if (next) output += `\n${next}`
@@ -213,7 +221,7 @@ export const ReadTool = Tool.define("read", {
       requested: offset,
       limit,
       truncated: result.truncated,
-      cursor: result.lastReadLine,
+      cursor: result.nextOffset,
       explicitOffset: hasOffset,
     })
 
