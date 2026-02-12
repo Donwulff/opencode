@@ -130,6 +130,7 @@ If you want reproducible history for later rework, keep a short local note with:
 
 - date/time range
 - model(s) used (exact IDs/quantization)
+- agent runtime/harness used (for example OpenCode, Claude Code)
 - workflow used (implement, review-only, fix cycles)
 - major failures/recoveries (for example accidental revert + stash restore)
 - which reviewer feedback changed behavior
@@ -140,9 +141,19 @@ Example:
 
 ```md
 ## Provenance (local)
+- Runtime: OpenCode
 - Initial implementation: Qwen3-Coder-Next (iterative implement/review/fix cycles)
 - Review feedback cycles: 2 rounds from Codex reviewer
 - Recovery event: model reverted uncommitted changes; restored from stash snapshot
 - Final stabilization: Claude Code 3.6
 - Upstream planning/docs pass: Codex
 ```
+
+## Upstream PR wording guidance
+
+Do not submit AI-generated walls of text. Keep PR descriptions short and in your own words.
+If useful, include a one-line process note, for example:
+
+`Implementation was developed with OpenCode (Qwen3-Coder-Next) and manually reviewed/refined with additional tools.`
+
+Only include this if it adds reviewer clarity.
