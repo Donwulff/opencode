@@ -9,6 +9,7 @@ import { ScrapCommand } from "./scrap"
 import { SkillCommand } from "./skill"
 import { SnapshotCommand } from "./snapshot"
 import { AgentCommand } from "./agent"
+import { Provenance } from "@/provenance"
 
 export const DebugCommand = cmd({
   command: "debug",
@@ -39,10 +40,12 @@ export const DebugCommand = cmd({
 
 const PathsCommand = cmd({
   command: "paths",
-  describe: "show global paths (data, config, cache, state)",
+  describe: "show global paths (data, config, cache, state, provenance)",
   handler() {
     for (const [key, value] of Object.entries(Global.Path)) {
       console.log(key.padEnd(10), value)
     }
+    console.log("provenance".padEnd(10), Provenance.filePath())
+    console.log("incidents".padEnd(10), Provenance.incidentFilePath())
   },
 })

@@ -1022,6 +1022,28 @@ export namespace Config {
     })
   export type Provider = z.infer<typeof Provider>
 
+  const ProvenanceConfig = z
+    .object({
+      enabled: z
+        .boolean()
+        .optional()
+        .describe("Enable local provenance logging for commands, tool outcomes, incidents, and assistant completions"),
+      path: z
+        .string()
+        .optional()
+        .describe("JSONL output path for provenance events; relative paths resolve under state directory"),
+      preview_chars: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe("Maximum number of characters stored in input/output preview fields"),
+    })
+    .strict()
+    .meta({
+      ref: "ProvenanceConfig",
+    })
+
   export const Info = z
     .object({
       $schema: z.string().optional().describe("JSON schema reference for configuration validation"),
@@ -1106,6 +1128,7 @@ export namespace Config {
         .optional()
         .describe("Custom provider configurations and model overrides"),
       security: SecurityConfig.optional().describe("Network security and access control configuration"),
+      provenance: ProvenanceConfig.optional().describe("Provenance and incident logging configuration"),
       mcp: z
         .record(
           z.string(),

@@ -38,6 +38,7 @@ What NOT to include:
 
 Process:
 
+0. If provenance logs exist (`~/.local/state/opencode/provenance/incidents.jsonl` or `$XDG_STATE_HOME/opencode/provenance/incidents.jsonl`), review recent incident entries and include only reusable learnings (not one-off noise)
 1. Review session for discoveries, errors that took multiple attempts, unexpected connections
 2. Determine scope - what directory does each learning apply to?
 3. Read existing AGENTS.md files at relevant levels

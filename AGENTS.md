@@ -5,6 +5,7 @@
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 - For upstreaming local security work later, follow `specs/security-upstream-playbook.md` (design issue first, then split into small PRs).
+- Provenance tracing POC docs and usage live in `specs/provenance-poc.md` and `.opencode/command/provenance.md`.
 
 ## Style Guide
 
