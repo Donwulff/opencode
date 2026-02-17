@@ -141,9 +141,6 @@ export const WebFetchTool = Tool.define("webfetch", {
         metadata: {},
         attachments: [
           {
-            id: Identifier.ascending("part"),
-            sessionID: ctx.sessionID,
-            messageID: ctx.messageID,
             type: "file",
             mime,
             url: `data:${mime};base64,${base64Content}`,
