@@ -1,5 +1,5 @@
 import z from "zod"
-import * as fs from "fs"
+import * as fs from "fs/promises"
 import * as path from "path"
 import { Tool } from "./tool"
 import { LSP } from "../lsp"
@@ -8,10 +8,13 @@ import DESCRIPTION from "./read.txt"
 import { Instance } from "../project/instance"
 import { assertExternalDirectory } from "./external-directory"
 import { InstructionPrompt } from "../session/instruction"
+import { Filesystem } from "../util/filesystem"
 
 const DEFAULT_READ_LIMIT = 2000
 const MAX_LINE_LENGTH = 2000
+const MAX_LINE_SUFFIX = `... (line truncated to ${MAX_LINE_LENGTH} chars)`
 const MAX_BYTES = 50 * 1024
+const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const seen = new Map<
   string,
   { requested: number; limit: number; truncated: boolean; cursor: number; explicitOffset: boolean }
@@ -34,8 +37,7 @@ export const ReadTool = Tool.define("read", {
     }
     const title = path.relative(Instance.worktree, filepath)
 
-    const file = Bun.file(filepath)
-    const stat = await file.stat().catch(() => undefined)
+    const stat = Filesystem.stat(filepath)
 
     await assertExternalDirectory(ctx, filepath, {
       bypass: Boolean(ctx.extra?.["bypassCwdCheck"]),
@@ -53,14 +55,18 @@ export const ReadTool = Tool.define("read", {
       const dir = path.dirname(filepath)
       const base = path.basename(filepath)
 
-      const dirEntries = fs.readdirSync(dir)
-      const suggestions = dirEntries
-        .filter(
-          (entry) =>
-            entry.toLowerCase().includes(base.toLowerCase()) || base.toLowerCase().includes(entry.toLowerCase()),
+      const suggestions = await fs
+        .readdir(dir)
+        .then((entries) =>
+          entries
+            .filter(
+              (entry) =>
+                entry.toLowerCase().includes(base.toLowerCase()) || base.toLowerCase().includes(entry.toLowerCase()),
+            )
+            .map((entry) => path.join(dir, entry))
+            .slice(0, 3),
         )
-        .map((entry) => path.join(dir, entry))
-        .slice(0, 3)
+        .catch(() => [])
 
       if (suggestions.length > 0) {
         throw new Error(`File not found: ${filepath}\n\nDid you mean one of these?\n${suggestions.join("\n")}`)
@@ -70,12 +76,12 @@ export const ReadTool = Tool.define("read", {
     }
 
     if (stat.isDirectory()) {
-      const dirents = await fs.promises.readdir(filepath, { withFileTypes: true })
+      const dirents = await fs.readdir(filepath, { withFileTypes: true })
       const entries = await Promise.all(
         dirents.map(async (dirent) => {
           if (dirent.isDirectory()) return dirent.name + "/"
           if (dirent.isSymbolicLink()) {
-            const target = await fs.promises.stat(path.join(filepath, dirent.name)).catch(() => undefined)
+            const target = await fs.stat(path.join(filepath, dirent.name)).catch(() => undefined)
             if (target?.isDirectory()) return dirent.name + "/"
           }
           return dirent.name
@@ -114,11 +120,10 @@ export const ReadTool = Tool.define("read", {
     const instructions = await InstructionPrompt.resolve(ctx.messages, filepath, ctx.messageID)
 
     // Exclude SVG (XML-based) and vnd.fastbidsheet (.fbs extension, commonly FlatBuffers schema files)
-    const isImage =
-      file.type.startsWith("image/") && file.type !== "image/svg+xml" && file.type !== "image/vnd.fastbidsheet"
-    const isPdf = file.type === "application/pdf"
+    const mime = Filesystem.mimeType(filepath)
+    const isImage = mime.startsWith("image/") && mime !== "image/svg+xml" && mime !== "image/vnd.fastbidsheet"
+    const isPdf = mime === "application/pdf"
     if (isImage || isPdf) {
-      const mime = file.type
       const msg = `${isImage ? "Image" : "PDF"} read successfully`
       return {
         title,
@@ -132,13 +137,13 @@ export const ReadTool = Tool.define("read", {
           {
             type: "file",
             mime,
-            url: `data:${mime};base64,${Buffer.from(await file.bytes()).toString("base64")}`,
+            url: `data:${mime};base64,${Buffer.from(await Filesystem.readBytes(filepath)).toString("base64")}`,
           },
         ],
       }
     }
 
-    const isBinary = await isBinaryFile(filepath, file)
+    const isBinary = await isBinaryFile(filepath, Number(stat.size))
     if (isBinary) throw new Error(`Cannot read binary file: ${filepath}`)
 
     const limit = params.limit ?? DEFAULT_READ_LIMIT
@@ -146,7 +151,7 @@ export const ReadTool = Tool.define("read", {
     const offset = params.offset ?? 1
     const key = `${ctx.sessionID}:${filepath}`
     const prev = seen.get(key)
-    const lines = await file.text().then((text) => text.split("\n"))
+    const lines = (await fs.readFile(filepath, "utf8")).split("\n")
     const start = offset - 1
     if (start >= lines.length) throw new Error(`Offset ${offset} is out of range for this file (${lines.length} lines)`)
 
@@ -156,7 +161,7 @@ export const ReadTool = Tool.define("read", {
       let bytes = 0
       let truncatedByBytes = false
       for (let i = start; i < Math.min(lines.length, start + limit); i++) {
-        const line = lines[i].length > MAX_LINE_LENGTH ? lines[i].substring(0, MAX_LINE_LENGTH) + "..." : lines[i]
+        const line = lines[i].length > MAX_LINE_LENGTH ? lines[i].substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : lines[i]
         const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
         if (bytes + size > MAX_BYTES) {
           truncatedByBytes = true
@@ -193,7 +198,7 @@ export const ReadTool = Tool.define("read", {
     output += content.join("\n")
 
     const status = result.truncatedByBytes
-      ? `Output truncated at ${MAX_BYTES} bytes. Use 'offset' parameter to read beyond line ${result.lastReadLine}.`
+      ? `Output truncated at ${MAX_BYTES_LABEL}. Use 'offset' parameter to read beyond line ${result.lastReadLine}.`
       : result.hasMoreLines
         ? `File has more lines. Use 'offset' parameter to read beyond line ${result.lastReadLine}.`
         : `End of file - total ${result.totalLines} lines.`
@@ -233,7 +238,7 @@ export const ReadTool = Tool.define("read", {
   },
 })
 
-async function isBinaryFile(filepath: string, file: Bun.BunFile): Promise<boolean> {
+async function isBinaryFile(filepath: string, fileSize: number): Promise<boolean> {
   const ext = path.extname(filepath).toLowerCase()
   // binary check for common non-text extensions
   switch (ext) {
@@ -270,22 +275,25 @@ async function isBinaryFile(filepath: string, file: Bun.BunFile): Promise<boolea
       break
   }
 
-  const stat = await file.stat()
-  const fileSize = stat.size
   if (fileSize === 0) return false
 
-  const bufferSize = Math.min(4096, fileSize)
-  const buffer = await file.arrayBuffer()
-  if (buffer.byteLength === 0) return false
-  const bytes = new Uint8Array(buffer.slice(0, bufferSize))
+  const fh = await fs.open(filepath, "r")
+  try {
+    const sampleSize = Math.min(4096, fileSize)
+    const bytes = Buffer.alloc(sampleSize)
+    const result = await fh.read(bytes, 0, sampleSize, 0)
+    if (result.bytesRead === 0) return false
 
-  let nonPrintableCount = 0
-  for (let i = 0; i < bytes.length; i++) {
-    if (bytes[i] === 0) return true
-    if (bytes[i] < 9 || (bytes[i] > 13 && bytes[i] < 32)) {
-      nonPrintableCount++
+    let nonPrintableCount = 0
+    for (let i = 0; i < result.bytesRead; i++) {
+      if (bytes[i] === 0) return true
+      if (bytes[i] < 9 || (bytes[i] > 13 && bytes[i] < 32)) {
+        nonPrintableCount++
+      }
     }
+    // If >30% non-printable characters, consider it binary
+    return nonPrintableCount / result.bytesRead > 0.3
+  } finally {
+    await fh.close()
   }
-  // If >30% non-printable characters, consider it binary
-  return nonPrintableCount / bytes.length > 0.3
 }
