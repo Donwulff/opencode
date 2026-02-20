@@ -1,4 +1,5 @@
 import type {
+  Event,
   Message,
   Agent,
   Provider,
@@ -105,7 +106,7 @@ export const { use: useSync, provider: SyncProvider } = createSimpleContext({
     const sdk = useSDK()
 
     sdk.event.listen((e) => {
-      const event = e.details
+      const event = e.details as Event
       switch (event.type) {
         case "server.instance.disposed":
           bootstrap()

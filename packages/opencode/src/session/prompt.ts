@@ -1848,7 +1848,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         [basePrompt, ...environment, ...instructions].filter((x) => x).join("\n"),
       ]
       const lead = system[0]
-      const original = clone(system)
+      const original = [...system]
       await Plugin.trigger("experimental.chat.system.transform", { sessionID: input.sessionID, model }, { system })
       if (system.length === 0) {
         system.push(...original)
