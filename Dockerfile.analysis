@@ -1,4 +1,59 @@
+# Dockerfile.analysis — OEL-based opencode analysis container
+#
+# ─── BUILDING ────────────────────────────────────────────────────────────────
+#
+#   # OEL 9 (works on any x86-64 CPU, recommended for older hardware)
+#   docker build -t opencode-analysis:oel9 -f Dockerfile.analysis .
+#
+#   # OEL 10 (requires AVX2 / x86-64-v3; AMD FX / pre-Haswell Intel will fail)
+#   docker build -t opencode-analysis:oel10 -f Dockerfile.analysis \
+#     --build-arg OEL_VERSION=10 .
+#
+#   # Specific fork branch
+#   docker build -t opencode-analysis:dev -f Dockerfile.analysis \
+#     --build-arg REPO_BRANCH=dev .
+#
+# ─── RUNNING ─────────────────────────────────────────────────────────────────
+#
+#   # Minimal — baked-in safe defaults, no LLM configured (good for testing)
+#   docker run --rm -it \
+#     --user $(id -u):$(id -g) \
+#     -v /path/to/project:/workspace \
+#     opencode-analysis:oel9
+#
+#   # With cloud API key
+#   docker run --rm -it \
+#     --user $(id -u):$(id -g) \
+#     -v /path/to/project:/workspace \
+#     -e ANTHROPIC_API_KEY \
+#     opencode-analysis:oel9
+#
+#   # With private config injected at runtime (local LLMs, internal policy)
+#   docker run --rm -it \
+#     --user $(id -u):$(id -g) \
+#     -v /path/to/project:/workspace \
+#     -v /path/to/private/config-dir:/run/opencode-config:ro \
+#     -e OPENCODE_CONFIG_DIR=/run/opencode-config \
+#     opencode-analysis:oel9
+#
+#   # Or use the companion opencode-run.sh script (builds if needed, wraps above)
+#   ./opencode-run.sh [--oel 9|10] [--config /path/to/config-dir] /path/to/project
+#
+# ─── CONFIG PRECEDENCE (low → high) ──────────────────────────────────────────
+#
+#   ~/.config/opencode/   baked into image — safe defaults, audit on, no LLM
+#   /workspace/.opencode/ project config, auto-discovered from bind-mount
+#   ~/.opencode/          user-global (not baked in; mount if needed)
+#   $OPENCODE_CONFIG_DIR  runtime injection — LLM endpoints, policy overrides
+#
+#   Project-level .opencode/ overrides the baked-in defaults.
+#   OPENCODE_CONFIG_DIR overrides everything — use it for LLM endpoints and
+#   environment-specific policy. Keep that config in the private infra repo.
+#
+
 ARG OEL_VERSION=9
+
+# ─── BUILD STAGE ─────────────────────────────────────────────────────────────
 FROM oraclelinux:${OEL_VERSION}-slim AS build
 
 ARG OEL_VERSION=9
@@ -21,7 +76,7 @@ RUN git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" . \
     && cd packages/opencode \
     && bun run script/build.ts --single
 
-# Runtime stage
+# ─── RUNTIME STAGE ───────────────────────────────────────────────────────────
 ARG OEL_VERSION=9
 FROM oraclelinux:${OEL_VERSION}-slim
 
@@ -38,9 +93,29 @@ RUN microdnf install -y --nodocs \
 # Copy the built binary
 COPY --from=build /build/packages/opencode/dist/opencode-linux-x64/bin/opencode /usr/local/bin/opencode
 
-# Create home dir for UID 1000 as default; override at runtime with --user $(id -u):$(id -g)
-RUN useradd -u 1000 -m coder
+# Create coder user. Make home world-writable so any --user UID can write
+# state/logs (provenance, audit) without needing a matching passwd entry.
+RUN useradd -u 1000 -m coder && chmod 1777 /home/coder
 ENV HOME=/home/coder
+
+# Bake in safe defaults at the lowest config precedence level.
+# These are overridden by any project .opencode/ or $OPENCODE_CONFIG_DIR.
+# Do NOT put LLM endpoints or internal URLs here — those go in the runtime
+# config injected via OPENCODE_CONFIG_DIR in the private infra repo.
+RUN mkdir -p /home/coder/.config/opencode && cat > /home/coder/.config/opencode/opencode.jsonc <<'EOF'
+{
+  "$schema": "https://opencode.ai/config.json",
+  // Safe container defaults — override via OPENCODE_CONFIG_DIR at runtime
+  "security": {
+    "audit_log_enabled": true,
+    "models_dev_enabled": true
+  },
+  "provenance": {
+    "enabled": true,
+    "preview_chars": 240
+  }
+}
+EOF
 
 WORKDIR /workspace
 
