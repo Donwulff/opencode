@@ -93,19 +93,33 @@ RUN microdnf install -y --nodocs \
 # Copy the built binary
 COPY --from=build /build/packages/opencode/dist/opencode-linux-x64/bin/opencode /usr/local/bin/opencode
 
-# Create coder user. Make home world-writable so any --user UID can write
-# state/logs (provenance, audit) without needing a matching passwd entry.
-RUN useradd -u 1000 -m coder && chmod 1777 /home/coder
+# Create coder user and pre-create all XDG directories opencode needs at startup.
+# opencode resolves paths via xdg-basedir (HOME-relative):
+#   ~/.local/share/opencode/{log,bin}  — database, logs, binaries
+#   ~/.local/state/opencode/           — state
+#   ~/.cache/opencode/                 — cache
+#   ~/.config/opencode/                — config (baked-in defaults below)
+#
+# Pre-creating them here (as root) and chmod -R 777 lets any --user UID write
+# at runtime without hitting root-owned 755 intermediate directories blocking
+# subdirectory creation (e.g. root-owned ~/.local/ preventing mkdir ~/.local/share/).
+RUN useradd -u 1000 -m coder \
+    && mkdir -p \
+        /home/coder/.local/share/opencode/log \
+        /home/coder/.local/share/opencode/bin \
+        /home/coder/.local/state/opencode \
+        /home/coder/.cache/opencode \
+        /home/coder/.config/opencode \
+    && chmod -R 777 /home/coder
 ENV HOME=/home/coder
 
 # Bake in safe defaults at the lowest config precedence level.
 # These are overridden by any project .opencode/ or $OPENCODE_CONFIG_DIR.
 # Do NOT put LLM endpoints or internal URLs here — those go in the runtime
 # config injected via OPENCODE_CONFIG_DIR in the private infra repo.
-RUN mkdir -p /home/coder/.config/opencode && cat > /home/coder/.config/opencode/opencode.jsonc <<'EOF'
+RUN cat > /home/coder/.config/opencode/opencode.jsonc <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
-  // Safe container defaults — override via OPENCODE_CONFIG_DIR at runtime
   "security": {
     "audit_log_enabled": true,
     "models_dev_enabled": true
