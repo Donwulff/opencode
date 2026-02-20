@@ -39,6 +39,22 @@
 #   # Or use the companion opencode-run.sh script (builds if needed, wraps above)
 #   ./opencode-run.sh [--oel 9|10] [--config /path/to/config-dir] /path/to/project
 #
+# ─── EXEC / ADMIN ────────────────────────────────────────────────────────────
+#
+#   # Install system packages (microdnf) while container is running:
+#   docker exec -u root -it <container_name> bash
+#
+#   # Install Perl modules (no root needed — cpanm uses ~/perl5 via local::lib):
+#   docker exec -it <container_name> bash
+#   cpanm Some::Module
+#
+#   # The LLM (opencode) runs without root — it cannot install system packages.
+#   # This is intentional. The AI can freely use cpanm for Perl modules.
+#
+#   # Drop --rm when you need exec access after opencode exits:
+#   docker run -it --user $(id -u):$(id -g) -v .:/workspace opencode-analysis:oel9
+#   docker exec -u root -it mystifying_whatever bash
+#
 # ─── CONFIG PRECEDENCE (low → high) ──────────────────────────────────────────
 #
 #   ~/.config/opencode/   baked into image — safe defaults, audit on, no LLM
@@ -85,7 +101,7 @@ RUN microdnf install -y --nodocs \
       oracle-epel-release-el${OEL_VERSION} \
     && microdnf install -y --nodocs \
       git-core ripgrep curl jq \
-      perl perl-libs perl-utils \
+      perl perl-libs perl-utils perl-App-cpanminus \
       perl-JSON perl-File-Find \
       nodejs \
     && microdnf clean all
@@ -103,6 +119,13 @@ COPY --from=build /build/packages/opencode/dist/opencode-linux-x64/bin/opencode 
 # Pre-creating them here (as root) and chmod -R 777 lets any --user UID write
 # at runtime without hitting root-owned 755 intermediate directories blocking
 # subdirectory creation (e.g. root-owned ~/.local/ preventing mkdir ~/.local/share/).
+#
+# Perl local::lib: cpanm installs modules to ~/perl5 without root.
+# The LLM can use cpanm freely; it cannot touch system packages (no sudo).
+# For system package installs during development, exec in as root:
+#   docker exec -u root -it <container> bash
+#   microdnf install perl-Some-Module
+# Note: drop --rm from docker run if you need to exec after opencode exits.
 RUN useradd -u 1000 -m coder \
     && mkdir -p \
         /home/coder/.local/share/opencode/log \
@@ -110,8 +133,15 @@ RUN useradd -u 1000 -m coder \
         /home/coder/.local/state/opencode \
         /home/coder/.cache/opencode \
         /home/coder/.config/opencode \
+        /home/coder/perl5 \
     && chmod -R 777 /home/coder
 ENV HOME=/home/coder
+# Perl local::lib — modules installed via cpanm land in ~/perl5, no root needed
+ENV PERL_LOCAL_LIB_ROOT=/home/coder/perl5
+ENV PERL_MB_OPT="--install_base \"/home/coder/perl5\""
+ENV PERL_MM_OPT="INSTALL_BASE=/home/coder/perl5"
+ENV PERL5LIB=/home/coder/perl5/lib/perl5
+ENV PATH=/home/coder/perl5/bin:$PATH
 
 # Bake in safe defaults at the lowest config precedence level.
 # These are overridden by any project .opencode/ or $OPENCODE_CONFIG_DIR.
