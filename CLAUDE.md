@@ -89,7 +89,7 @@ The default branch is **`dev`**, not `main`. Use `dev` or `origin/dev` for diffs
 - **`const` over `let`**; use ternaries or early returns instead of reassignment
 - **No unnecessary destructuring**; use dot notation (`obj.a` not `const { a } = obj`)
 - **Prefer single-word variable names**; inline values used only once
-- **Use Bun APIs** (e.g., `Bun.file()`) when possible
+- **Bun APIs**: upstream is actively migrating *away* from `Bun.file()` toward the `Filesystem` abstraction (`src/util/filesystem.ts`); prefer `Filesystem` for new code in files that already use it
 - **Rely on type inference**; avoid explicit type annotations unless necessary
 - **Functional array methods** (`flatMap`, `filter`, `map`) over `for` loops
 - **Drizzle schemas**: use `snake_case` field names so column names don't need string redefinition
@@ -98,3 +98,141 @@ The default branch is **`dev`**, not `main`. Use `dev` or `origin/dev` for diffs
 ## PR Conventions
 
 Titles follow conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`. Optional scope: `feat(app):`, `fix(desktop):`.
+
+---
+
+## Fork-Specific Notes (donwulff/opencode)
+
+This section documents fork-specific additions, known pitfalls, and hard-won knowledge from merging upstream changes.
+
+### Recurring Upstream Merge Conflict Hotspots
+
+These files have been merge-conflicted on every upstream sync. The pattern is predictable:
+**upstream** is doing a systematic `Bun.file()` → `Filesystem` abstraction migration across the codebase; **the fork** adds security/audit features in those same files.
+
+| File | Upstream change | Fork change |
+|---|---|---|
+| `src/provider/models.ts` | Migrate to `Filesystem` module | Security URL validation + audit logging |
+| `src/provider/provider.ts` | Add new provider loaders (e.g., `kilo`) | `llama.cpp` local model loader |
+| `src/tool/read.ts` | Migrate to streaming / `Filesystem` | `seen`-map cursor tracking for sequential reads |
+
+**Strategy for each conflict:**
+- **models.ts**: Keep both import sets (fork's `Config`, `auditLogger`, `validateUrlFromConfig`, `SecurityConfigType` AND upstream's `Filesystem`). In `refresh()`, keep the fork's full security validation block; use `modelsUrl` from the fork's block as the URL in fetch. At the bottom flag check, combine upstream's `--get-yargs-completions` guard with fork's `.catch(() => {})`.
+- **provider.ts**: Keep both loaders. The `CUSTOM_LOADERS` object simply has both `"llama.cpp"` (fork) and `"kilo"` (upstream) entries.
+- **read.ts**: The fork's `seen`-Map cursor tracking (session-aware cursor that auto-advances on sequential reads) is architecturally incompatible with upstream's streaming `createReadStream`/`readline` approach. The non-conflict code *after* the conflict markers uses `slice()`, `prev`, `result.*`, and `seen.set()` — all fork-specific — so **always take the fork's algorithm**. Replace `Bun.file().text()` with `await fs.readFile(filepath, "utf8")` since `Bun.file` gets removed in the non-conflicted section. Remove any dead `createReadStream`/`createInterface` setup that upstream may have added in the non-conflict section.
+
+### Fork-Specific Features to Preserve on Each Merge
+
+- **`src/provider/models.ts`**: Security validation of models.dev URL via `validateUrlFromConfig`; audit logging via `auditLogger`; security config type checks. These are the fork's primary value-add.
+- **`src/provider/provider.ts`**: `CUSTOM_LOADERS["llama.cpp"]` — custom loader for local llama.cpp model discovery.
+- **`src/tool/read.ts`**: `seen` Map for cursor-based sequential reads — allows the agent to call read repeatedly on the same file and auto-advance. The `MAX_BYTES_LABEL` constant from upstream is fine to keep alongside this.
+
+### tsgo Union Narrowing Bug
+
+The `opencode` package uses `tsgo` (native TypeScript preview compiler, ~7.0.0-dev). It has a confirmed bug with **progressive switch narrowing on large discriminated unions**: when the `Event` union has 43+ members, tsgo silently drops some members (notably `"message.part.delta"`) from the remaining type as the switch statement narrows.
+
+**Symptoms**: `TS2678 Type '"message.part.delta"' is not comparable to type '...'` in a switch/case over `event.type`, even though the type clearly exists in the union definition.
+
+**Two workarounds (both used in this codebase):**
+
+1. **Cast at the source** (for `sdk.event.listen` callbacks in sync/TUI contexts):
+   ```typescript
+   import type { Event, ... } from "@opencode-ai/sdk/v2"
+   // ...
+   sdk.event.listen((e) => {
+     const event = e.details as Event  // explicit cast bypasses tsgo's over-narrowing
+     switch (event.type) { ... }
+   })
+   ```
+   Used in: `src/cli/cmd/tui/context/sync.tsx`
+
+2. **Extract to `if`-guard before the switch** (for large switch statements where the cast would lose narrowing for other cases):
+   ```typescript
+   private async handleEvent(event: Event) {
+     // tsgo narrows away "message.part.delta" from the switch union, handle it first
+     if (event.type === "message.part.delta") {
+       // ... full handler ...
+       return
+     }
+     switch (event.type) {
+       // ... all other cases, but NOT "message.part.delta" ...
+     }
+   }
+   ```
+   Used in: `src/acp/agent.ts`
+
+**Do NOT**: use `event.type as Event["type"]` — this breaks narrowing for all other cases inside the switch.
+
+### TypeScript Narrowing via `.find()` Predicate
+
+tsgo (and standard TS) cannot narrow union types through `.find()` predicates on arrays of union types. Pattern to use:
+
+```typescript
+// Wrong — TS cannot narrow the return type:
+const command = [...input.messages].reverse().find((item) => item.info.role === "user")?.info.command
+
+// Correct — explicit type guard after the find:
+const found = [...input.messages].reverse().find((item) => item.info.role === "user")
+const command = found?.info.role === "user" ? found.info.command : undefined
+```
+
+### Upstream `clone()` Removal
+
+Upstream commit "remove unnecessary deep clones from session loop" removed `clone()` from `src/session/prompt.ts`. If merging introduces a `Cannot find name 'clone'` error, replace `clone(arr)` with `[...arr]` for shallow array copies (sufficient for `string[]` system prompts).
+
+### Merge Workflow
+
+After `git merge upstream/dev` produces conflicts:
+
+```bash
+# Check which files have conflicts
+git diff --name-only --diff-filter=U
+
+# After resolving all conflicts and staging:
+git add packages/opencode/src/provider/models.ts \
+        packages/opencode/src/provider/provider.ts \
+        packages/opencode/src/tool/read.ts
+
+# Commit the merge (use explicit message — --no-edit may fail if MERGE_HEAD is gone)
+git commit -m "chore: merge upstream/dev"
+
+# Always typecheck before pushing (pre-push hook runs typecheck)
+bun turbo typecheck
+git push
+```
+
+### Dockerfile.analysis (OEL Container for Code Analysis)
+
+`Dockerfile.analysis` at the repo root builds a container for running opencode against bind-mounted code. Parametrized with `ARG OEL_VERSION` (default: 9).
+
+```bash
+# Build for OEL 9 (works on older hardware without AVX2)
+docker build -t opencode-analysis:oel9 -f Dockerfile.analysis --build-arg OEL_VERSION=9 .
+
+# Build for OEL 10 (requires AVX2 / x86-64-v3; glibc hard requirement)
+docker build -t opencode-analysis:oel10 -f Dockerfile.analysis --build-arg OEL_VERSION=10 .
+
+# Run against a local codebase
+docker run --rm -it \
+  --user $(id -u):$(id -g) \
+  -v /path/to/code:/workspace \
+  -e ANTHROPIC_API_KEY \
+  opencode-analysis:oel9
+```
+
+**Important Docker ARG scoping**: `ARG OEL_VERSION=9` must be **redeclared after every `FROM` statement** in a multi-stage Dockerfile — Docker resets ARG values at each stage boundary.
+
+**OEL 10 hardware requirement**: OEL 10's glibc requires the x86-64-v3 microarchitecture level (AVX2). CPUs without AVX2 (AMD FX/Piledriver 2012, Intel pre-Haswell 2013) will get `Fatal glibc error: CPU does not support x86-64-v3` and cannot run OEL 10 containers. Use OEL 9 on those hosts.
+
+**ripgrep**: Not in default OEL repos; requires EPEL (`oracle-epel-release-el${OEL_VERSION}`). Install EPEL first, then ripgrep.
+
+### Podman Rootless Lock Issue (OEL 8.x hosts)
+
+If podman fails with `failed to open 2048 locks in /libpod_rootless_lock_1000: permission denied`:
+
+```bash
+ls -la /dev/shm/libpod*   # Check ownership — may be owned by a service user (e.g., mysql)
+sudo rm /dev/shm/libpod_rootless_lock_*
+```
+
+Root cause: A third-party install script (MariaDB ColumnStore, etc.) ran `podman` as a service user, creating `/dev/shm/libpod_rootless_lock_1000` owned by that user. The "2048" is a fixed-size pre-allocated POSIX SHM semaphore pool. Subsequent rootless podman runs by your own user can't open the file. Safe to delete — podman recreates it on next run.
