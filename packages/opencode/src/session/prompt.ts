@@ -749,7 +749,8 @@ export namespace SessionPrompt {
     using _ = log.time("resolveTools")
     const tools: Record<string, AITool> = {}
 
-    const command = [...input.messages].reverse().find((item) => item.info.role === "user")?.info.command
+    const found = [...input.messages].reverse().find((item) => item.info.role === "user")
+    const command = found?.info.role === "user" ? found.info.command : undefined
     const context = (args: any, options: ToolCallOptions): Tool.Context => ({
       sessionID: input.session.id,
       abort: options.abortSignal!,
