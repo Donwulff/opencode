@@ -101,6 +101,51 @@ Titles follow conventional commits: `feat:`, `fix:`, `docs:`, `chore:`, `refacto
 
 ---
 
+## Environment Architecture
+
+This repo operates in a three-environment setup. Understand which environment you're working in before committing anything.
+
+### 1. Public GitHub fork (this repo — `donwulff/opencode`)
+
+Fork of upstream `opencode`. Contains security hardening, local model support, and other fork-specific features. Changes here can eventually become upstream PRs. **Nothing internal or environment-specific belongs here.**
+
+### 2. Private infrastructure repo (company network)
+
+A separate git repo that is never pushed to GitHub. Contains:
+- OEL Dockerfiles with internal package lists, registry configs, subscription details
+- `opencode.jsonc` configs with real LLM endpoint URLs and policy settings
+- Experimental prompts and model-specific configs for local LLMs
+- Build scripts that reference internal infrastructure
+
+Pulls the public fork as a build input. Eventually hosted on company-internal git.
+
+### 3. Local development environment
+
+Where the actual running and testing happens. Local LLMs are accessed via localhost tunnels (the tunnel destination is an internal detail — do not document tunnel targets in any committed file).
+
+Local model endpoint configs go in **`~/.opencode/opencode.jsonc`** — never in any git-tracked file.
+
+---
+
+### Non-Disclosure Rule — CRITICAL
+
+**Never commit to this public repo:**
+
+- IP addresses or hostnames, internal or external
+- Port numbers or URL patterns that are environment-specific (including `localhost:PORT` if the port reveals something about the setup)
+- Internal LLM model names, endpoint paths, or API key patterns
+- Specific internal package names, versions, or Perl module lists
+- Internal network topology or service names
+- Anything that would tell an outside observer something specific about the internal production environment
+
+**The test:** would a stranger reading this commit learn something specific about the internal environment? If yes, it does not belong here.
+
+The localhost tunnel approach already anonymizes LLM endpoints — keep it that way. If something needs to be documented and it contains internal details, it goes in the private infra repo, not here.
+
+**`.opencode/opencode.jsonc` in this repo** is upstream's project-level config for developing opencode itself. Any local model URLs or endpoint overrides that end up in `.opencode/opencode.jsonc` during local testing must be moved to `~/.opencode/opencode.jsonc` before committing. When in doubt, check `git diff` for IP addresses, port numbers, and hostnames before every commit.
+
+---
+
 ## Fork-Specific Notes (donwulff/opencode)
 
 This section documents fork-specific additions, known pitfalls, and hard-won knowledge from merging upstream changes.
