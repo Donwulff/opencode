@@ -152,7 +152,7 @@ RUN cat > /home/coder/.config/opencode/opencode.jsonc <<'EOF'
   "$schema": "https://opencode.ai/config.json",
   "security": {
     "audit_log_enabled": true,
-    "models_dev_enabled": true
+    "models_dev_enabled": false
   },
   "provenance": {
     "enabled": true,
