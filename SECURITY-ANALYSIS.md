@@ -24,16 +24,23 @@ container, where the LLM must not be able to exfiltrate data to external service
 | Provider SDK | LLM endpoints | `validateUrlFromConfig` (provider.ts:1220) | |
 | models.dev | models.dev | `validateUrlFromConfig` + `models_dev_enabled` flag | |
 
-### Tools/paths that make network calls (unvalidated)
+### Outbound data-sending features (not tools — opencode features)
+
+| Feature | What it sends | Trigger | Container status |
+|---|---|---|---|
+| `share/share-next.ts` | Full session + messages to opncd.ai | Auto (`share:auto`) or `/share` command | **Disabled** — `OPENCODE_DISABLE_SHARE=1` + `share:"disabled"` |
+| `installation/index.ts` | Version check to npm/GitHub | Automatic at TUI startup | **Disabled** — `OPENCODE_DISABLE_AUTOUPDATE=1` + `autoupdate:false` |
+| `lsp/server.ts` (downloader) | LSP binary fetch from GitHub | On first LSP use if not installed | **Disabled** — `OPENCODE_DISABLE_LSP_DOWNLOAD=1` |
+| `plugin/copilot.ts` | GitHub Copilot OAuth | Plugin opt-in | Safe — requires explicit plugin config |
+| `plugin/codex.ts` | OpenAI Codex OAuth | Plugin opt-in | Safe — requires explicit plugin config |
+
+### Tools/paths that make network calls (now validated via auditedFetch)
 
 | Path | What it fetches | Risk |
 |---|---|---|
-| `session/instruction.ts` | URLs in `instructions:` config | Project `.opencode/config.json` with `instructions: ["https://attacker.com/inject"]` is fetched and injected into system prompt before any user interaction |
-| `skill/discovery.ts` | Skill index + skill files from URL | Same config-injection vector |
-| `file/ripgrep.ts` | ripgrep binary from github.com | Supply chain; mitigated by pre-installing via EPEL in container (download path never reached) |
-| `share/share-next.ts` | opencode.ai share service | User-initiated; acceptable |
-| `plugin/copilot.ts` | GitHub Copilot OAuth | Plugin opt-in |
-| `plugin/codex.ts` | OpenAI Codex OAuth | Plugin opt-in |
+| `session/instruction.ts` | URLs in `instructions:` config | Now validated + logged via `auditedFetch()`; blocked by `internal-only` mode |
+| `skill/discovery.ts` | Skill index + skill files from URL | Now validated + logged via `auditedFetch()`; blocked by `internal-only` mode |
+| `file/ripgrep.ts` | ripgrep binary from github.com | EPEL pre-install means download path never reached; no change needed |
 
 ### Subprocess spawning (no network validation)
 
@@ -53,12 +60,16 @@ through the bash tool, so bash network controls cover git as well.
 | Mitigation | Covers | Gap |
 |---|---|---|
 | `security.mode: "internal-only"` | Provider SDK, webfetch, websearch, models.dev | Does not cover bash subprocess |
-| `models_dev_enabled: false` | models.dev runtime fetch | Bundled snapshot was also suppressed (see below) |
-| Empty `models-snapshot.ts` at build time | Bundled cloud model list in binary | — |
+| `models_dev_enabled: false` + empty snapshot | models.dev runtime fetch + bundled model list | — |
 | No API keys passed by default | Cloud provider auth | User can still pass keys; SDK calls still blocked by mode |
+| `OPENCODE_DISABLE_SHARE=1` + `share: "disabled"` | Session upload to opncd.ai (auto and manual) | Defense-in-depth: env var blocks sync, config blocks Session.share() |
+| `OPENCODE_DISABLE_AUTOUPDATE=1` + `autoupdate: false` | Version check + auto-upgrade at TUI startup | — |
+| `OPENCODE_DISABLE_LSP_DOWNLOAD=1` | Runtime LSP binary downloads from GitHub | LSP fetch() is in parent process, not blocked by subprocess sandbox |
+| `OPENCODE_SPAWN_SANDBOX=1` | All subprocess spawns (bash, grep, ripgrep) | Parent-process fetch() paths unaffected (correct by design) |
+| `auditedFetch()` in instruction.ts + skill/discovery.ts | Internal config-driven fetch() calls | — |
 | Container runs as non-root | Host escape | Standard |
-| EPEL-installed ripgrep | Avoids runtime binary download | — |
-| `opencode-run.sh` auto log mount | audit.jsonl + log/ survive `--rm` | LLM has no /workspace access to log dir |
+| EPEL-installed ripgrep | Avoids runtime ripgrep binary download | — |
+| `opencode-run.sh` auto log mount | audit.jsonl + log/ + sqlite survive `--rm` | LLM path is /workspace; log dir is outside it |
 
 ## Known Gaps
 
