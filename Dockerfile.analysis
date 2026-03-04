@@ -169,11 +169,19 @@ ENV OPENCODE_SPAWN_SANDBOX=1
 ENV OPENCODE_DISABLE_SHARE=1
 ENV OPENCODE_DISABLE_AUTOUPDATE=1
 ENV OPENCODE_DISABLE_LSP_DOWNLOAD=1
+# Block project config loading entirely.  This is critical: project config
+# (.opencode/opencode.json in the workspace) has HIGHER precedence than the
+# baked-in global config, so without this flag a malicious project could set
+# "security": {"mode": "external-allowed"} and completely bypass the
+# internal-only restriction.  For the analysis use case we never want the
+# analyzed project's config influencing the analyzer.
+# Re-enabled by --dangerously-open (for your own trusted projects).
+ENV OPENCODE_DISABLE_PROJECT_CONFIG=1
 
-# Bake in safe defaults at the lowest config precedence level.
-# These are overridden by any project .opencode/ or $OPENCODE_CONFIG_DIR.
-# Do NOT put LLM endpoints or internal URLs here — those go in the runtime
-# config injected via OPENCODE_CONFIG_DIR in the private infra repo.
+# Bake in safe defaults at the global config level.
+# With OPENCODE_DISABLE_PROJECT_CONFIG=1, project .opencode/ cannot override
+# these.  The runtime OPENCODE_CONFIG_DIR injection (--config flag) still
+# works and is used for LLM endpoints — keep those in the private infra repo.
 RUN cat > /home/coder/.config/opencode/opencode.jsonc <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",

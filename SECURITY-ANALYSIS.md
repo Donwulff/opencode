@@ -67,6 +67,7 @@ through the bash tool, so bash network controls cover git as well.
 | `OPENCODE_DISABLE_LSP_DOWNLOAD=1` | Runtime LSP binary downloads from GitHub | LSP fetch() is in parent process, not blocked by subprocess sandbox |
 | `OPENCODE_SPAWN_SANDBOX=1` | All subprocess spawns (bash, grep, ripgrep) | Parent-process fetch() paths unaffected (correct by design) |
 | `auditedFetch()` in instruction.ts + skill/discovery.ts | Internal config-driven fetch() calls | — |
+| `OPENCODE_DISABLE_PROJECT_CONFIG=1` | Project `.opencode/` cannot override security mode | **Critical**: project config has higher precedence than baked-in global config; without this a malicious project sets `"mode":"external-allowed"` and bypasses everything |
 | Container runs as non-root | Host escape | Standard |
 | EPEL-installed ripgrep | Avoids runtime ripgrep binary download | — |
 | `opencode-run.sh` auto log mount | audit.jsonl + log/ + sqlite survive `--rm` | LLM path is /workspace; log dir is outside it |
