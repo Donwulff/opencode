@@ -202,7 +202,7 @@ all subprocess spawns, not just the bash tool.
 - Could be proposed as an experimental security feature
 - Fork's Dockerfile.analysis sets it to `1`; upstream images leave it unset
 
-### Audit all internal `fetch()` calls
+### Audit all internal `fetch()` calls — ADDRESSED
 
 Several internal fetch paths bypass both `validateUrlFromConfig` and `auditLogger`,
 creating blind spots in the audit trail:
@@ -212,28 +212,25 @@ creating blind spots in the audit trail:
 | `webfetch` tool | Any user-requested URL | ✓ | ✓ |
 | `websearch` tool | mcp.exa.ai | ✓ | ✓ |
 | Provider SDK calls | LLM provider endpoints | ✓ | ✓ |
-| `session/instruction.ts` | Remote instruction URLs from config | ✗ | ✗ |
-| `skill/discovery.ts` | Skill index + skill files | ✗ | ✗ |
-| `file/ripgrep.ts` | ripgrep binary from github.com | ✗ | ✗ |
+| `session/instruction.ts` | Remote instruction URLs from config | ✓ | ✓ |
+| `skill/discovery.ts` | Skill index + skill files | ✓ | ✓ |
+| `file/ripgrep.ts` | ripgrep binary from github.com | n/a | n/a |
 | `share/share-next.ts` | opencode.ai share service | ✗ | ✗ |
 
-**Fix**: add `auditedFetch(url, init, source)` to `src/util/audit.ts` (or a new
-`src/util/fetch.ts`) that:
-1. Runs the URL through `validateUrlFromConfig` if security config is set
-2. Logs to `auditLogger.logFetchRequest()` on completion (URL, method, status, ms)
-3. Logs to `auditLogger.logUrlCheck()` if blocked
+**Implemented**: `src/util/fetch.ts` exports `auditedFetch(url, init?, source?)` that:
+1. Calls `validateUrlFromConfig` against `config.security` if security config is set
+2. Logs to `auditLogger.logUrlCheck()` (allowed or blocked)
+3. Throws on blocked URLs
+4. Logs to `auditLogger.logFetchRequest()` on completion
 
-Replace bare `fetch()` calls in the unaudited paths with `auditedFetch()`. The
-already-audited paths (webfetch, websearch, provider SDK) retain their more specific
-logging and don't need to change.
+`instruction.ts` and `skill/discovery.ts` now route through `auditedFetch()`.
+`block_domain_regex` in SecurityConfig now blocks these paths too, not just
+webfetch/websearch/provider.
 
-**Note on `block_domain_regex`**: `SecurityConfig` already has this field — domain
-blocking by regex pattern within an otherwise-open (`external-allowed`) mode. Works
-today for webfetch/websearch/provider, but not for the unaudited paths above. Routing
-them through `auditedFetch()` would close that gap too.
+**ripgrep download**: the binary is pre-installed via EPEL in the container;
+the runtime download path in `file/ripgrep.ts` is never reached. No change needed.
 
-The `audit_log_enabled: true` is already baked into the container config, so the
-audit logger is on. The gap is just the missing call sites.
+**share**: user-initiated upload; acceptable. Not changed.
 
 ## Ideas / Future Work
 
