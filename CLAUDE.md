@@ -271,6 +271,10 @@ docker run --rm -it \
 
 **ripgrep**: Not in default OEL repos; requires EPEL (`oracle-epel-release-el${OEL_VERSION}`). Install EPEL first, then ripgrep.
 
+**Config precedence (low → high)**: defaults → `~/.config/opencode/` → `.opencode/` (project) → `$OPENCODE_CONFIG_DIR` → `$OPENCODE_CONFIG_CONTENT` → `/etc/opencode/` (managed — highest). The managed config at `/etc/opencode/` is created as root in the image and cannot be overridden by project config or `OPENCODE_CONFIG_DIR`.
+
+**`OPENCODE_TEST_MANAGED_CONFIG_DIR`**: env var in `config.ts:60` that redirects the managed config path lookup. `opencode-run.sh --dangerously-open` sets this to `/nonexistent-dangerously-open` to bypass `/etc/opencode/`, allowing `--config` to fully control security mode. This is the only way to override managed config at runtime.
+
 ### Podman Rootless Lock Issue (OEL 8.x hosts)
 
 If podman fails with `failed to open 2048 locks in /libpod_rootless_lock_1000: permission denied`:
