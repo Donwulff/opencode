@@ -58,6 +58,7 @@ through the bash tool, so bash network controls cover git as well.
 | No API keys passed by default | Cloud provider auth | User can still pass keys; SDK calls still blocked by mode |
 | Container runs as non-root | Host escape | Standard |
 | EPEL-installed ripgrep | Avoids runtime binary download | — |
+| `opencode-run.sh` auto log mount | audit.jsonl + log/ survive `--rm` | LLM has no /workspace access to log dir |
 
 ## Known Gaps
 

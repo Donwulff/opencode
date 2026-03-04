@@ -7,6 +7,7 @@
 # Options:
 #   --oel 9|10      OEL version to build/run (default: 9)
 #   --config DIR    Path to config directory, mounted as OPENCODE_CONFIG_DIR
+#   --logs DIR      Base directory for run logs (default: ~/opencode-analysis-logs)
 #   --rebuild       Force image rebuild even if it exists
 #   --no-build      Never build; fail if image is missing
 #   --mouse         Enable mouse support
@@ -19,7 +20,18 @@
 #   ./opencode-run.sh --config ~/private/opencode-config /path/to/project
 #   ./opencode-run.sh --rebuild --config ~/private/opencode-config .
 #   ./opencode-run.sh --mouse .
+#   ./opencode-run.sh --logs /mnt/audit-store .
 #   ./opencode-run.sh -- serve --port 4096
+#
+# Logs:
+#   A timestamped subdirectory is automatically created under LOG_BASE for
+#   each run and bind-mounted over the container's opencode data directory.
+#   This preserves the audit log (audit.jsonl), application logs (log/), and
+#   session database even though the container runs with --rm.  The LLM only
+#   has access to /workspace inside the container, not to the log directory.
+#
+#   Log path printed to stderr at startup:
+#     Run logs: /home/user/opencode-analysis-logs/20260304-143000-12345/
 #
 set -euo pipefail
 
@@ -31,11 +43,13 @@ CONFIG_DIR=""
 WORKSPACE=""
 EXTRA_ARGS=()
 DISABLE_MOUSE="${OPENCODE_DISABLE_MOUSE:-1}"
+LOG_BASE="${OPENCODE_ANALYSIS_LOG_DIR:-${HOME}/opencode-analysis-logs}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --oel)      OEL_VERSION="$2"; shift 2 ;;
         --config)   CONFIG_DIR="$2"; shift 2 ;;
+        --logs)     LOG_BASE="$2"; shift 2 ;;
         --rebuild)  REBUILD=1; shift ;;
         --no-build) NO_BUILD=1; shift ;;
         --mouse)    DISABLE_MOUSE=0; shift ;;
@@ -49,6 +63,16 @@ done
 # Default workspace to current directory
 WORKSPACE="${WORKSPACE:-${PWD}}"
 IMAGE="opencode-analysis:oel${OEL_VERSION}"
+
+# ─── LOG DIR ─────────────────────────────────────────────────────────────────
+# Per-run timestamped directory on the host, bind-mounted over the container's
+# opencode data dir (~/.local/share/opencode).  Captures audit.jsonl, log/,
+# and the session sqlite database.  Created before the container starts so
+# Docker mounts a host-owned directory (avoids root-owned mount target).
+RUN_ID="$(date +%Y%m%d-%H%M%S)-$$"
+LOG_DIR="${LOG_BASE}/${RUN_ID}"
+mkdir -p "${LOG_DIR}/log" "${LOG_DIR}/bin"
+echo "Run logs: ${LOG_DIR}" >&2
 
 # ─── BUILD ───────────────────────────────────────────────────────────────────
 IMAGE_EXISTS=0
@@ -72,6 +96,7 @@ RUN_ARGS=(
     --rm -it
     --user "$(id -u):$(id -g)"
     -v "$(realpath "$WORKSPACE"):/workspace"
+    -v "${LOG_DIR}:/home/coder/.local/share/opencode"
     -e "OPENCODE_DISABLE_MOUSE=${DISABLE_MOUSE}"
 )
 
