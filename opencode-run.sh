@@ -9,6 +9,8 @@
 #   --config DIR    Path to config directory, mounted as OPENCODE_CONFIG_DIR
 #   --rebuild       Force image rebuild even if it exists
 #   --no-build      Never build; fail if image is missing
+#   --mouse         Enable mouse support
+#   --no-mouse      Disable mouse support (default)
 #   --              Pass remaining args through to opencode
 #
 # Examples:
@@ -16,6 +18,7 @@
 #   ./opencode-run.sh --oel 10 /path/to/project
 #   ./opencode-run.sh --config ~/private/opencode-config /path/to/project
 #   ./opencode-run.sh --rebuild --config ~/private/opencode-config .
+#   ./opencode-run.sh --mouse .
 #   ./opencode-run.sh -- serve --port 4096
 #
 set -euo pipefail
@@ -27,6 +30,7 @@ NO_BUILD=0
 CONFIG_DIR=""
 WORKSPACE=""
 EXTRA_ARGS=()
+DISABLE_MOUSE="${OPENCODE_DISABLE_MOUSE:-1}"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -34,6 +38,8 @@ while [[ $# -gt 0 ]]; do
         --config)   CONFIG_DIR="$2"; shift 2 ;;
         --rebuild)  REBUILD=1; shift ;;
         --no-build) NO_BUILD=1; shift ;;
+        --mouse)    DISABLE_MOUSE=0; shift ;;
+        --no-mouse) DISABLE_MOUSE=1; shift ;;
         --)         shift; EXTRA_ARGS+=("$@"); break ;;
         -*)         echo "Unknown option: $1" >&2; exit 1 ;;
         *)          WORKSPACE="$1"; shift ;;
@@ -66,6 +72,7 @@ RUN_ARGS=(
     --rm -it
     --user "$(id -u):$(id -g)"
     -v "$(realpath "$WORKSPACE"):/workspace"
+    -e "OPENCODE_DISABLE_MOUSE=${DISABLE_MOUSE}"
 )
 
 # Inject private config directory if provided
