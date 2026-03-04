@@ -37,8 +37,8 @@
 #
 #   --dangerously-open mode — for your own open-source projects or personal use:
 #     Unsets the ENV-based restrictions above so the image behaves closer to upstream.
-#     The baked-in config (security.mode: internal-only) still applies unless you also
-#     pass --config with a config that sets a different security mode.
+#     Also bypasses the managed config (/etc/opencode/) via OPENCODE_TEST_MANAGED_CONFIG_DIR
+#     so --config can fully control security mode (e.g. allow external LLM endpoints).
 #
 # Logs:
 #   A timestamped subdirectory is automatically created under LOG_BASE for each run
@@ -118,9 +118,10 @@ RUN_ARGS=(
     -e "OPENCODE_DISABLE_MOUSE=${DISABLE_MOUSE}"
 )
 
-# --dangerously-open: override the ENV-based analysis-mode restrictions.
-# The baked-in security.mode:internal-only config still applies unless
-# --config provides a replacement.
+# --dangerously-open: override the ENV-based analysis-mode restrictions AND
+# bypass the managed config (/etc/opencode/) so --config can control security mode.
+# OPENCODE_TEST_MANAGED_CONFIG_DIR redirects the managed config lookup to a
+# non-existent path, making the managed config layer inactive.
 if [[ "$DANGEROUSLY_OPEN" -eq 1 ]]; then
     echo "WARNING: --dangerously-open: analysis-mode restrictions disabled" >&2
     RUN_ARGS+=(
@@ -128,6 +129,7 @@ if [[ "$DANGEROUSLY_OPEN" -eq 1 ]]; then
         -e OPENCODE_DISABLE_SHARE=0
         -e OPENCODE_DISABLE_AUTOUPDATE=0
         -e OPENCODE_DISABLE_LSP_DOWNLOAD=0
+        -e OPENCODE_TEST_MANAGED_CONFIG_DIR=/nonexistent-dangerously-open
     )
 fi
 

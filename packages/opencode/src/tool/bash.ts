@@ -18,6 +18,7 @@ import { BashArity } from "@/permission/arity"
 import { Truncate } from "./truncation"
 import { Plugin } from "@/plugin"
 import { assertReadOnlyShell } from "./command-guard"
+import { auditLogger } from "@/util/audit"
 
 const MAX_METADATA_LENGTH = 30_000
 const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 * 60 * 1000
@@ -198,6 +199,11 @@ export const BashTool = Tool.define("bash", async () => {
           metadata: {},
         })
       }
+
+      // Log every permitted bash invocation to the audit trail.
+      // This is the primary exfiltration vector; all permitted commands should be visible
+      // in audit.jsonl alongside the URL audit trail for post-session review.
+      auditLogger.logToolRequest(ctx.sessionID, "bash", params.command, "user", true)
 
       const shellEnv = await Plugin.trigger(
         "shell.env",

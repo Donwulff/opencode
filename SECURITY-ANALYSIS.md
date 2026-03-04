@@ -99,7 +99,8 @@ output from system instructions.
   stream → **FIXED** in `webfetch.ts`: `sanitizeForLLM()` strips both classes
 - **AGENTS.md auto-injection**: `InstructionPrompt.resolve()` auto-loads AGENTS.md/CLAUDE.md
   from any subdirectory the agent reads files in, injecting them as system instructions →
-  **FIXED** by `OPENCODE_DISABLE_PROJECT_CONFIG=1` + guarding `resolve()` in instruction.ts
+  **Partial** — workspace AGENTS.md is treated as trusted (intentional); bash network sandbox
+  prevents exfiltration even if injected instructions are followed
 - **Package README injection**: npm/PyPI READMEs with injected instructions framed as
   troubleshooting docs; demonstrated PoCs via Embrace the Red / HiddenLayer (2024)
 - **CSS-hidden text**: `<span style="color:white">AGENT:...</span>` — HTMLRewriter does
@@ -120,19 +121,15 @@ external URLs (by design, for the LLM to gather information). A payload that cau
 LLM to call webfetch with a data-bearing URL (e.g. `?d=[base64-secrets]`) could exfiltrate
 via a legitimate-looking webfetch call. **See Ideas section** for LLM-based filter approach.
 
-## Planned Work
+## Implementation Notes
 
-### Bash network namespace sandboxing
+### Bash network namespace sandboxing — IMPLEMENTED
 
-**Goal**: all subprocesses spawned by any tool run in a restricted network namespace.
+All subprocesses spawned by any tool run in a restricted network namespace.
 webfetch, websearch, and provider API calls are structurally exempt — they use
 JavaScript `fetch()` which runs inside the opencode parent process and is not affected
 by subprocess namespacing. No special carve-out rules needed; the mechanism boundary
 IS the security boundary.
-
-This approach is future-proof: upstream can add new tools and as long as they spawn
-subprocesses via the standard path, they are automatically sandboxed. New tools that
-call `fetch()` directly (like webfetch) are automatically unrestricted.
 
 **Why not Docker-level networking**: restricting the container's network blocks the
 opencode process itself, breaking webfetch/websearch. Per-process namespace is the
@@ -151,70 +148,54 @@ opencode process (parent, full network namespace)
   │
   └── subprocess spawns → all tools that exec external binaries
       [crosses process boundary — sandbox applied here]
-        ├── bash tool          → bwrap/unshare sandbox
-        ├── ripgrep execution  → bwrap/unshare sandbox (no network needed anyway)
-        ├── LSP servers        → bwrap/unshare sandbox (no network needed anyway)
+        ├── bash tool          → bwrap/unshare sandbox (sandboxedArgs() in bash.ts)
+        ├── ripgrep execution  → bwrap/unshare sandbox (sandboxedCmd() in process.ts)
+        ├── grep tool          → bwrap/unshare sandbox (sandboxedCmd() in process.ts)
+        ├── LSP servers        → direct child_process.spawn; no network needed (gap)
         └── future tools       → automatically sandboxed if they use Process.spawn
 
   [ripgrep binary DOWNLOAD is fetch() in parent process, not a subprocess —
-   goes through auditedFetch() plan, not the spawn sandbox]
+   goes through auditedFetch(), not the spawn sandbox]
 ```
 
-#### Chokepoint: `util/process.ts` `Process.spawn`
-
-`Process.spawn` in `src/util/process.ts` is already used by grep and ripgrep. It is
-the natural single chokepoint for sandbox logic. **bash.ts currently calls
-`child_process.spawn` directly** — migrating it to use `Process.spawn` (or sharing
-the sandbox wrapper) eliminates the split.
-
-Current subprocess spawn sites and their coverage:
+#### Current subprocess spawn coverage
 
 | Spawn site | Uses Process.spawn? | Notes |
 |---|---|---|
 | `bash.ts` | No — direct `child_process.spawn` | **Sandboxed inline** via `sandboxedArgs()` |
 | `tool/grep.ts` | Yes | Covered by `Process.spawn` → `sandboxedCmd()` |
 | `file/ripgrep.ts` | Yes | Covered by `Process.spawn` → `sandboxedCmd()` |
-| `lsp/server.ts` | No — direct `child_process.spawn` | LSP needs no network; sandbox is safe to add later |
+| `lsp/server.ts` | No — direct `child_process.spawn` | LSP needs no network; sandbox gap acceptable |
 | `pty/index.ts` | No — bun-pty | Interactive TUI terminal; not AI-controlled |
 | `session/prompt.ts` | No — direct `child_process.spawn` | Shell for prompt expansion; no user commands |
 
 Future upstream tools using `Process.spawn` → automatically covered.
 Future upstream tools using direct `child_process.spawn` → NOT covered (gap).
 
-**Belt-and-suspenders option**: additionally intercept `child_process.spawn` at module
-load time to warn or sandbox direct callers. Ensures coverage even if upstream
-bypasses `Process.spawn`. Architectural decision: worth the hackiness?
-
 #### Mechanism
 
 Linux user+network namespaces, usable without host privileges:
 
 ```bash
-# Preferred: bwrap (pre-installed on RHEL/OEL as Flatpak dep; clean user ns handling)
+# Preferred: bwrap (bubblewrap, pre-installed in container via EPEL)
 bwrap --bind / / --dev /dev --proc /proc \
-  --unshare-user --unshare-net \
-  --uid $(id -u) --gid $(id -g) \
+  --unshare-user --uid 0 --gid 0 --unshare-net \
   -- sh -c "ip link set lo up 2>/dev/null; <command>"
 
 # Fallback: unshare
-unshare --user --map-root-user --net -- sh -c "ip link set lo up 2>/dev/null && <command>"
+unshare --user --map-root-user --net -- sh -c "ip link set lo up 2>/dev/null; <command>"
 ```
 
 `ip link set lo up` inside the namespace requires `CAP_NET_ADMIN` scoped to the
 new netns. The process gets this automatically by owning the user namespace it was
 created within. No host-level privileges needed.
 
-Practical note: for test servers, bind on `localhost` inside the container. Loopback
-is sufficient for the common case. External test server access (non-localhost) would
-require a veth pair with `CAP_NET_ADMIN` on the host — significantly more complex;
-design separately if needed.
-
 #### Configuration
 
 Flag-based, baked into `Dockerfile.analysis`, independent of config files:
 
 ```typescript
-// flag.ts additions
+// flag.ts
 export const OPENCODE_SPAWN_SANDBOX = truthy("OPENCODE_SPAWN_SANDBOX")
 ```
 
@@ -224,19 +205,16 @@ ENV OPENCODE_SPAWN_SANDBOX=1
 ```
 
 Overridable at runtime: `docker run -e OPENCODE_SPAWN_SANDBOX=0 ...`
-
-Name is `OPENCODE_SPAWN_SANDBOX` (not `BASH_SANDBOX`) to reflect that it applies to
-all subprocess spawns, not just the bash tool.
+`--dangerously-open` in `opencode-run.sh` sets `OPENCODE_SPAWN_SANDBOX=0`.
 
 #### Upstream PR viability
 
 - Opt-in via env var, default off → zero behavior change for existing users
 - Core change is in `util/process.ts` (single file) + `flag.ts`
-- bash.ts needs minor refactor to route through Process.spawn or shared wrapper
+- bash.ts uses inline `sandboxedArgs()`; could be unified through Process.spawn later
 - Could be proposed as an experimental security feature
-- Fork's Dockerfile.analysis sets it to `1`; upstream images leave it unset
 
-### Audit all internal `fetch()` calls — ADDRESSED
+### Audit all internal `fetch()` calls — IMPLEMENTED
 
 Several internal fetch paths bypass both `validateUrlFromConfig` and `auditLogger`,
 creating blind spots in the audit trail:
