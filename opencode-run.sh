@@ -5,7 +5,7 @@
 #   ./opencode-run.sh [OPTIONS] [WORKSPACE]
 #
 # Options:
-#   --oel 9|10           OEL version to build/run (default: 9)
+#   --oel 8|9|10         OEL version to build/run (default: 9)
 #   --config DIR         Path to config directory, mounted as OPENCODE_CONFIG_DIR
 #   --logs DIR           Base directory for run logs (default: ~/opencode-analysis-logs)
 #   --rebuild            Force image rebuild even if it exists

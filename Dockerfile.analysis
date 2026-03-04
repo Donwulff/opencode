@@ -2,7 +2,11 @@
 #
 # ─── BUILDING ────────────────────────────────────────────────────────────────
 #
-#   # OEL 9 (works on any x86-64 CPU, recommended for older hardware)
+#   # OEL 8 (production baseline; x86-64-v1; runs on any x86-64)
+#   docker build -t opencode-analysis:oel8 -f Dockerfile.analysis \
+#     --build-arg OEL_VERSION=8 .
+#
+#   # OEL 9 (works on any x86-64 CPU, recommended for dev/test)
 #   docker build -t opencode-analysis:oel9 -f Dockerfile.analysis .
 #
 #   # OEL 10 (requires AVX2 / x86-64-v3; AMD FX / pre-Haswell Intel will fail)
@@ -110,12 +114,15 @@ ARG OEL_VERSION=9
 FROM oraclelinux:${OEL_VERSION}-slim
 
 ARG OEL_VERSION=9
-RUN microdnf install -y --nodocs \
+# perl-File-Find is bundled in perl-libs on EL8; split into a separate subpackage on EL9+.
+# Install it conditionally so this Dockerfile works on OEL 8, 9, and 10.
+RUN extra_perl=$([ "${OEL_VERSION}" != "8" ] && echo "perl-File-Find" || true) \
+    && microdnf install -y --nodocs \
       oracle-epel-release-el${OEL_VERSION} \
     && microdnf install -y --nodocs \
       git-core ripgrep curl jq bubblewrap \
       perl perl-libs perl-utils perl-App-cpanminus \
-      perl-JSON perl-File-Find \
+      perl-JSON ${extra_perl} \
       nodejs \
     && microdnf clean all
 
