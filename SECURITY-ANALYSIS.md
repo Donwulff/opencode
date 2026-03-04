@@ -376,3 +376,38 @@ webfetch redirects:    to a different domain than originally requested
 
 The audit log (`~/.local/share/opencode/audit.jsonl`, persisted to host via log mount)
 captures all URL checks and tool requests. Post-session analysis script is a future work item.
+
+### Log Infrastructure — Active Component Analysis (Log4Shell analogy)
+
+**Traditional Log4Shell-style risk**: Log4j interpreted `${jndi:ldap://...}` inside log
+messages and made network calls to resolve them. Our logging infrastructure has no such
+behaviour:
+- `util/log.ts`: plain string concatenation + `JSON.stringify` for structured fields.
+  No template parsing, no variable expansion, no eval, no network calls.
+- `util/audit.ts`: each entry serialized via `JSON.stringify(entry)`, appended to JSONL.
+  No interpretation of entry content.
+
+**The LLM-as-active-component risk (cannot be fixed at the logging layer)**:
+
+The definition of "active component" has shifted. Adversarial content that reached the
+main agent context — even if stripped of Unicode steganography — may have caused the
+LLM to run bash commands containing natural-language injection payloads. Those commands
+are faithfully recorded verbatim in `audit.jsonl` (in `context.destination` and the
+`message` field of `tool_request` entries). If `audit.jsonl` is later analyzed by an LLM:
+- The adversarial payload appears in the log as a bash command string
+- An LLM reading the log could be influenced by it
+
+This is analogous to Log4Shell in spirit (data-as-instructions), but at a different layer.
+
+**Why this cannot be fixed in the logger**: logs must faithfully record what happened,
+including adversarial content. Sanitizing logs would destroy forensic value. The correct
+mitigations are at the analysis layer:
+
+| Analysis context | Risk | Protection |
+|---|---|---|
+| LLM analysis inside the container | Influenced analysis → bash commands | Bash network sandbox blocks exfiltration |
+| LLM analysis outside the container | Influenced analysis → arbitrary host commands | Out of scope — treat analysis results as potentially influenced |
+| Human review of logs | Low — human can recognize injections | Heuristics above help flag suspicious patterns |
+
+The logs are forensically valuable precisely because they're unsanitized. The container
+boundary is the correct isolation layer for LLM-mediated log analysis.

@@ -2,7 +2,9 @@
 
 ## Audit Logger
 
-- JSONL append format via `Bun.write(filePath, content, { append: true })`
+- JSONL append format via `appendFile`; entries serialized via `JSON.stringify` — no interpretation of content
+- **Log4Shell-style active component risk: none.** `log.ts` uses plain string concatenation; `audit.ts` uses `JSON.stringify`. Neither parses `${}` syntax, calls eval, or makes network calls. Adversarial content in logged values is inert at the logging layer.
+- **LLM-as-active-component**: adversarial bash commands are logged verbatim. If audit.jsonl is fed to an LLM for analysis outside the container, the LLM could be influenced. Inside the container, the bash network sandbox bounds the damage. This is a known, accepted architectural boundary — do NOT sanitize log content (would destroy forensic value).
 - Auto-saves on each `log()` call
 - Uses `providerId` (camelCase) in API methods; `getFiltered()` checks both `context` and `metadata` for this field
 - **Circular dependency constraint**: `config.ts` imports `audit.ts`. Do NOT put anything that also imports `config` into `audit.ts`. `util/fetch.ts` is the correct home for code that needs both config + audit (e.g. `auditedFetch()`).
