@@ -167,6 +167,7 @@ export namespace InstructionPrompt {
   }
 
   export async function resolve(messages: MessageV2.WithParts[], filepath: string, messageID: string) {
+    if (Flag.OPENCODE_DISABLE_PROJECT_CONFIG) return []
     const system = await systemPaths()
     const already = loaded(messages)
     const results: { filepath: string; content: string }[] = []

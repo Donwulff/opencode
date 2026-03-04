@@ -155,30 +155,28 @@ export const WebFetchTool = Tool.define("webfetch", {
     switch (params.format) {
       case "markdown":
         if (contentType.includes("text/html")) {
-          const markdown = convertHTMLToMarkdown(content)
           return {
-            output: markdown,
+            output: convertHTMLToMarkdown(content),
             title,
             metadata: {},
           }
         }
         return {
-          output: content,
+          output: sanitizeForLLM(content),
           title,
           metadata: {},
         }
 
       case "text":
         if (contentType.includes("text/html")) {
-          const text = await extractTextFromHTML(content)
           return {
-            output: text,
+            output: sanitizeForLLM(await extractTextFromHTML(content)),
             title,
             metadata: {},
           }
         }
         return {
-          output: content,
+          output: sanitizeForLLM(content),
           title,
           metadata: {},
         }
@@ -192,13 +190,29 @@ export const WebFetchTool = Tool.define("webfetch", {
 
       default:
         return {
-          output: content,
+          output: sanitizeForLLM(content),
           title,
           metadata: {},
         }
     }
   },
 })
+
+/**
+ * Strip known prompt-injection steganography from externally fetched text:
+ *   - Unicode tag block (U+E0000–U+E007F): invisible characters used to embed
+ *     base64-encoded instructions that survive markdown rendering but are read by LLMs
+ *   - Zero-width characters (U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+FEFF BOM/ZWNBS):
+ *     used to hide instructions invisible to humans but present in the token stream
+ *
+ * Note: this strips the characters but does not otherwise alter the content.
+ * Apply to all text that will be injected into the LLM context.
+ */
+function sanitizeForLLM(text: string): string {
+  return text
+    .replace(/[\uE0000-\uE007F]/g, "") // Unicode tag block — steganographic injection
+    .replace(/[\u200B-\u200D\uFEFF]/g, "") // Zero-width characters
+}
 
 async function extractTextFromHTML(html: string) {
   let text = ""
@@ -233,6 +247,9 @@ async function extractTextFromHTML(html: string) {
 }
 
 function convertHTMLToMarkdown(html: string): string {
+  // Strip HTML comments before TurndownService — they survive conversion verbatim
+  // and are a documented vector for hidden prompt injection (<!-- AGENT: ... -->)
+  const stripped = html.replace(/<!--[\s\S]*?-->/g, "")
   const turndownService = new TurndownService({
     headingStyle: "atx",
     hr: "---",
@@ -241,5 +258,5 @@ function convertHTMLToMarkdown(html: string): string {
     emDelimiter: "*",
   })
   turndownService.remove(["script", "style", "meta", "link"])
-  return turndownService.turndown(html)
+  return sanitizeForLLM(turndownService.turndown(stripped))
 }
