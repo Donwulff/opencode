@@ -57,14 +57,17 @@
 #
 # ─── CONFIG PRECEDENCE (low → high) ──────────────────────────────────────────
 #
-#   ~/.config/opencode/   baked into image — safe defaults, audit on, no LLM
+#   ~/.config/opencode/   baked into image — internal-only mode, audit on, no cloud LLMs
 #   /workspace/.opencode/ project config, auto-discovered from bind-mount
 #   ~/.opencode/          user-global (not baked in; mount if needed)
 #   $OPENCODE_CONFIG_DIR  runtime injection — LLM endpoints, policy overrides
 #
-#   Project-level .opencode/ overrides the baked-in defaults.
-#   OPENCODE_CONFIG_DIR overrides everything — use it for LLM endpoints and
-#   environment-specific policy. Keep that config in the private infra repo.
+#   The baked-in config sets security.mode="internal-only", which blocks all HTTP
+#   calls to external/public endpoints at the SDK level — including provider API
+#   calls. localhost and private IPs are allowed (for local models). This means
+#   cloud providers cannot be used even if an API key is somehow configured.
+#   OPENCODE_CONFIG_DIR can override this for environments where external access
+#   is explicitly required. Keep that config in the private infra repo.
 #
 
 ARG OEL_VERSION=9
@@ -89,6 +92,14 @@ ENV PATH=/opt/bun/bin:$PATH
 RUN bun_version=$(grep '"packageManager"' package.json | sed 's/.*bun@\([^"]*\)".*/\1/') \
     && echo "Installing bun@${bun_version}" \
     && curl -fsSL https://bun.sh/install | bash -s -- "bun-v${bun_version}"
+
+# Replace bundled model snapshot with empty object before building.
+# The snapshot is a static copy of models.dev baked into the binary at build
+# time; without this, all cloud LLMs appear in the UI even with no API keys.
+# models_dev_enabled:false in the runtime config only skips the live fetch —
+# the snapshot is loaded before that check is ever reached.
+RUN echo 'export const snapshot = {}' \
+    > packages/opencode/src/provider/models-snapshot.ts
 
 RUN bun install \
     && cd packages/opencode \
@@ -153,6 +164,7 @@ RUN cat > /home/coder/.config/opencode/opencode.jsonc <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "security": {
+    "mode": "internal-only",
     "audit_log_enabled": true,
     "models_dev_enabled": false
   },
