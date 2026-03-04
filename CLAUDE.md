@@ -281,3 +281,17 @@ sudo rm /dev/shm/libpod_rootless_lock_*
 ```
 
 Root cause: A third-party install script (MariaDB ColumnStore, etc.) ran `podman` as a service user, creating `/dev/shm/libpod_rootless_lock_1000` owned by that user. The "2048" is a fixed-size pre-allocated POSIX SHM semaphore pool. Subsequent rootless podman runs by your own user can't open the file. Safe to delete — podman recreates it on next run.
+
+### Podman Custom graphroot on OEL 8 (SELinux fcontext)
+
+On OEL 8, moving rootless podman storage to a non-default path (e.g. `/opt/ac/containers`) fails with overlay errors even though the default `~/.local/share/containers` works fine. OEL 7 and OEL 9 are unaffected. Root cause: SELinux. The default path already has `container_var_lib_t` context from the system policy; a custom path gets `data_home_t` which doesn't allow overlay mounts.
+
+Fix: create an SELinux equivalency rule so the custom path inherits all the same policy as the system container storage path:
+
+```bash
+sudo dnf install -y policycoreutils-python-utils  # if semanage not present
+sudo semanage fcontext -a -e /var/lib/containers/storage /opt/ac/containers
+sudo restorecon -R -v /opt/ac/containers
+```
+
+`restorecon` should relabel from `data_home_t` → `container_var_lib_t`. After that, `podman info` will show the custom graphroot and containers run normally. `Native Overlay Diff: "false"` in `podman info` is expected when `metacopy=on` is set in `/etc/containers/storage.conf` — overlay still works.
