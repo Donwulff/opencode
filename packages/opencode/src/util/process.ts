@@ -1,5 +1,27 @@
 import { spawn as launch, type ChildProcess } from "child_process"
 import { buffer } from "node:stream/consumers"
+import { Flag } from "@/flag/flag.ts"
+
+// Wrap cmd in a network-isolated namespace when OPENCODE_SPAWN_SANDBOX is set.
+// Direct exec (no shell) — args are passed as-is, no quoting issues.
+function sandboxedCmd(cmd: string[]): string[] {
+  if (!Flag.OPENCODE_SPAWN_SANDBOX || process.platform !== "linux") return cmd
+  if (Bun.which("bwrap"))
+    return [
+      "bwrap",
+      "--bind", "/", "/",
+      "--dev", "/dev",
+      "--proc", "/proc",
+      "--unshare-user",
+      "--uid", "0", "--gid", "0",
+      "--unshare-net",
+      "--",
+      ...cmd,
+    ]
+  if (Bun.which("unshare"))
+    return ["unshare", "--user", "--map-root-user", "--net", "--", ...cmd]
+  return cmd
+}
 
 export namespace Process {
   export type Stdio = "inherit" | "pipe" | "ignore"
@@ -52,7 +74,8 @@ export namespace Process {
     if (cmd.length === 0) throw new Error("Command is required")
     opts.abort?.throwIfAborted()
 
-    const proc = launch(cmd[0], cmd.slice(1), {
+    const sandboxed = sandboxedCmd(cmd)
+    const proc = launch(sandboxed[0], sandboxed.slice(1), {
       cwd: opts.cwd,
       env: opts.env === null ? {} : opts.env ? { ...process.env, ...opts.env } : undefined,
       stdio: [opts.stdin ?? "ignore", opts.stdout ?? "ignore", opts.stderr ?? "ignore"],

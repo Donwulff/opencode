@@ -113,7 +113,7 @@ ARG OEL_VERSION=9
 RUN microdnf install -y --nodocs \
       oracle-epel-release-el${OEL_VERSION} \
     && microdnf install -y --nodocs \
-      git-core ripgrep curl jq \
+      git-core ripgrep curl jq bubblewrap \
       perl perl-libs perl-utils perl-App-cpanminus \
       perl-JSON perl-File-Find \
       nodejs \
@@ -155,6 +155,11 @@ ENV PERL_MB_OPT="--install_base \"/home/coder/perl5\""
 ENV PERL_MM_OPT="INSTALL_BASE=/home/coder/perl5"
 ENV PERL5LIB=/home/coder/perl5/lib/perl5
 ENV PATH=/home/coder/perl5/bin:$PATH
+# Restrict subprocess spawns (bash tool, ripgrep, LSP, etc.) to a private network namespace.
+# bwrap (bubblewrap) is preferred; falls back to unshare if bwrap is unavailable.
+# This does NOT affect JS fetch() in the opencode parent process — webfetch/websearch/provider
+# calls retain full network access. Override with -e OPENCODE_SPAWN_SANDBOX=0 if needed.
+ENV OPENCODE_SPAWN_SANDBOX=1
 
 # Bake in safe defaults at the lowest config precedence level.
 # These are overridden by any project .opencode/ or $OPENCODE_CONFIG_DIR.

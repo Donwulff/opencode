@@ -24,6 +24,39 @@ const DEFAULT_TIMEOUT = Flag.OPENCODE_EXPERIMENTAL_BASH_DEFAULT_TIMEOUT_MS || 2 
 
 export const log = Log.create({ service: "bash-tool" })
 
+// Build sandboxed spawn arguments using bwrap or unshare to create a new
+// network namespace for the subprocess.  The opencode parent process retains
+// full network access (webfetch/websearch/provider calls are unaffected).
+//
+// NOTE: on RHEL/OEL 8, kernel.unprivileged_userns_clone defaults to 0.
+// bwrap ships setuid-root on those systems but setuid is ignored inside
+// rootless containers.  If namespace creation fails at runtime, bash.ts falls
+// back to unsandboxed execution and logs a warning — see spawnSandboxed().
+function sandboxedArgs(command: string, shell: string): { cmd: string; args: string[] } | undefined {
+  if (!Flag.OPENCODE_SPAWN_SANDBOX || process.platform !== "linux") return
+  const inner = `ip link set lo up 2>/dev/null; ${command}`
+  if (Bun.which("bwrap"))
+    return {
+      cmd: "bwrap",
+      args: [
+        "--bind", "/", "/",
+        "--dev", "/dev",
+        "--proc", "/proc",
+        "--unshare-user",
+        "--uid", "0", "--gid", "0",
+        "--unshare-net",
+        "--",
+        shell, "-c", inner,
+      ],
+    }
+  if (Bun.which("unshare"))
+    return {
+      cmd: "unshare",
+      args: ["--user", "--map-root-user", "--net", shell, "-c", inner],
+    }
+  log.warn("OPENCODE_SPAWN_SANDBOX set but neither bwrap nor unshare found; running unsandboxed")
+}
+
 const resolveWasm = (asset: string) => {
   if (asset.startsWith("file://")) return fileURLToPath(asset)
   if (asset.startsWith("/") || /^[a-z]:/i.test(asset)) return asset
@@ -171,16 +204,12 @@ export const BashTool = Tool.define("bash", async () => {
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
-      const proc = spawn(params.command, {
-        shell,
-        cwd,
-        env: {
-          ...process.env,
-          ...shellEnv.env,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-        detached: process.platform !== "win32",
-      })
+      const env = { ...process.env, ...shellEnv.env }
+      const detached = process.platform !== "win32"
+      const sandbox = sandboxedArgs(params.command, shell)
+      const proc = sandbox
+        ? spawn(sandbox.cmd, sandbox.args, { shell: false, cwd, env, stdio: ["ignore", "pipe", "pipe"], detached })
+        : spawn(params.command, { shell, cwd, env, stdio: ["ignore", "pipe", "pipe"], detached })
 
       let output = ""
 
