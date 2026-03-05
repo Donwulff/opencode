@@ -75,9 +75,14 @@
 #
 
 ARG OEL_VERSION=9
+# BASE_IMAGE: override to use a pre-built base (e.g. a company base image that has
+# system packages pre-installed).  Defaults to vanilla OEL slim for standalone builds.
+# Private derived builds set this to their internal base image so the build stage
+# inherits all system packages and the runtime stage shares those layers for free.
+ARG BASE_IMAGE=oraclelinux:${OEL_VERSION}-slim
 
 # ─── BUILD STAGE ─────────────────────────────────────────────────────────────
-FROM oraclelinux:${OEL_VERSION}-slim AS build
+FROM ${BASE_IMAGE} AS build
 
 ARG OEL_VERSION=9
 RUN microdnf install -y --nodocs \
@@ -111,7 +116,8 @@ RUN bun install \
 
 # ─── RUNTIME STAGE ───────────────────────────────────────────────────────────
 ARG OEL_VERSION=9
-FROM oraclelinux:${OEL_VERSION}-slim
+ARG BASE_IMAGE=oraclelinux:${OEL_VERSION}-slim
+FROM ${BASE_IMAGE}
 
 ARG OEL_VERSION=9
 # perl-File-Find is bundled in perl-libs on EL8; split into a separate subpackage on EL9+.
