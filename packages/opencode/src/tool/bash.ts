@@ -207,10 +207,26 @@ export const BashTool = Tool.define("bash", async () => {
       )
       const env = { ...process.env, ...shellEnv.env }
       const detached = process.platform !== "win32"
+      const windowsHide = process.platform === "win32"
       const sandbox = sandboxedArgs(params.command, shell)
-      const proc = sandbox
-        ? spawn(sandbox.cmd, sandbox.args, { shell: false, cwd, env, stdio: ["ignore", "pipe", "pipe"], detached })
-        : spawn(params.command, { shell, cwd, env, stdio: ["ignore", "pipe", "pipe"], detached })
+      const proc = sandbox ? spawn(sandbox.cmd, sandbox.args, {
+        shell: false,
+        shell,
+        cwd,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached,
+        windowsHide
+      })
+        : spawn(params.command, {
+        shell,
+        shell,
+        cwd,
+        env,
+        stdio: ["ignore", "pipe", "pipe"],
+        detached,
+        windowsHide
+      })
 
       let output = ""
 
