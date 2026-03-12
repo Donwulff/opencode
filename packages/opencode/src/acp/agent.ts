@@ -35,6 +35,7 @@ import { Hash } from "../util/hash"
 import { ACPSessionManager } from "./session"
 import type { ACPConfig } from "./types"
 import { Provider } from "../provider/provider"
+import { ProviderID } from "../provider/schema"
 import { Agent as AgentModule } from "../agent/agent"
 import { Installation } from "@/installation"
 import { MessageV2 } from "@/session/message-v2"
@@ -592,7 +593,7 @@ export namespace ACP {
         }
       } catch (e) {
         const error = MessageV2.fromError(e, {
-          providerID: this.config.defaultModel?.providerID ?? "unknown",
+          providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
         })
         if (LoadAPIKeyError.isInstance(error)) {
           throw RequestError.authRequired()
@@ -657,7 +658,7 @@ export namespace ACP {
         return result
       } catch (e) {
         const error = MessageV2.fromError(e, {
-          providerID: this.config.defaultModel?.providerID ?? "unknown",
+          providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
         })
         if (LoadAPIKeyError.isInstance(error)) {
           throw RequestError.authRequired()
@@ -702,7 +703,7 @@ export namespace ACP {
         return response
       } catch (e) {
         const error = MessageV2.fromError(e, {
-          providerID: this.config.defaultModel?.providerID ?? "unknown",
+          providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
         })
         if (LoadAPIKeyError.isInstance(error)) {
           throw RequestError.authRequired()
@@ -767,7 +768,7 @@ export namespace ACP {
         return mode
       } catch (e) {
         const error = MessageV2.fromError(e, {
-          providerID: this.config.defaultModel?.providerID ?? "unknown",
+          providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
         })
         if (LoadAPIKeyError.isInstance(error)) {
           throw RequestError.authRequired()
@@ -798,7 +799,7 @@ export namespace ACP {
         return result
       } catch (e) {
         const error = MessageV2.fromError(e, {
-          providerID: this.config.defaultModel?.providerID ?? "unknown",
+          providerID: ProviderID.make(this.config.defaultModel?.providerID ?? "unknown"),
         })
         if (LoadAPIKeyError.isInstance(error)) {
           throw RequestError.authRequired()
@@ -1668,7 +1669,10 @@ export namespace ACP {
   ): ModelOption[] {
     const includeVariants = options.includeVariants ?? false
     return providers.flatMap((provider) => {
-      const models = Provider.sort(Object.values(provider.models) as any)
+      const unsorted: Array<{ id: string; name: string; variants?: Record<string, any> }> = Object.values(
+        provider.models,
+      )
+      const models = Provider.sort(unsorted)
       return models.flatMap((model) => {
         const base: ModelOption = {
           modelId: `${provider.id}/${model.id}`,
