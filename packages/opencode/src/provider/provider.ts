@@ -704,7 +704,7 @@ export namespace Provider {
           })
           models[modelID] = {
             id: modelID,
-            providerID: "llama.cpp",
+            providerID: ProviderID.make("llama.cpp"),
             name: model.name ?? model.model ?? modelID.split("/").pop() ?? modelID,
             family: "",
             api: {

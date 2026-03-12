@@ -1907,7 +1907,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         : systemText + codexText + planText
 
       const msg: MessageV2.Assistant = {
-        id: Identifier.ascending("message"),
+        id: MessageID.ascending(),
         sessionID: input.sessionID,
         parentID: userMessage.info.id,
         mode: agentName,
@@ -1934,7 +1934,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       await Session.updateMessage(msg)
       const part: MessageV2.Part = {
         type: "text",
-        id: Identifier.ascending("part"),
+        id: PartID.ascending(),
         messageID: msg.id,
         sessionID: input.sessionID,
         text,
