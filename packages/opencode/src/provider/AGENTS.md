@@ -17,3 +17,7 @@
 - Providers with `disable: true` are added to the `disabled` set and skipped
 - GitLab instance URL validation must use `opts.instanceUrl`, not `opts.baseURL` (which is undefined in that scope)
 - Llama.cpp error path uses `apiURL`, not `baseURL` (undefined in the try block scope)
+- **Branded ID types**: since upstream branded `ProviderID`/`ModelID`, plain string literals
+  are no longer assignable — fork additions must use `ProviderID.make("string")` and
+  `ModelID.make("string")`. Any merge introducing TS2322 on a `providerID` or `id` field
+  in fork-specific code (e.g. llama.cpp loader) needs this fix.
