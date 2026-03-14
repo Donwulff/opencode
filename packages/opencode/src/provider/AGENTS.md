@@ -10,6 +10,17 @@
 - `allow_external_ips` only applies to literal IP addresses, not DNS names (checked with `isIP()`)
 - `models_dev_enabled` config flag disables models.dev auto-refresh and `Data()` lazy evaluation
 - ModelsDev refresh interval is `60 * 1000 * 60` (60 min) with `.unref()` to avoid hanging the process
+- **`ModelsDev.Data()` load order**: cache file → snapshot import → live fetch. The snapshot is loaded
+  BEFORE the `models_dev_enabled` check is ever reached. An empty object `{}` IS truthy, so
+  `if (snapshot) return snapshot` short-circuits without fetching. Blanking the snapshot in
+  Dockerfile.builder (`export const snapshot = {}`) is therefore the correct way to suppress
+  cloud models — `models_dev_enabled: false` alone is insufficient for a built binary.
+- **`opencode` provider free-tier autoload**: unlike all other CUSTOM_LOADERS (which have
+  `autoload: false`), the `opencode` provider conditionally autoloads free-tier models
+  (cost.input === 0) even without an API key, using `apiKey: "public"`. With an empty snapshot
+  `input.models` is `{}` so `autoload` becomes false and nothing loads — but if the snapshot
+  is ever non-empty, free models appear. Belt-and-suspenders: add `"opencode"` to
+  `disabled_providers` in the managed config.
 
 ## Provider Loading
 
