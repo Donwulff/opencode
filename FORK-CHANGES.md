@@ -11,7 +11,7 @@ To regenerate the file list: `git diff upstream/dev...dev --stat`
 
 | # | Feature | Status | Config key | Key files |
 |---|---------|--------|------------|-----------|
-| 1 | [Security & Network Validation](#1-security--network-validation) | Complete | `security` | `util/network.ts`, `util/audit.ts` |
+| 1 | [Security & Network Validation](#1-security--network-validation) | Complete | `security` | `util/network.ts`, `util/audit.ts`, `tool/bash.ts`, `util/process.ts` |
 | 2 | [Provenance & Event Tracing](#2-provenance--event-tracing) | POC/Complete | `provenance` | `provenance/index.ts` |
 | 3 | [Local llama.cpp Support](#3-local-llamacpp-support) | Complete | `provider.llama.cpp` | `provider/provider.ts` |
 | 4 | [Read Tool: Cursor Tracking](#4-read-tool-cursor-tracking) | Complete | — | `tool/read.ts` |
@@ -32,7 +32,13 @@ To regenerate the file list: `git diff upstream/dev...dev --stat`
 
 ### What it does
 
-Adds an enterprise security layer to all outbound network operations. Every URL used by a tool (webfetch, websearch, provider model fetches) is validated against a configurable policy before the request is made. Blocked requests are audit-logged. A separate command-guard layer enforces read-only mode for `/review` and `/learn` commands.
+Adds an enterprise security layer with two complementary mechanisms:
+
+**HTTP-level validation**: Every URL used by a tool (webfetch, websearch, provider model fetches, instruction URLs, skill discovery) is validated against a configurable policy before the request is made. Blocked requests are audit-logged.
+
+**Subprocess network isolation** (`OPENCODE_SPAWN_SANDBOX=1`): All subprocess spawns (bash tool, ripgrep, grep) run in a Linux user+network namespace so they have no outbound network access. This is the primary defense against data exfiltration via the bash tool — the subprocess has no network interface to send data through. bwrap (bubblewrap) is preferred; unshare is used as fallback. The flag is baked into `Dockerfile.analysis` as `ENV OPENCODE_SPAWN_SANDBOX=1`. Loopback is brought up inside the namespace so localhost test servers remain reachable.
+
+**Read-only command enforcement**: `command-guard.ts` enforces read-only mode for `/review` and `/learn` commands, blocking file writes, shell redirection, file-mutating commands, and destructive git operations.
 
 ### Key files
 
@@ -40,10 +46,14 @@ Adds an enterprise security layer to all outbound network operations. Every URL 
 |------|------|
 | `packages/opencode/src/util/network.ts` | Core policy engine: IP range validation (IPv4/IPv6 CIDR), private/localhost detection, domain allowlist/blocklist, DNS suffix matching, security mode enforcement |
 | `packages/opencode/src/util/audit.ts` | Structured JSONL audit logger; logs URL checks, provider loads, model access, tool requests, sub-agent invocations, and denials to `~/.local/state/opencode/audit.jsonl` |
+| `packages/opencode/src/util/fetch.ts` | `auditedFetch()` / `auditedUrl()` — validates + logs all internal `fetch()` calls (instruction URLs, skill discovery); also used by Effect-based pipelines |
 | `packages/opencode/src/tool/command-guard.ts` | Read-only guard for review/learn sessions; blocks file writes, shell redirection, destructive git operations |
 | `packages/opencode/src/tool/webfetch.ts` | Validates + audit-logs before every fetch; validates redirects too |
 | `packages/opencode/src/tool/websearch.ts` | Validates MCP endpoint URLs before search requests |
 | `packages/opencode/src/provider/models.ts` | Blocks models.dev fetch if security config disallows external URLs; audit-logs provider loads |
+| `packages/opencode/src/tool/bash.ts` | Subprocess sandbox via `sandboxedArgs()` — wraps bash spawn in bwrap/unshare network namespace |
+| `packages/opencode/src/util/process.ts` | `sandboxedCmd()` — wraps all `Process.spawn` calls (grep, ripgrep) in the same network namespace |
+| `packages/opencode/src/flag/flag.ts` | `OPENCODE_SPAWN_SANDBOX` flag definition |
 
 ### Configuration
 

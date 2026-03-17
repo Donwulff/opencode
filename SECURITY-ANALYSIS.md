@@ -67,6 +67,7 @@ through the bash tool, so bash network controls cover git as well.
 | `OPENCODE_DISABLE_LSP_DOWNLOAD=1` | Runtime LSP binary downloads from GitHub | LSP fetch() is in parent process, not blocked by subprocess sandbox |
 | `OPENCODE_SPAWN_SANDBOX=1` | All subprocess spawns (bash, grep, ripgrep) | Parent-process fetch() paths unaffected (correct by design) |
 | `auditedFetch()` in instruction.ts + skill/discovery.ts | Internal config-driven fetch() calls | — |
+| `command-guard.ts` (`assertReadOnlyShell`, `assertLearnPath`, `assertLearnTask`) | `/review` and `/learn` sessions: blocks shell redirection, file-mutating commands (`rm`, `mv`, `cp`, `chmod`, `chown`, `touch`, `mkdir`, `rmdir`), mutating git subcommands, file edits; `/learn` may only write to AGENTS.md | Blocklist-based; does not cover every file-writing utility (e.g. `tee`, `dd`) — user permission prompt provides second line of defense |
 | Security settings in `/etc/opencode/opencode.jsonc` (managed config) | Project `.opencode/` cannot override security mode | Managed config is the highest-precedence layer — overrides global, project, and OPENCODE_CONFIG_DIR. Project config still works for tools/models/MCP/instructions. |
 | Container runs as non-root | Host escape | Standard |
 | EPEL-installed ripgrep | Avoids runtime ripgrep binary download | — |

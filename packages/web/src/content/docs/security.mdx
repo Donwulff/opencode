@@ -1,9 +1,9 @@
 ---
 title: Security
-description: Network security controls, URL validation, and audit logging.
+description: Network security controls, subprocess isolation, URL validation, and audit logging.
 ---
 
-OpenCode provides comprehensive security controls to restrict network access and monitor system activity. These features are designed for internal-only environments where you need to control which external services your AI assistant can communicate with.
+OpenCode provides comprehensive security controls to restrict network access, isolate subprocesses, and monitor system activity. These features are designed for internal-only environments where you need to control which external services your AI assistant can communicate with and prevent data exfiltration via shell commands.
 
 ---
 
@@ -372,6 +372,8 @@ The `webfetch` tool validates URLs against security configuration before fetchin
 3. If blocked: raise error and log blocked access
 4. If allowed: proceed with fetch and log successful validation
 
+Redirect chains are also validated — each redirect target is checked against the security config before being followed.
+
 ### websearch Tool
 
 The `websearch` tool validates the MCP endpoint URL:
@@ -380,6 +382,10 @@ The `websearch` tool validates the MCP endpoint URL:
 2. Validate against security config
 3. If blocked: raise error and log blocked access
 4. If allowed: execute search and log successful validation
+
+### Instruction and Skill URLs
+
+Remote URLs configured in `instructions:` entries and skill discovery URLs (configured via `skills:`) are also validated against the security configuration before fetching. This means `mode: "internal-only"` blocks instruction and skill downloads from external hosts, not just webfetch/websearch requests.
 
 ### Tool Validation Flow
 
@@ -390,6 +396,119 @@ Tool Request → Config Retrieved → Security Validated → Allowed? → Fetch 
                                           ↓ No
                                     Log & Block
 ```
+
+---
+
+## Subprocess Isolation
+
+In addition to HTTP-level URL validation, OpenCode can run all subprocess spawns (bash commands, grep, ripgrep) in a restricted Linux network namespace so that subprocess code cannot make outbound network connections even if the LLM is instructed to do so.
+
+This is the primary defense against data exfiltration via the bash tool — the subprocess simply has no network interface to use.
+
+### How It Works
+
+When `OPENCODE_SPAWN_SANDBOX=1` is set, every subprocess is wrapped with `bwrap` (bubblewrap) or `unshare` (fallback):
+
+```bash
+# Preferred: bwrap (pre-installed in the container image via EPEL)
+bwrap --bind / / --dev /dev --proc /proc \
+  --unshare-user --uid 0 --gid 0 --unshare-net \
+  -- sh -c "ip link set lo up 2>/dev/null; <command>"
+
+# Fallback: unshare
+unshare --user --map-root-user --net -- sh -c "ip link set lo up 2>/dev/null; <command>"
+```
+
+The subprocess runs in its own network namespace. Loopback is brought up so that test servers on `localhost` remain reachable, but there is no external interface and no DNS resolver. `curl`, `wget`, `git push`, `nc`, DNS exfiltration — all fail silently from inside the sandbox.
+
+### What Is Sandboxed
+
+| Spawn site | Sandboxed |
+| --- | --- |
+| bash tool | Yes — `sandboxedArgs()` in `bash.ts` |
+| grep tool | Yes — via `Process.spawn` → `sandboxedCmd()` in `util/process.ts` |
+| ripgrep | Yes — via `Process.spawn` → `sandboxedCmd()` |
+| Language servers (LSP) | No — LSP only communicates over local IPC, no network needed |
+| Interactive terminal (PTY) | No — human-controlled, not AI-driven |
+
+Provider API calls, webfetch, and websearch use JavaScript `fetch()` running in the OpenCode parent process and are **not** affected by the subprocess sandbox — they are governed by the URL validation and security mode settings above.
+
+### Enabling the Sandbox
+
+```bash
+# Via environment variable (recommended for container deployments):
+OPENCODE_SPAWN_SANDBOX=1 opencode
+
+# Or bake it into a container image:
+ENV OPENCODE_SPAWN_SANDBOX=1
+```
+
+If `OPENCODE_SPAWN_SANDBOX=1` is set but neither `bwrap` nor `unshare` is available, OpenCode logs a warning and continues without sandboxing. Check the log output if sandbox coverage is required.
+
+---
+
+## Managed / Enterprise Config
+
+OpenCode's config is loaded in layers, lowest to highest priority:
+
+1. Compiled defaults
+2. `~/.config/opencode/` — user global
+3. `.opencode/` — project-level config (auto-discovered)
+4. `~/.opencode/` — user-global override
+5. `$OPENCODE_CONFIG_DIR` — runtime injection
+6. `$OPENCODE_CONFIG_CONTENT` — inline JSON
+7. `/etc/opencode/` — **managed / enterprise config (highest priority)**
+
+The `/etc/opencode/opencode.jsonc` file, if present, takes precedence over everything else including the project `.opencode/config.json` and the `OPENCODE_CONFIG_DIR` environment variable. In container deployments it is owned by root and cannot be modified by the running user, making it an immutable security policy boundary.
+
+This means security settings baked into `/etc/opencode/` cannot be overridden by:
+- Workspace config files (`.opencode/config.json`)
+- Environment variables set by the workspace
+- The `$OPENCODE_CONFIG_DIR` redirect
+
+Project-level config continues to work normally for non-security settings (tools, models, MCP servers, instructions, prompts).
+
+### Container Usage
+
+In the container image, `/etc/opencode/opencode.jsonc` is installed as a root-owned file at build time with the security policy for that deployment:
+
+```json title="/etc/opencode/opencode.jsonc"
+{
+  "security": {
+    "mode": "internal-only",
+    "audit_log_enabled": true,
+    "models_dev_enabled": false
+  },
+  "share": "disabled",
+  "autoupdate": false
+}
+```
+
+### Bypassing for Development
+
+`opencode-run.sh --dangerously-open` sets `OPENCODE_TEST_MANAGED_CONFIG_DIR=/nonexistent` to skip the managed config lookup, allowing unrestricted access for local development against trusted code. Never use this flag when analyzing untrusted code.
+
+---
+
+## Read-Only Commands
+
+The `/review` and `/learn` built-in commands enforce read-only mode via `command-guard.ts`, which intercepts tool calls and blocks operations that would modify files.
+
+### `/review` — fully read-only
+
+All write operations are blocked:
+- File writes, edits, and creates (`write`, `edit` tools)
+- Shell redirection (`>`, `>>`, `<<`, `<(`)
+- File-mutating shell commands: `rm`, `mv`, `cp`, `chmod`, `chown`, `touch`, `mkdir`, `rmdir`
+- Mutating git commands: `reset`, `checkout`, `restore`, `stash`, `clean`, `rebase`, `merge`, `commit`, `push`, `cherry-pick`, `revert`, `switch`, `branch`, `tag`
+
+### `/learn` — write to AGENTS.md only
+
+The `/learn` command may write to `AGENTS.md` files and nothing else. All shell and git restrictions from `/review` apply.
+
+### Limitations
+
+The guard is a blocklist applied to the bash command string before execution. It covers the most common mutation patterns but does not cover every possible file-writing utility (e.g., `tee`, `dd`). The user permission prompt fires for every bash command and displays the full command string, providing a second line of defense.
 
 ---
 
