@@ -25,6 +25,7 @@ function sandboxedCmd(cmd: string[]): string[] {
 
 export namespace Process {
   export type Stdio = "inherit" | "pipe" | "ignore"
+  export type Shell = boolean | string
 
   export interface Options {
     cwd?: string
@@ -32,6 +33,7 @@ export namespace Process {
     stdin?: Stdio
     stdout?: Stdio
     stderr?: Stdio
+    shell?: Shell
     abort?: AbortSignal
     kill?: NodeJS.Signals | number
     timeout?: number
@@ -83,6 +85,7 @@ export namespace Process {
       cwd: opts.cwd,
       env: opts.env === null ? {} : opts.env ? { ...process.env, ...opts.env } : undefined,
       stdio: [opts.stdin ?? "ignore", opts.stdout ?? "ignore", opts.stderr ?? "ignore"],
+      shell: opts.shell,
       windowsHide: process.platform === "win32",
     })
 
