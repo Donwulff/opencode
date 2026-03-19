@@ -72,6 +72,14 @@ if [ -n "$conflicts" ]; then
   done
 fi
 
+# Commit the merge if one is in progress (conflict resolution loop exits with
+# all files staged but MERGE_HEAD still set — without this commit the next run
+# re-merges and re-generates the same conflicts).
+if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+  echo "Committing merge..."
+  git commit --no-edit
+fi
+
 # Restore stashed local changes if any
 if [ "$stashed" -eq 1 ]; then
   echo "Restoring stashed local changes..."

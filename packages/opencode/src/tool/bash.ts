@@ -15,7 +15,7 @@ import { Flag } from "@/flag/flag.ts"
 import { Shell } from "@/shell/shell"
 
 import { BashArity } from "@/permission/arity"
-import { Truncate } from "./truncation"
+import { Truncate } from "./truncate"
 import { Plugin } from "@/plugin"
 import { assertReadOnlyShell } from "./command-guard"
 import { auditLogger } from "@/util/audit"

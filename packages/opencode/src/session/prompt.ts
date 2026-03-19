@@ -41,12 +41,12 @@ import { fn } from "@/util/fn"
 import { SessionProcessor } from "./processor"
 import { TaskTool } from "@/tool/task"
 import { Tool } from "@/tool/tool"
-import { PermissionNext } from "@/permission/next"
+import { PermissionNext } from "@/permission"
 import { SessionStatus } from "./status"
 import { LLM } from "./llm"
 import { iife } from "@/util/iife"
 import { Shell } from "@/shell/shell"
-import { Truncate } from "@/tool/truncation"
+import { Truncate } from "@/tool/truncate"
 import { Config } from "@/config/config"
 import { Auth } from "@/auth"
 import { decodeDataUrl } from "@/util/data-url"
@@ -1323,6 +1323,31 @@ export namespace SessionPrompt {
         parts,
       },
     )
+
+    const parsedInfo = MessageV2.Info.safeParse(info)
+    if (!parsedInfo.success) {
+      log.error("invalid user message before save", {
+        sessionID: input.sessionID,
+        messageID: info.id,
+        agent: info.agent,
+        model: info.model,
+        issues: parsedInfo.error.issues,
+      })
+    }
+
+    parts.forEach((part, index) => {
+      const parsedPart = MessageV2.Part.safeParse(part)
+      if (parsedPart.success) return
+      log.error("invalid user part before save", {
+        sessionID: input.sessionID,
+        messageID: info.id,
+        partID: part.id,
+        partType: part.type,
+        index,
+        issues: parsedPart.error.issues,
+        part,
+      })
+    })
 
     await Session.updateMessage(info)
     for (const part of parts) {
