@@ -281,6 +281,12 @@ Replaces the upstream retry logic with exponential backoff capped at 61 seconds,
 - `.scripts/opencode-safety/<timestamp>.tracked.patch` — tracked file changes
 - `.scripts/opencode-safety/<timestamp>.untracked.tgz` — untracked files
 
+### Local hygiene notes
+
+- `bun install` at repo root can rewrite `package.json` and `bun.lock` by re-resolving versions such as `semver`. Treat those as intentional dependency bumps only if you meant to update them.
+- `packages/opencode/script/build.ts` generates `packages/opencode/src/provider/models-snapshot.js` and `packages/opencode/src/provider/models-snapshot.d.ts` locally. These are local build artifacts in this fork and are ignored.
+- `Dockerfile.analysis` container build logs should live under `logs/analysis/` instead of the repo root.
+
 ### Known gaps
 
 - Snapshot directory should be in `.gitignore` (add if not already)

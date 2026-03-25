@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
+mkdir -p logs/analysis
 
 echo "Updating repository..."
 branch="$(git rev-parse --abbrev-ref HEAD)"
