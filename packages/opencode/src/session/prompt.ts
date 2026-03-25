@@ -1866,7 +1866,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       })
       throw error
     }
-    const agentName = command.agent ?? input.agent ?? (await Agent.defaultAgent())
     const raw = input.arguments.match(argsRegex) ?? []
     const args = raw.map((arg) => arg.replace(quoteTrimRegex, ""))
 
@@ -1929,7 +1928,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const [provider, auth] = await Promise.all([Provider.getProvider(model.providerID), Auth.get(model.providerID)])
       const isCodex = provider.id === "openai" && auth?.type === "oauth"
       const providerPrompt = config.provider?.[modelRef.providerID]?.system_prompt
-      const promptHeader = providerPrompt ?? SystemPrompt.instructions()
+      const promptHeader = providerPrompt ?? SystemPrompt.provider(model).join("\n")
       const basePrompt = agent.prompt ?? (isCodex ? "" : providerPrompt ?? SystemPrompt.provider(model).join("\n"))
       const environment = await SystemPrompt.environment(model)
       const instructions = await InstructionPrompt.system()

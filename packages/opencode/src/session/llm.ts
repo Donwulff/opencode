@@ -113,7 +113,7 @@ export namespace LLM {
       mergeDeep(variant),
     )
     if (isCodex) {
-      options.instructions = providerPrompt ?? SystemPrompt.instructions()
+      options.instructions = systemPrompt.join("\n")
     }
 
     const isWorkflow = language instanceof GitLabWorkflowLanguageModel
