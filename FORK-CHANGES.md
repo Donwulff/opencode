@@ -7,6 +7,46 @@ To regenerate the file list: `git diff upstream/dev...dev --stat`
 
 ---
 
+## Ownership Boundary
+
+This fork intentionally splits changes into two classes:
+
+### Public/upstream-trackable changes
+
+These belong in the GitHub repository and should be documented and reviewed here:
+
+- reusable OpenCode product changes
+- provider/tool/runtime behavior changes
+- prompts and commands intended to travel with the fork
+- tests and specs for product behavior
+- upstreaming notes in `specs/security-upstream-playbook.md`
+
+### Local/private operational changes
+
+These stay in the local/private overlay and should not be prepared as upstream PRs:
+
+- `docker/` analysis container build/run files
+- local launcher scripts and service-account operational workflow
+- company-specific threat model or deployment assumptions
+- internal endpoint/config examples
+- container/session persistence policy for the private analysis environment
+
+Rule of thumb:
+
+- if the change is generally useful to OpenCode users, keep it in the public repo
+- if the change depends on local infrastructure, service-account workflow, or
+  internal security practice, keep it in the private overlay
+
+The session-persistence design for the private analysis container is documented in:
+
+- `specs/container-session-persistence.md`
+
+The upstreaming split for security-related product changes is documented in:
+
+- `specs/security-upstream-playbook.md`
+
+---
+
 ## Feature Index
 
 | # | Feature | Status | Config key | Key files |
