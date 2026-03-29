@@ -2,25 +2,32 @@ import { type ChildProcess } from "child_process"
 import launch from "cross-spawn"
 import { buffer } from "node:stream/consumers"
 import { Flag } from "@/flag/flag.ts"
+import { errorMessage } from "./error"
 
 // Wrap cmd in a network-isolated namespace when OPENCODE_SPAWN_SANDBOX is set.
-// Direct exec (no shell) — args are passed as-is, no quoting issues.
+// Direct exec (no shell) - args are passed as-is, no quoting issues.
 function sandboxedCmd(cmd: string[]): string[] {
   if (!Flag.OPENCODE_SPAWN_SANDBOX || process.platform !== "linux") return cmd
   if (Bun.which("bwrap"))
     return [
       "bwrap",
-      "--bind", "/", "/",
-      "--dev", "/dev",
-      "--proc", "/proc",
+      "--bind",
+      "/",
+      "/",
+      "--dev",
+      "/dev",
+      "--proc",
+      "/proc",
       "--unshare-user",
-      "--uid", "0", "--gid", "0",
+      "--uid",
+      "0",
+      "--gid",
+      "0",
       "--unshare-net",
       "--",
       ...cmd,
     ]
-  if (Bun.which("unshare"))
-    return ["unshare", "--user", "--map-root-user", "--net", "--", ...cmd]
+  if (Bun.which("unshare")) return ["unshare", "--user", "--map-root-user", "--net", "--", ...cmd]
   return cmd
 }
 
@@ -159,7 +166,7 @@ export namespace Process {
         return {
           code: 1,
           stdout: Buffer.alloc(0),
-          stderr: Buffer.from(err instanceof Error ? err.message : String(err)),
+          stderr: Buffer.from(errorMessage(err)),
         }
       })
     if (out.code === 0 || opts.nothrow) return out
