@@ -14,7 +14,7 @@ const log = Log.create({ service: "instruction" })
 
 const FILES = [
   "AGENTS.md",
-  "CLAUDE.md",
+  ...(Flag.OPENCODE_DISABLE_CLAUDE_CODE_PROMPT ? [] : ["CLAUDE.md"]),
   "CONTEXT.md", // deprecated
 ]
 
