@@ -324,7 +324,7 @@ Replaces the upstream retry logic with exponential backoff capped at 61 seconds,
 ### Local hygiene notes
 
 - `bun install` at repo root can rewrite `package.json` and `bun.lock` by re-resolving versions such as `semver`. Treat those as intentional dependency bumps only if you meant to update them.
-- `packages/opencode/script/build.ts` generates `packages/opencode/src/provider/models-snapshot.js` and `packages/opencode/src/provider/models-snapshot.d.ts` locally. These are local build artifacts in this fork and are ignored.
+- `packages/opencode/script/build.ts` generates `packages/opencode/src/provider/models-snapshot.ts`, `packages/opencode/src/provider/models-snapshot.js`, and `packages/opencode/src/provider/models-snapshot.d.ts` locally. These are local build artifacts in this fork and are ignored.
 - `Dockerfile.analysis` container build logs should live under `logs/analysis/` instead of the repo root.
 
 ### Known gaps
