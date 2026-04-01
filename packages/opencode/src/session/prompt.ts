@@ -86,6 +86,7 @@ export namespace SessionPrompt {
       const status = yield* SessionStatus.Service
       const sessions = yield* Session.Service
       const agents = yield* Agent.Service
+      const provider = yield* Provider.Service
       const processor = yield* SessionProcessor.Service
       const compaction = yield* SessionCompaction.Service
       const plugin = yield* Plugin.Service
@@ -99,7 +100,7 @@ export namespace SessionPrompt {
       const truncate = yield* Truncate.Service
       const scope = yield* Scope.Scope
 
-      const cache = yield* InstanceState.make(
+      const state = yield* InstanceState.make(
         Effect.fn("SessionPrompt.state")(function* () {
           const runners = new Map<string, Runner<MessageV2.WithParts>>()
           yield* Effect.addFinalizer(
@@ -133,14 +134,14 @@ export namespace SessionPrompt {
       const assertNotBusy: (sessionID: SessionID) => Effect.Effect<void, Session.BusyError> = Effect.fn(
         "SessionPrompt.assertNotBusy",
       )(function* (sessionID: SessionID) {
-        const s = yield* InstanceState.get(cache)
+        const s = yield* InstanceState.get(state)
         const runner = s.runners.get(sessionID)
         if (runner?.busy) throw new Session.BusyError(sessionID)
       })
 
       const cancel = Effect.fn("SessionPrompt.cancel")(function* (sessionID: SessionID) {
         log.info("cancel", { sessionID })
-        const s = yield* InstanceState.get(cache)
+        const s = yield* InstanceState.get(state)
         const runner = s.runners.get(sessionID)
         if (!runner || !runner.busy) {
           yield* status.set(sessionID, { type: "idle" })
@@ -150,6 +151,7 @@ export namespace SessionPrompt {
       })
 
       const resolvePromptParts = Effect.fn("SessionPrompt.resolvePromptParts")(function* (template: string) {
+        const ctx = yield* InstanceState.context
         const parts: PromptInput["parts"] = [{ type: "text", text: template }]
         const files = ConfigMarkdown.files(template)
         const seen = new Set<string>()
@@ -161,7 +163,7 @@ export namespace SessionPrompt {
             seen.add(name)
             const filepath = name.startsWith("~/")
               ? path.join(os.homedir(), name.slice(2))
-              : path.resolve(Instance.worktree, name)
+              : path.resolve(ctx.worktree, name)
 
             const info = yield* fsys.stat(filepath).pipe(Effect.option)
             if (Option.isNone(info)) {
@@ -207,14 +209,14 @@ export namespace SessionPrompt {
 
         const ag = yield* agents.get("title")
         if (!ag) return
+        const mdl = ag.model
+          ? yield* provider.getModel(ag.model.providerID, ag.model.modelID)
+          : ((yield* provider.getSmallModel(input.providerID)) ??
+            (yield* provider.getModel(input.providerID, input.modelID)))
+        const msgs = onlySubtasks
+          ? [{ role: "user" as const, content: subtasks.map((p) => p.prompt).join("\n") }]
+          : yield* Effect.promise(() => MessageV2.toModelMessages(context, mdl))
         const text = yield* Effect.promise(async (signal) => {
-          const mdl = ag.model
-            ? await Provider.getModel(ag.model.providerID, ag.model.modelID)
-            : ((await Provider.getSmallModel(input.providerID)) ??
-              (await Provider.getModel(input.providerID, input.modelID)))
-          const msgs = onlySubtasks
-            ? [{ role: "user" as const, content: subtasks.map((p) => p.prompt).join("\n") }]
-            : await MessageV2.toModelMessages(context, mdl)
           const result = await LLM.stream({
             agent: ag,
             user: firstInfo,
@@ -641,6 +643,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         msgs: MessageV2.WithParts[]
       }) {
         const { task, model, lastUser, sessionID, session, msgs } = input
+        const ctx = yield* InstanceState.context
         const taskTool = yield* Effect.promise(() => TaskTool.init())
         const taskModel = task.model ? yield* getModel(task.model.providerID, task.model.modelID, sessionID) : model
         const assistantMessage: MessageV2.Assistant = yield* sessions.updateMessage({
@@ -651,7 +654,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           mode: task.agent,
           agent: task.agent,
           variant: lastUser.variant,
-          path: { cwd: Instance.directory, root: Instance.worktree },
+          path: { cwd: ctx.directory, root: ctx.worktree },
           cost: 0,
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
           modelID: taskModel.id,
@@ -822,6 +825,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       })
 
       const shellImpl = Effect.fn("SessionPrompt.shellImpl")(function* (input: ShellInput, signal: AbortSignal) {
+        const ctx = yield* InstanceState.context
         const session = yield* sessions.get(input.sessionID)
         if (session.revert) {
           yield* Effect.promise(() => SessionRevert.cleanup(session))
@@ -861,7 +865,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           mode: input.agent,
           agent: input.agent,
           cost: 0,
-          path: { cwd: Instance.directory, root: Instance.worktree },
+          path: { cwd: ctx.directory, root: ctx.worktree },
           time: { created: Date.now() },
           role: "assistant",
           tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -920,7 +924,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
 
         const args = (invocations[shellName] ?? invocations[""]).args
-        const cwd = Instance.directory
+        const cwd = ctx.directory
         const shellEnv = yield* plugin.trigger(
           "shell.env",
           { cwd, sessionID: input.sessionID, callID: part.callID },
@@ -1017,21 +1021,35 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         return { info: msg, parts: [part] }
       })
 
-      const getModel = (providerID: ProviderID, modelID: ModelID, sessionID: SessionID) =>
-        Effect.promise(() =>
-          Provider.getModel(providerID, modelID).catch((e) => {
-            if (Provider.ModelNotFoundError.isInstance(e)) {
-              const hint = e.data.suggestions?.length ? ` Did you mean: ${e.data.suggestions.join(", ")}?` : ""
-              Bus.publish(Session.Event.Error, {
-                sessionID,
-                error: new NamedError.Unknown({
-                  message: `Model not found: ${e.data.providerID}/${e.data.modelID}.${hint}`,
-                }).toObject(),
-              })
-            }
-            throw e
-          }),
-        )
+      const getModel = Effect.fn("SessionPrompt.getModel")(function* (
+        providerID: ProviderID,
+        modelID: ModelID,
+        sessionID: SessionID,
+      ) {
+        const exit = yield* provider.getModel(providerID, modelID).pipe(Effect.exit)
+        if (Exit.isSuccess(exit)) return exit.value
+        const err = Cause.squash(exit.cause)
+        if (Provider.ModelNotFoundError.isInstance(err)) {
+          const hint = err.data.suggestions?.length ? ` Did you mean: ${err.data.suggestions.join(", ")}?` : ""
+          yield* bus.publish(Session.Event.Error, {
+            sessionID,
+            error: new NamedError.Unknown({
+              message: `Model not found: ${err.data.providerID}/${err.data.modelID}.${hint}`,
+            }).toObject(),
+          })
+        }
+        return yield* Effect.failCause(exit.cause)
+      })
+
+      const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
+        const model = yield* Effect.promise(async () => {
+          for await (const item of MessageV2.stream(sessionID)) {
+            if (item.info.role === "user" && item.info.model) return item.info.model
+          }
+        })
+        if (model) return model
+        return yield* provider.defaultModel()
+      })
 
       const createUserMessage = Effect.fn("SessionPrompt.createUserMessage")(function* (input: PromptInput) {
         const agentName = input.agent || (yield* agents.defaultAgent())
@@ -1045,9 +1063,12 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         }
 
         const model = input.model ?? ag.model ?? (yield* lastModel(input.sessionID))
+        const same = ag.model && model.providerID === ag.model.providerID && model.modelID === ag.model.modelID
         const full =
-          !input.variant && ag.variant
-            ? yield* Effect.promise(() => Provider.getModel(model.providerID, model.modelID).catch(() => undefined))
+          !input.variant && ag.variant && same
+            ? yield* provider
+                .getModel(model.providerID, model.modelID)
+                .pipe(Effect.catch(() => Effect.succeed(undefined)))
             : undefined
         const variant = input.variant ?? (ag.variant && full?.variants?.[ag.variant] ? ag.variant : undefined)
 
@@ -1065,7 +1086,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           command: input.command,
         }
 
-        yield* Effect.addFinalizer(() => Effect.sync(() => InstructionPrompt.clear(info.id)))
+        yield* Effect.addFinalizer(() => InstanceState.withALS(() => InstructionPrompt.clear(info.id)))
 
         type Draft<T> = T extends MessageV2.Part ? Omit<T, "id"> & { id?: string } : never
         const assign = (part: Draft<MessageV2.Part>): MessageV2.Part => ({
@@ -1195,7 +1216,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
                   ]
                   const read = yield* Effect.promise(() => ReadTool.init()).pipe(
                     Effect.flatMap((t) =>
-                      Effect.promise(() => Provider.getModel(info.model.providerID, info.model.modelID)).pipe(
+                      provider.getModel(info.model.providerID, info.model.modelID).pipe(
                         Effect.flatMap((mdl) =>
                           Effect.promise(() =>
                             t.execute(args, {
@@ -1419,6 +1440,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       const runLoop: (sessionID: SessionID) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.run")(
         function* (sessionID: SessionID) {
+          const ctx = yield* InstanceState.context
           let structured: unknown | undefined
           let step = 0
           const session = yield* sessions.get(sessionID)
@@ -1510,7 +1532,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               mode: agent.name,
               agent: agent.name,
               variant: lastUser.variant,
-              path: { cwd: Instance.directory, root: Instance.worktree },
+              path: { cwd: ctx.directory, root: ctx.worktree },
               cost: 0,
               tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
               modelID: model.id,
@@ -1627,7 +1649,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               }),
               Effect.fnUntraced(function* (exit) {
                 if (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)) yield* handle.abort()
-                InstructionPrompt.clear(handle.message.id)
+                yield* InstanceState.withALS(() => InstructionPrompt.clear(handle.message.id))
               }),
             )
             if (outcome === "break") break
@@ -1642,14 +1664,14 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       const loop: (input: z.infer<typeof LoopInput>) => Effect.Effect<MessageV2.WithParts> = Effect.fn(
         "SessionPrompt.loop",
       )(function* (input: z.infer<typeof LoopInput>) {
-        const s = yield* InstanceState.get(cache)
+        const s = yield* InstanceState.get(state)
         const runner = getRunner(s.runners, input.sessionID)
         return yield* runner.ensureRunning(runLoop(input.sessionID))
       })
 
       const shell: (input: ShellInput) => Effect.Effect<MessageV2.WithParts> = Effect.fn("SessionPrompt.shell")(
         function* (input: ShellInput) {
-          const s = yield* InstanceState.get(cache)
+          const s = yield* InstanceState.get(state)
           const runner = getRunner(s.runners, input.sessionID)
           return yield* runner.startShell((signal) => shellImpl(input, signal))
         },
@@ -1942,6 +1964,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
         Layer.provide(FileTime.defaultLayer),
         Layer.provide(ToolRegistry.defaultLayer),
         Layer.provide(Truncate.layer),
+        Layer.provide(Provider.defaultLayer),
         Layer.provide(AppFileSystem.defaultLayer),
         Layer.provide(Plugin.defaultLayer),
         Layer.provide(Session.defaultLayer),
@@ -2087,15 +2110,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   export async function command(input: CommandInput) {
     return runPromise((svc) => svc.command(CommandInput.parse(input)))
   }
-
-  const lastModel = Effect.fnUntraced(function* (sessionID: SessionID) {
-    return yield* Effect.promise(async () => {
-      for await (const item of MessageV2.stream(sessionID)) {
-        if (item.info.role === "user" && item.info.model) return item.info.model
-      }
-      return Provider.defaultModel()
-    })
-  })
 
   /** @internal Exported for testing */
   export function createStructuredOutputTool(input: {
