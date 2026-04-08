@@ -48,6 +48,7 @@ import { Config } from "../config/config"
 import { Auth } from "../auth"
 import { Cause, Effect, Exit, Layer, Option, Scope, ServiceMap } from "effect"
 import { InstanceState } from "@/effect/instance-state"
+import { Instance } from "@/project/instance"
 import { makeRuntime } from "@/effect/run-service"
 import { TaskTool } from "@/tool/task"
 
