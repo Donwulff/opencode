@@ -90,6 +90,9 @@ if [ "$stashed" -eq 1 ]; then
   fi
 fi
 
+echo "Installing dependencies..."
+bun install
+
 echo "Building opencode..."
 bun run --cwd packages/opencode script/build.ts --single
 
