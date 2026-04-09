@@ -10,6 +10,7 @@ import { Config } from "../config/config"
 import { Permission } from "@/permission"
 import { assertLearnTask } from "./command-guard"
 import { Effect } from "effect"
+import { Log } from "@/util/log"
 
 const id = "task"
 
