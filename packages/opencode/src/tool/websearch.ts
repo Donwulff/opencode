@@ -54,7 +54,7 @@ export const WebSearchTool = Tool.define(
           })
 
           // Validate search endpoint against security config
-          const cfg = yield* Config.Service.use((svc) => svc.get())
+          const cfg = yield* Effect.promise(() => Config.get())
           const securityConfig = cfg.security as SecurityConfigType | undefined
           if (securityConfig) {
             const mcpUrl = "https://mcp.exa.ai/mcp"

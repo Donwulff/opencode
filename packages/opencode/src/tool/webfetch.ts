@@ -27,7 +27,6 @@ export const WebFetchTool = Tool.define(
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
     const httpOk = HttpClient.filterStatusOk(http)
-    const config = yield* Config.Service
 
     return {
       description: DESCRIPTION,
@@ -39,7 +38,7 @@ export const WebFetchTool = Tool.define(
           }
 
           // Validate URL against security config
-          const cfg = yield* config.get()
+          const cfg = yield* Effect.promise(() => Config.get())
           const securityConfig = cfg.security as SecurityConfigType | undefined
           if (securityConfig) {
             const validation = validateUrlFromConfig(params.url, securityConfig)

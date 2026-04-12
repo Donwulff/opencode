@@ -1701,8 +1701,8 @@ NOTE: At any point in time through this workflow you should feel free to ask the
           const providerPrompt = cfg.provider?.[modelRef.providerID]?.system_prompt
           const promptHeader = providerPrompt ?? SystemPrompt.provider(model).join("\n")
           const basePrompt = agent.prompt ?? (codex ? "" : promptHeader)
-          const environment = yield* Effect.promise(() => SystemPrompt.environment(model))
-          const instructions = yield* Effect.promise(() => Instruction.system())
+          const environment = sys.environment(model)
+          const instructions = yield* instruction.system().pipe(Effect.orDie)
           const system = [[basePrompt, ...environment, ...instructions].filter(Boolean).join("\n")]
           const lead = system[0]
           const original = [...system]
