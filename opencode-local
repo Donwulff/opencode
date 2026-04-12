@@ -22,6 +22,18 @@ if [ -d "$sdk_gen" ] && ! git diff --quiet -- "$sdk_gen" 2>/dev/null; then
   git checkout -- packages/sdk/js/openapi.json 2>/dev/null || true
 fi
 
+# Temporarily lift skip-worktree flags so git merge can update those files.
+# git diff hides skip-worktree files, so the stash below won't catch them,
+# causing merge to abort with "would be overwritten". We restore the files to
+# HEAD, merge proceeds, then re-apply the flag afterward.
+mapfile -t skip_worktree_files < <(git ls-files -v | awk '/^S / {print $2}')
+if [ ${#skip_worktree_files[@]} -gt 0 ]; then
+  for f in "${skip_worktree_files[@]}"; do
+    git update-index --no-skip-worktree "$f"
+    git checkout -- "$f"
+  done
+fi
+
 # Stash any remaining uncommitted changes so the merge can proceed.
 # They'll be popped back after the merge (before build).
 stashed=0
@@ -88,6 +100,15 @@ if [ "$stashed" -eq 1 ]; then
     echo "WARNING: stash pop had conflicts. Your changes are in 'git stash list'."
     echo "Resolve manually after this run, or run: git stash pop"
   fi
+fi
+
+# Re-apply skip-worktree flags that were lifted before the merge.
+if [ ${#skip_worktree_files[@]} -gt 0 ]; then
+  for f in "${skip_worktree_files[@]}"; do
+    if git ls-files --error-unmatch "$f" >/dev/null 2>&1; then
+      git update-index --skip-worktree "$f"
+    fi
+  done
 fi
 
 echo "Installing dependencies..."
