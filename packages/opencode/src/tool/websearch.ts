@@ -1,19 +1,13 @@
 import z from "zod"
+import { Effect } from "effect"
+import { HttpClient } from "effect/unstable/http"
 import { Tool } from "./tool"
+import * as McpExa from "./mcp-exa"
 import DESCRIPTION from "./websearch.txt"
-import { abortAfterAny } from "../util/abort"
 import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
 import { Config } from "@/config/config"
-
-const API_CONFIG = {
-  BASE_URL: "https://mcp.exa.ai",
-  ENDPOINTS: {
-    SEARCH: "/mcp",
-  },
-  DEFAULT_NUM_RESULTS: 8,
-} as const
 
 const Parameters = z.object({
   query: z.string().describe("Websearch query"),
@@ -34,137 +28,64 @@ const Parameters = z.object({
     .describe("Maximum characters for context string optimized for LLMs (default: 10000)"),
 })
 
-interface McpSearchRequest {
-  jsonrpc: string
-  id: number
-  method: string
-  params: {
-    name: string
-    arguments: {
-      query: string
-      numResults?: number
-      livecrawl?: "fallback" | "preferred"
-      type?: "auto" | "fast" | "deep"
-      contextMaxCharacters?: number
-    }
-  }
-}
+export const WebSearchTool = Tool.define(
+  "websearch",
+  Effect.gen(function* () {
+    const http = yield* HttpClient.HttpClient
 
-interface McpSearchResponse {
-  jsonrpc: string
-  result: {
-    content: Array<{
-      type: string
-      text: string
-    }>
-  }
-}
+    return {
+      get description() {
+        return DESCRIPTION.replace("{{year}}", new Date().getFullYear().toString())
+      },
+      parameters: Parameters,
+      execute: (params: z.infer<typeof Parameters>, ctx: Tool.Context) =>
+        Effect.gen(function* () {
+          yield* ctx.ask({
+            permission: "websearch",
+            patterns: [params.query],
+            always: ["*"],
+            metadata: {
+              query: params.query,
+              numResults: params.numResults,
+              livecrawl: params.livecrawl,
+              type: params.type,
+              contextMaxCharacters: params.contextMaxCharacters,
+            },
+          })
 
-export const WebSearchTool = Tool.define("websearch", async () => {
-  return {
-    get description() {
-      return DESCRIPTION.replace("{{year}}", new Date().getFullYear().toString())
-    },
-    parameters: Parameters,
-    async execute(params, ctx) {
-      const mcpUrl = `${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.SEARCH}`
-      if (!mcpUrl.startsWith("http://") && !mcpUrl.startsWith("https://")) {
-        throw new Error("URL must start with http:// or https://")
-      }
-      // Validate URL against security config (websearch calls internal MCP endpoint)
-      const config = await Config.get()
-      const securityConfig = config.security as SecurityConfigType | undefined
-      if (securityConfig) {
-        const validation = validateUrlFromConfig(mcpUrl, securityConfig)
-        if (!validation.allowed) {
-          auditLogger.logToolRequest(ctx.sessionID, "websearch", mcpUrl, "unknown", false, validation.reason)
-          throw new Error(validation.reason)
-        }
-        auditLogger.logToolRequest(ctx.sessionID, "websearch", mcpUrl, "unknown", true, "MCP endpoint validated")
-      }
-
-      await ctx.ask({
-        permission: "websearch",
-        patterns: [params.query],
-        always: ["*"],
-        metadata: {
-          query: params.query,
-          numResults: params.numResults,
-          livecrawl: params.livecrawl,
-          type: params.type,
-          contextMaxCharacters: params.contextMaxCharacters,
-        },
-      })
-
-      const searchRequest: McpSearchRequest = {
-        jsonrpc: "2.0",
-        id: 1,
-        method: "tools/call",
-        params: {
-          name: "web_search_exa",
-          arguments: {
-            query: params.query,
-            type: params.type || "auto",
-            numResults: params.numResults || API_CONFIG.DEFAULT_NUM_RESULTS,
-            livecrawl: params.livecrawl || "fallback",
-            contextMaxCharacters: params.contextMaxCharacters,
-          },
-        },
-      }
-
-      const { signal, clearTimeout } = abortAfterAny(25000, ctx.abort)
-
-      try {
-        const headers: Record<string, string> = {
-          accept: "application/json, text/event-stream",
-          "content-type": "application/json",
-        }
-
-        const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.ENDPOINTS.SEARCH}`, {
-          method: "POST",
-          headers,
-          body: JSON.stringify(searchRequest),
-          signal,
-        })
-
-        clearTimeout()
-
-        if (!response.ok) {
-          const errorText = await response.text()
-          throw new Error(`Search error (${response.status}): ${errorText}`)
-        }
-
-        const responseText = await response.text()
-
-        // Parse SSE response
-        const lines = responseText.split("\n")
-        for (const line of lines) {
-          if (line.startsWith("data: ")) {
-            const data: McpSearchResponse = JSON.parse(line.substring(6))
-            if (data.result && data.result.content && data.result.content.length > 0) {
-              return {
-                output: data.result.content[0].text,
-                title: `Web search: ${params.query}`,
-                metadata: {},
-              }
+          // Validate search endpoint against security config
+          const cfg = yield* Config.Service.use((svc) => svc.get())
+          const securityConfig = cfg.security as SecurityConfigType | undefined
+          if (securityConfig) {
+            const mcpUrl = "https://mcp.exa.ai/mcp"
+            const validation = validateUrlFromConfig(mcpUrl, securityConfig)
+            if (!validation.allowed) {
+              auditLogger.logToolRequest(ctx.sessionID, "websearch", mcpUrl, "unknown", false, validation.reason)
+              throw new Error(validation.reason)
             }
+            auditLogger.logToolRequest(ctx.sessionID, "websearch", mcpUrl, "unknown", true, "MCP endpoint validated")
           }
-        }
 
-        return {
-          output: "No search results found. Please try a different query.",
-          title: `Web search: ${params.query}`,
-          metadata: {},
-        }
-      } catch (error) {
-        clearTimeout()
+          const result = yield* McpExa.call(
+            http,
+            "web_search_exa",
+            McpExa.SearchArgs,
+            {
+              query: params.query,
+              type: params.type || "auto",
+              numResults: params.numResults || 8,
+              livecrawl: params.livecrawl || "fallback",
+              contextMaxCharacters: params.contextMaxCharacters,
+            },
+            "25 seconds",
+          )
 
-        if (error instanceof Error && error.name === "AbortError") {
-          throw new Error("Search request timed out")
-        }
-
-        throw error
-      }
-    },
-  }
-})
+          return {
+            output: result ?? "No search results found. Please try a different query.",
+            title: `Web search: ${params.query}`,
+            metadata: {},
+          }
+        }).pipe(Effect.orDie),
+    }
+  }),
+)
