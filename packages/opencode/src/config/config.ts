@@ -1120,6 +1120,14 @@ export namespace Config {
 
   export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
 
+  // Standalone async getter for non-Effect contexts (fork security code, provenance, models).
+  // Registered by the layer factory when Config.Service is initialized.
+  let _asyncGet: (() => Promise<Info>) | undefined
+  export async function get(): Promise<Info> {
+    if (!_asyncGet) throw new Error("Config service not initialized")
+    return _asyncGet()
+  }
+
   function globalConfigFile() {
     const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
       path.join(Global.Path.config, file),
@@ -1682,6 +1690,9 @@ export namespace Config {
           yield* invalidate()
           return next
         })
+
+        // Register the standalone async getter for non-Effect callers
+        _asyncGet = () => Effect.runPromise(get())
 
         return Service.of({
           get,

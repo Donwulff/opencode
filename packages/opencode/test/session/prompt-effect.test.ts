@@ -7,6 +7,7 @@ import z from "zod"
 import { Agent as AgentSvc } from "../../src/agent/agent"
 import { Bus } from "../../src/bus"
 import { Command } from "../../src/command"
+import { Auth } from "../../src/auth"
 import { Config } from "../../src/config/config"
 import { FileTime } from "../../src/file/time"
 import { LSP } from "../../src/lsp"
@@ -161,6 +162,7 @@ function makeHttp() {
     Command.defaultLayer,
     Permission.defaultLayer,
     Plugin.defaultLayer,
+    Auth.defaultLayer,
     Config.defaultLayer,
     ProviderSvc.defaultLayer,
     filetime,

@@ -107,6 +107,7 @@ export namespace SessionPrompt {
       const revert = yield* SessionRevert.Service
       const sys = yield* SystemPrompt.Service
       const llm = yield* LLM.Service
+      const auth = yield* Auth.Service
 
       const run = {
         promise: <A, E>(effect: Effect.Effect<A, E>) =>
@@ -1694,10 +1695,11 @@ NOTE: At any point in time through this workflow you should feel free to ask the
             noReply: true,
           })
 
-          const [provider, auth] = yield* Effect.promise(() =>
-            Promise.all([Provider.getProvider(model.providerID), Auth.get(model.providerID)]),
+          const [provInfo, authInfo] = yield* Effect.all(
+            [provider.getProvider(model.providerID), auth.get(model.providerID).pipe(Effect.orDie)],
+            { concurrency: "unbounded" },
           )
-          const codex = provider?.id === "openai" && auth?.type === "oauth"
+          const codex = provInfo?.id === "openai" && authInfo?.type === "oauth"
           const providerPrompt = cfg.provider?.[modelRef.providerID]?.system_prompt
           const promptHeader = providerPrompt ?? SystemPrompt.provider(model).join("\n")
           const basePrompt = agent.prompt ?? (codex ? "" : promptHeader)
@@ -1924,6 +1926,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       Layer.provide(ToolRegistry.defaultLayer),
       Layer.provide(Truncate.defaultLayer),
       Layer.provide(Provider.defaultLayer),
+      Layer.provide(Auth.defaultLayer),
       Layer.provide(Instruction.defaultLayer),
       Layer.provide(AppFileSystem.defaultLayer),
       Layer.provide(Plugin.defaultLayer),
