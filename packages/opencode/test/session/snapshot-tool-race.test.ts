@@ -40,6 +40,7 @@ import { MCP } from "../../src/mcp"
 import { Permission } from "../../src/permission"
 import { Plugin } from "../../src/plugin"
 import { Provider as ProviderSvc } from "../../src/provider/provider"
+import { Env } from "../../src/env"
 import { Question } from "../../src/question"
 import { Skill } from "../../src/skill"
 import { SystemPrompt } from "../../src/session/system"
@@ -122,6 +123,7 @@ function makeHttp() {
     Session.defaultLayer,
     Snapshot.defaultLayer,
     LLM.defaultLayer,
+    Env.defaultLayer,
     AgentSvc.defaultLayer,
     Command.defaultLayer,
     Permission.defaultLayer,

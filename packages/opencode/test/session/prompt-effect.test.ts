@@ -15,6 +15,7 @@ import { MCP } from "../../src/mcp"
 import { Permission } from "../../src/permission"
 import { Plugin } from "../../src/plugin"
 import { Provider as ProviderSvc } from "../../src/provider/provider"
+import { Env } from "../../src/env"
 import type { Provider } from "../../src/provider/provider"
 import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Question } from "../../src/question"
@@ -168,6 +169,7 @@ function makeHttp() {
     Session.defaultLayer,
     Snapshot.defaultLayer,
     LLM.defaultLayer,
+    Env.defaultLayer,
     AgentSvc.defaultLayer,
     Command.defaultLayer,
     Permission.defaultLayer,

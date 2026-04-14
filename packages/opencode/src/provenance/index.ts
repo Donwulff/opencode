@@ -208,8 +208,18 @@ export namespace Provenance {
     })
   }
 
-  const state = Instance.state(
-    async (): Promise<State> => {
+  const stateCache = new Map<string, Promise<State>>()
+
+  function state(): Promise<State> {
+    const dir = Instance.directory
+    const existing = stateCache.get(dir)
+    if (existing) return existing
+    const promise = initState()
+    stateCache.set(dir, promise)
+    return promise
+  }
+
+  async function initState(): Promise<State> {
       const config = await Config.get()
       const enabled = config.provenance?.enabled ?? false
       const file = filePath(config.provenance?.path)
@@ -348,13 +358,7 @@ export namespace Provenance {
       })
 
       return next
-    },
-    async (current) => {
-      for (const unsub of current.unsub) {
-        unsub()
-      }
-    },
-  )
+  }
 
   export function init() {
     void state()
