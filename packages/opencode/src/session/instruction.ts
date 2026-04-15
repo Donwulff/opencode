@@ -10,6 +10,7 @@ import { withTransientReadRetry } from "@/util/effect-http-client"
 import { Global } from "../global"
 import { Instance } from "../project/instance"
 import { Log } from "../util/log"
+import { auditedUrl } from "@/util/fetch"
 import type { MessageV2 } from "./message-v2"
 import type { MessageID } from "./schema"
 
@@ -104,6 +105,11 @@ export namespace Instruction {
         })
 
         const fetch = Effect.fnUntraced(function* (url: string) {
+          const blocked = yield* auditedUrl(url, "instruction").pipe(
+            Effect.as(false),
+            Effect.catch(() => Effect.succeed(true)),
+          )
+          if (blocked) return ""
           const res = yield* http.execute(HttpClientRequest.get(url)).pipe(
             Effect.timeout(5000),
             Effect.catch(() => Effect.succeed(null)),
