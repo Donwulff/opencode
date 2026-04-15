@@ -158,6 +158,7 @@ export namespace Provider {
     vars?: CustomVarsLoader
     options?: Record<string, any>
     discoverModels?: CustomDiscoverModels
+    models?: Record<string, Model>
   }>
 
   type CustomDep = {
@@ -1253,6 +1254,7 @@ export namespace Provider {
               const patch: Partial<Info> = providers[providerID]
                 ? { options: opts }
                 : { source: "custom", options: opts }
+              if (result.models) patch.models = result.models
               mergeProvider(providerID, patch)
             }
           }
@@ -1267,18 +1269,95 @@ export namespace Provider {
             mergeProvider(providerID, partial)
           }
 
-          const gitlab = ProviderID.make("gitlab")
-          if (discoveryLoaders[gitlab] && providers[gitlab] && isProviderAllowed(gitlab)) {
+          // autodiscover models from OpenAI-compatible /v1/models endpoints
+          for (const [id, provider] of configProviders) {
+            if (!provider.autodiscover) continue
+            const providerID = ProviderID.make(id)
+            if (!isProviderAllowed(providerID)) continue
+            const baseURL = provider.options?.baseURL ?? provider.api
+            if (!baseURL) {
+              log.warn("autodiscover: no api/baseURL configured", { id })
+              continue
+            }
+            const apiURL = iife(() => {
+              const trimmed = (baseURL as string).replace(/\/+$/, "")
+              return trimmed.endsWith("/v1") ? trimmed : `${trimmed}/v1`
+            })
             yield* Effect.promise(async () => {
               try {
-                const discovered = await discoveryLoaders[gitlab]()
+                const response = await fetch(`${apiURL}/models`, {
+                  headers: { "User-Agent": Installation.USER_AGENT },
+                })
+                if (!response.ok) {
+                  log.warn("autodiscover: failed to fetch models", { id, status: response.status })
+                  return
+                }
+                const data = await response.json()
+                const modelsArray = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : []
+                for (const entry of modelsArray) {
+                  const modelID = entry.id ?? entry.name ?? entry.model
+                  if (!modelID) continue
+                  if (providers[providerID]?.models[modelID]) continue
+                  const context = iife(() => {
+                    const ctx = Number(entry?.meta?.n_ctx_train ?? entry?.context_length)
+                    return Number.isFinite(ctx) && ctx > 0 ? ctx : 128000
+                  })
+                  const model: z.infer<typeof Model> = {
+                    id: ModelID.make(modelID),
+                    providerID,
+                    name: entry.name ?? entry.model ?? modelID.split("/").pop() ?? modelID,
+                    family: "",
+                    api: { id: modelID, url: apiURL, npm: provider.npm ?? "@ai-sdk/openai-compatible" },
+                    status: "active",
+                    headers: {},
+                    options: {},
+                    cost: { input: 0, output: 0, cache: { read: 0, write: 0 } },
+                    limit: { context, output: 4096 },
+                    capabilities: {
+                      temperature: true,
+                      reasoning: false,
+                      attachment: false,
+                      toolcall: true,
+                      input: { text: true, audio: false, image: false, video: false, pdf: false },
+                      output: { text: true, audio: false, image: false, video: false, pdf: false },
+                      interleaved: false,
+                    },
+                    variants: {},
+                    release_date: "",
+                  }
+                  if (!providers[providerID]) {
+                    mergeProvider(providerID, { source: "config", models: { [modelID]: model } })
+                  }
+                  providers[providerID].models[modelID] = model
+                }
+                log.info("autodiscover: found models", {
+                  id,
+                  count: Object.keys(providers[providerID]?.models ?? {}).length,
+                })
+              } catch (e) {
+                log.warn("autodiscover: failed", { id, error: e })
+              }
+            })
+            // register languageModel loader for autodiscovered provider
+            if (!modelLoaders[providerID]) {
+              modelLoaders[providerID] = async (sdk, modelID) => sdk.languageModel(modelID)
+            }
+          }
+
+          // run discovery loaders (e.g. gitlab workflow models)
+          for (const [id, loader] of Object.entries(discoveryLoaders)) {
+            const providerID = ProviderID.make(id)
+            if (!providers[providerID] || !isProviderAllowed(providerID)) continue
+            yield* Effect.promise(async () => {
+              try {
+                const discovered = await loader()
                 for (const [modelID, model] of Object.entries(discovered)) {
-                  if (!providers[gitlab].models[modelID]) {
-                    providers[gitlab].models[modelID] = model
+                  if (!providers[providerID].models[modelID]) {
+                    providers[providerID].models[modelID] = model
                   }
                 }
               } catch (e) {
-                log.warn("state discovery error", { id: "gitlab", error: e })
+                log.warn("state discovery error", { id, error: e })
               }
             })
           }

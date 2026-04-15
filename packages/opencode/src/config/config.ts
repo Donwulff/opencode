@@ -860,6 +860,12 @@ export namespace Config {
         })
         .catchall(z.any())
         .optional(),
+      autodiscover: z
+        .boolean()
+        .optional()
+        .describe(
+          "Fetch available models from the provider's /v1/models endpoint at startup. Requires api or options.baseURL to be set.",
+        ),
       system_prompt: z
         .string()
         .optional()

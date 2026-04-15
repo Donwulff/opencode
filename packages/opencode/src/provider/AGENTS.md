@@ -3,7 +3,7 @@
 ## Security
 
 - URL validation occurs BEFORE fetch operations (models.ts, provider.ts getSDK wrapper)
-- Security validation at both provider load time (CUSTOM_LOADERS) and runtime HTTP requests (getSDK fetch wrapper)
+- Security validation at both provider load time (`custom()` loaders) and runtime HTTP requests (getSDK fetch wrapper)
 - Provider validation returns `disable: true` instead of throwing, so other providers can still load
 - ModelsDev.Data() and ModelsDev.refresh() must have identical security validation — they are separate code paths to the same fetch
 - Audit logging uses `providerId` (camelCase); data structures use `providerID` (PascalCase)
@@ -15,7 +15,7 @@
   `if (snapshot) return snapshot` short-circuits without fetching. Blanking the snapshot in
   Dockerfile.builder (`export const snapshot = {}`) is therefore the correct way to suppress
   cloud models — `models_dev_enabled: false` alone is insufficient for a built binary.
-- **`opencode` provider free-tier autoload**: unlike all other CUSTOM_LOADERS (which have
+- **`opencode` provider free-tier autoload**: unlike all other `custom()` loaders (which have
   `autoload: false`), the `opencode` provider conditionally autoloads free-tier models
   (cost.input === 0) even without an API key, using `apiKey: "public"`. With an empty snapshot
   `input.models` is `{}` so `autoload` becomes false and nothing loads — but if the snapshot
@@ -24,11 +24,41 @@
 
 ## Provider Loading
 
-- CUSTOM_LOADERS dynamically load OpenAI-compatible providers; the `state()` function orchestrates full discovery
+- `custom()` returns named loaders for specific providers; the `state()` function orchestrates full discovery
 - Providers with `disable: true` are added to the `disabled` set and skipped
 - GitLab instance URL validation must use `opts.instanceUrl`, not `opts.baseURL` (which is undefined in that scope)
-- Llama.cpp error path uses `apiURL`, not `baseURL` (undefined in the try block scope)
 - **Branded ID types**: since upstream branded `ProviderID`/`ModelID`, plain string literals
   are no longer assignable — fork additions must use `ProviderID.make("string")` and
-  `ModelID.make("string")`. Any merge introducing TS2322 on a `providerID` or `id` field
-  in fork-specific code (e.g. llama.cpp loader) needs this fix.
+  `ModelID.make("string")`.
+
+## Autodiscovery (fork feature)
+
+- Config providers with `autodiscover: true` get their `/v1/models` endpoint queried at startup
+- Runs after the `custom(dep)` loop and config re-apply in `state()`
+- Resolves `api` or `options.baseURL`, normalizes to `/v1`, fetches `/v1/models`
+- Handles both `data.data` (OpenAI/vLLM standard) and `data.models` response shapes
+- Reads `context_length` from response (vLLM exposes this); falls back to 128k
+- Skips models already defined explicitly in config (manual overrides take precedence)
+- Registers a `languageModel` loader for autodiscovered providers
+- `CustomLoader` return type includes `models` field (fork-maintained; upstream doesn't have it)
+- Discovery loaders (`discoverModels` from custom loaders) are run generically for all providers,
+  not just gitlab
+
+## Config example
+
+```jsonc
+{
+  "provider": {
+    "vllm-code": {
+      "name": "vLLM Code Models",
+      "api": "http://localhost:8001/v1",
+      "autodiscover": true
+    },
+    "vllm-chat": {
+      "name": "vLLM Chat",
+      "api": "http://localhost:8002/v1",
+      "autodiscover": true
+    }
+  }
+}
+```
