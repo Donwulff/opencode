@@ -1,15 +1,15 @@
 import { Bus } from "@/bus"
 import { Command } from "@/command"
-import { Config } from "@/config/config"
+import { Config } from "@/config"
 import { Global } from "@/global"
 import { Installation } from "@/installation"
+import { InstallationVersion } from "@/installation/version"
 import { Instance } from "@/project/instance"
 import { Session } from "@/session"
 import { SessionCompaction } from "@/session/compaction"
 import { MessageV2 } from "@/session/message-v2"
 import { SessionStatus } from "@/session/status"
-import { Lock } from "@/util/lock"
-import { Log } from "@/util/log"
+import { Lock, Log } from "@/util"
 import { createHash, randomUUID } from "node:crypto"
 import { appendFile, mkdir } from "node:fs/promises"
 import path from "node:path"
@@ -91,7 +91,7 @@ export namespace Provenance {
       id: randomUUID(),
       ts: new Date().toISOString(),
       source: "opencode",
-      version: Installation.VERSION,
+      version: InstallationVersion,
       level: input.level,
       kind: input.kind,
       project_id: Instance.project.id,

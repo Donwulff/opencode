@@ -1,4 +1,4 @@
-import { Log } from "./log"
+import * as Log from "./log"
 import path from "path"
 import { appendFile } from "node:fs/promises"
 import { Global } from "../global"

@@ -1,13 +1,13 @@
 import z from "zod"
 import { Effect } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { Tool } from "./tool"
+import * as Tool from "./tool"
 import * as McpExa from "./mcp-exa"
 import DESCRIPTION from "./websearch.txt"
 import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
-import { Config } from "@/config/config"
+import { Config } from "@/config"
 
 const Parameters = z.object({
   query: z.string().describe("Websearch query"),

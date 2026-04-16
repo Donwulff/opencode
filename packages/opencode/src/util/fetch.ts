@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { Config } from "@/config/config"
+import { Config } from "@/config"
 import { auditLogger } from "./audit"
 import { validateUrlFromConfig } from "./network"
 

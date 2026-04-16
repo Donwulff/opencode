@@ -1,13 +1,13 @@
 import z from "zod"
 import { Effect } from "effect"
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
-import { Tool } from "./tool"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import * as Tool from "./tool"
 import TurndownService from "turndown"
 import DESCRIPTION from "./webfetch.txt"
 import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
-import { Config } from "@/config/config"
+import { Config } from "@/config"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds

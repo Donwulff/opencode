@@ -1,5 +1,5 @@
 import { isIP, isIPv4, isIPv6 } from "net"
-import { Log } from "./log"
+import * as Log from "./log"
 import z from "zod"
 
 const log = Log.create({ service: "network-validation" })
