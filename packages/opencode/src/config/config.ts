@@ -41,7 +41,7 @@ import { ConfigPaths } from "./paths"
 import { ConfigFormatter } from "./formatter"
 import { ConfigLSP } from "./lsp"
 import { ConfigVariable } from "./variable"
-import { Npm } from "@/npm/effect"
+import { Npm } from "@/npm"
 
 const log = Log.create({ service: "config" })
 
@@ -100,10 +100,10 @@ export const Info = z
     logLevel: Log.Level.optional().describe("Log level"),
     server: Server.optional().describe("Server configuration for opencode serve and web commands"),
     command: z
-      .record(z.string(), ConfigCommand.Info)
+      .record(z.string(), ConfigCommand.Info.zod)
       .optional()
       .describe("Command configuration, see https://opencode.ai/docs/commands"),
-    skills: ConfigSkills.Info.optional().describe("Additional skill folder paths"),
+    skills: ConfigSkills.Info.zod.optional().describe("Additional skill folder paths"),
     watcher: z
       .object({
         ignore: z.array(z.string()).optional(),
@@ -116,7 +116,7 @@ export const Info = z
         "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
       ),
     // User-facing plugin config is stored as Specs; provenance gets attached later while configs are merged.
-    plugin: ConfigPlugin.Spec.array().optional(),
+    plugin: ConfigPlugin.Spec.zod.array().optional(),
     share: z
       .enum(["manual", "auto", "disabled"])
       .optional()
@@ -138,10 +138,10 @@ export const Info = z
       .array(z.string())
       .optional()
       .describe("When set, ONLY these providers will be enabled. All other providers will be ignored"),
-    model: ConfigModelID.describe("Model to use in the format of provider/model, eg anthropic/claude-2").optional(),
-    small_model: ConfigModelID.describe(
-      "Small model to use for tasks like title generation in the format of provider/model",
-    ).optional(),
+    model: ConfigModelID.zod.describe("Model to use in the format of provider/model, eg anthropic/claude-2").optional(),
+    small_model: ConfigModelID.zod
+      .describe("Small model to use for tasks like title generation in the format of provider/model")
+      .optional(),
     default_agent: z
       .string()
       .optional()
@@ -181,7 +181,7 @@ export const Info = z
       .record(
         z.string(),
         z.union([
-          ConfigMCP.Info,
+          ConfigMCP.Info.zod,
           z
             .object({
               enabled: z.boolean(),
@@ -191,8 +191,8 @@ export const Info = z
       )
       .optional()
       .describe("MCP (Model Context Protocol) server configurations"),
-    formatter: ConfigFormatter.Info.optional(),
-    lsp: ConfigLSP.Info.optional(),
+    formatter: ConfigFormatter.Info.zod.optional(),
+    lsp: ConfigLSP.Info.zod.optional(),
     instructions: z.array(z.string()).optional().describe("Additional instruction files or patterns to include"),
     layout: Layout.optional().describe("@deprecated Always uses stretch layout."),
     permission: ConfigPermission.Info.optional(),
@@ -530,7 +530,12 @@ export const layer = Layer.effect(
 
           const dep = yield* npmSvc
             .install(dir, {
-              add: ["@opencode-ai/plugin" + (InstallationLocal ? "" : "@" + InstallationVersion)],
+              add: [
+                {
+                  name: "@opencode-ai/plugin",
+                  version: InstallationLocal ? undefined : InstallationVersion,
+                },
+              ],
             })
             .pipe(
               Effect.exit,
