@@ -41,9 +41,7 @@ export async function openWorkspaceSession(input: {
     workspaceID: input.workspaceID,
   })
 
-  console.log("opening!")
   while (true) {
-    console.log("creating")
     const result = await client.session.create({ workspace: input.workspaceID }).catch((err) => {
       log.error("workspace session create request failed", {
         workspaceID: input.workspaceID,
@@ -231,6 +229,10 @@ export function DialogWorkspaceCreate(props: { onSelect: (workspaceID: string) =
     })
 
     const result = await sdk.client.experimental.workspace.create({ type, branch: null }).catch((err) => {
+      toast.show({
+        message: "Creating workspace failed",
+        variant: "error",
+      })
       log.error("workspace create request failed", {
         type,
         error: errorData(err),

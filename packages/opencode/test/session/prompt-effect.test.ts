@@ -8,7 +8,6 @@ import { Bus } from "../../src/bus"
 import { Command } from "../../src/command"
 import { Auth } from "../../src/auth"
 import { Config } from "../../src/config"
-import { FileTime } from "../../src/file/time"
 import { LSP } from "../../src/lsp"
 import { MCP } from "../../src/mcp"
 import { Permission } from "../../src/permission"
@@ -149,16 +148,6 @@ const lsp = Layer.succeed(
   }),
 )
 
-const filetime = Layer.succeed(
-  FileTime.Service,
-  FileTime.Service.of({
-    read: () => Effect.void,
-    get: () => Effect.succeed(undefined),
-    assert: () => Effect.void,
-    withLock: (_filepath, fn) => fn(),
-  }),
-)
-
 const status = SessionStatus.layer.pipe(Layer.provideMerge(Bus.layer))
 const run = SessionRunState.layer.pipe(Layer.provide(status))
 const infra = Layer.mergeAll(NodeFileSystem.layer, CrossSpawnSpawner.defaultLayer)
@@ -175,7 +164,6 @@ function makeHttp() {
     Auth.defaultLayer,
     Config.defaultLayer,
     ProviderSvc.defaultLayer,
-    filetime,
     lsp,
     mcp,
     AppFileSystem.defaultLayer,
