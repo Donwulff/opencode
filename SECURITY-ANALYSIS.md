@@ -318,6 +318,47 @@ Longer term: allow config to specify which tools are available per agent type or
 per command (`/review`, `/learn`, etc.). E.g., `/review` sessions could have bash
 disabled entirely, not just read-only restricted.
 
+### Rework bash sandbox around container-level egress firewall
+
+**Current state**: `OPENCODE_SPAWN_SANDBOX=1` gives bash subprocesses `--unshare-net`
+— all-or-nothing, cannot allow individual hosts. Workable for "analyze hostile code"
+but actively blocks the primary dev workflow (CGI scripts, svn commits to local
+server, curl-testing local endpoints, any API testing from bash). Moving the
+exfiltration boundary up to the container-level firewall (nftables in the container
+netns, set once at entrypoint) gives coarse host/port filtering for all container
+traffic — parent process and bash subprocesses alike — without the per-spawn
+namespace cost.
+
+**Proposed three-layer model**:
+
+- **Container firewall** (new) — nftables/iptables on the container's main netns,
+  configured at entrypoint via a small setup script. Allowlist: LLM endpoints,
+  internal svn/git, explicit external hosts. Denies everything else. Covers both
+  opencode parent process and any subprocess.
+- **`security.*`** (unchanged) — URL-level allowlist for the parent process,
+  enforced in JS before fetch.
+- **`OPENCODE_SPAWN_SANDBOX`** (narrowed) — kept for the "analyze untrusted code"
+  mode only. Off by default in dev images; on by default in analysis images.
+
+**Work items**:
+1. Entrypoint-time nftables setup in `Dockerfile.analysis` (needs `CAP_NET_ADMIN`
+   or rootless-friendly nft rules). Rule set loaded from `/etc/opencode/egress.nft`
+   so managed config can ship different rules per deployment.
+2. Split `Dockerfile.analysis` vs `Dockerfile.dev` (or a `--dev` flag on
+   `opencode-run.sh`) so `OPENCODE_SPAWN_SANDBOX` is off for development workflows.
+3. Per-session system prompt note informing the agent of the current network
+   policy ("bash subprocesses have no external network" OR "bash may reach only
+   $HOSTS"). Without this the model wastes turns diagnosing network failures.
+4. Per-host filtering inside the bash sandbox itself (veth+iptables, pasta, or
+   slirp4netns with allowlist) is a larger change — defer until 1–3 are in place
+   and we know whether the container firewall covers the remaining need.
+
+**Rename `allow_external_ips` → `allow_all_external_ips`**: the current name
+reads as a targeted allowlist; it's actually a bulk "allow any public IP literal"
+switch. The targeted primitive is `allowed_ip_ranges: ["X.Y.Z.W/32"]`. Touches
+`util/network.ts` schema + the one use in the `internal-only` branch, any managed
+configs that set it, and the SECURITY-ANALYSIS.md / CLAUDE-DOCKER.md mentions.
+
 ---
 
 ## Security Intelligence Notes
