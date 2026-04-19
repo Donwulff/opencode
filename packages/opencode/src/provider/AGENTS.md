@@ -35,14 +35,30 @@
 
 - Config providers with `autodiscover: true` get their `/v1/models` endpoint queried at startup
 - Runs after the `custom(dep)` loop and config re-apply in `state()`
-- Resolves `api` or `options.baseURL`, normalizes to `/v1`, fetches `/v1/models`
+- Resolves `api` or `options.baseURL`, normalizes to `/v1`, fetches `/v1/models` (10s timeout)
 - Handles both `data.data` (OpenAI/vLLM standard) and `data.models` response shapes
 - Reads `context_length` from response (vLLM exposes this); falls back to 128k
 - Skips models already defined explicitly in config (manual overrides take precedence)
+- Discovered models are hardcoded to `npm: "@ai-sdk/openai-compatible"`, `cost: 0`,
+  `toolcall: true`, text-only modalities. Override by defining the model explicitly under
+  `provider.<id>.models` in config.
 - Registers a `languageModel` loader for autodiscovered providers
 - `CustomLoader` return type includes `models` field (fork-maintained; upstream doesn't have it)
 - Discovery loaders (`discoverModels` from custom loaders) are run generically for all providers,
   not just gitlab
+
+## Config shape — where `autodiscover` goes
+
+`autodiscover` is a **top-level** provider field, sibling to `name`/`api`/`options`. It is
+**not** a member of `options`. The provider schema (`src/config/provider.ts`) is `.strict()` at
+the top level but `options` uses `.catchall(z.any())`, so misplacing it under `options` is
+silently accepted and becomes a no-op (discovery never fires, no error surfaces). Misspelling
+the top-level key (e.g. `autodiscovery`) is caught by zod and produces a readable parse error.
+
+Either `api` (top-level) OR `options.baseURL` satisfies the URL requirement — the resolver is
+`provider.options?.baseURL ?? provider.api`. Both forms are valid; prefer the one that matches
+the rest of your provider config (the AI SDK loader reads `options.baseURL`, so setting it
+avoids duplication).
 
 ## Config example
 
@@ -56,9 +72,28 @@
     },
     "vllm-chat": {
       "name": "vLLM Chat",
-      "api": "http://localhost:8002/v1",
-      "autodiscover": true
+      "options": { "baseURL": "http://localhost:8002/v1" },
+      "autodiscover": true,
+      "system_prompt": "{file:llama4.txt}"
     }
   }
 }
 ```
+
+Multiple providers may set `autodiscover: true` simultaneously; each is queried independently.
+
+## Troubleshooting
+
+- TUI shows only `UnknownError` with a mangled stack? That is `NamedError.Unknown` from
+  `packages/shared/src/util/error.ts` — it wraps arbitrary throws. The real error is in the
+  timestamped `.log` file under `Global.Path.log` (`~/.local/share/opencode/log/` or the
+  container's mounted share dir).
+- Autodiscover fetch failures are caught inside `Effect.promise` in `provider.ts` and only
+  surface as `log.warn` entries (`autodiscover: failed to fetch models` / `autodiscover: error`).
+  Always grep the log for `autodiscover:` when models don't appear.
+- If TUI bootstrap itself dies on startup with a `{file:...}` in any provider config, the
+  substitution (`src/config/variable.ts`) runs at config load and throws `InvalidError` when
+  the referenced file is missing — resolved relative to the config file's directory, not CWD.
+- Read-only config mounts (`OPENCODE_CONFIG_DIR` pointed at a `:ro` bind) used to crash in
+  `Config.ensureGitignore` because only `PermissionDenied` was caught; EROFS fell through. The
+  catch was widened to `Effect.catchAll` — this is best-effort, failing should never be fatal.
