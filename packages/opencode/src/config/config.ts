@@ -438,12 +438,7 @@ export const layer = Layer.effect(
             gitignore,
             ["node_modules", "package.json", "package-lock.json", "bun.lock", ".gitignore"].join("\n"),
           )
-          .pipe(
-            Effect.catchIf(
-              (e) => e.reason._tag === "PermissionDenied",
-              () => Effect.void,
-            ),
-          )
+          .pipe(Effect.catch(() => Effect.void))
       }
     })
 
