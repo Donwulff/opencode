@@ -8,6 +8,7 @@ import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
 import { Config } from "@/config"
+import { isImageAttachment } from "@/util/media"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -120,10 +121,7 @@ export const WebFetchTool = Tool.define(
           const mime = contentType.split(";")[0]?.trim().toLowerCase() || ""
           const title = `${params.url} (${contentType})`
 
-          // Check if response is an image
-          const isImage = mime.startsWith("image/") && mime !== "image/svg+xml" && mime !== "image/vnd.fastbidsheet"
-
-          if (isImage) {
+          if (isImageAttachment(mime)) {
             const base64Content = Buffer.from(arrayBuffer).toString("base64")
             return {
               title,
