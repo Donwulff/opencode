@@ -36,6 +36,7 @@ import { ConfigLSP } from "./lsp"
 import { ConfigManaged } from "./managed"
 import { ConfigMCP } from "./mcp"
 import { ConfigModelID } from "./model-id"
+import { ConfigNetwork } from "./network"
 import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
 import { ConfigPermission } from "./permission"
@@ -201,6 +202,10 @@ const InfoSchema = Schema.Struct({
   ),
   security: Schema.optional(Schema.Any.annotate({ [ZodOverride]: SecurityConfig })).annotate({
     description: "Security configuration for audit logging and network controls",
+  }),
+  network: Schema.optional(ConfigNetwork.Info).annotate({
+    description:
+      "Container-level networking policy. Currently only 'egress' is used, consumed by the analysis-container entrypoint to program nftables. Has no effect outside the container entrypoint.",
   }),
   provenance: Schema.optional(
     Schema.Struct({
