@@ -70,7 +70,7 @@ export const Model = Schema.Struct({
   ),
 }).pipe(withStatics((s) => ({ zod: zod(s) })))
 
-export class Info extends Schema.Class<Info>("ProviderConfig")({
+export const Info = Schema.Struct({
   api: Schema.optional(Schema.String),
   name: Schema.optional(Schema.String),
   env: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
@@ -114,8 +114,9 @@ export class Info extends Schema.Class<Info>("ProviderConfig")({
     description:
       "Fetch available models from the provider's /v1/models endpoint at startup. Requires api or options.baseURL to be set.",
   }),
-}) {
-  static readonly zod = zod(this)
-}
+})
+  .annotate({ identifier: "ProviderConfig" })
+  .pipe(withStatics((s) => ({ zod: zod(s) })))
+export type Info = Schema.Schema.Type<typeof Info>
 
 export * as ConfigProvider from "./provider"
