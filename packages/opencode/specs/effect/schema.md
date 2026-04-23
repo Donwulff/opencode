@@ -147,6 +147,17 @@ import `z` do so only for local `ZodOverride` bridges or for `z.ZodType`
 type annotations — the `export const <Info|Spec>` values are all Effect
 Schema at source.
 
+A file is considered "done" when:
+
+- its exported schema values (`Info`, `Input`, `Event`, `Definition`, etc.)
+  are authored as Effect Schema
+- any remaining zod is either a derived compat bridge (via `zod()` /
+  `zodObject()`), a `z.ZodType` type annotation, or a documented
+  `ZodOverride` escape hatch — never a hand-written parallel source of truth
+
+Files that meet this bar but still carry a compat bridge are checked off
+with an inline note describing the bridge and what unblocks its removal.
+
 - [x] skills, formatter, console-state, mcp, lsp, permission (leaves), model-id, command, plugin, provider
 - [x] server, layout
 - [x] keybinds
@@ -159,6 +170,7 @@ Schema at source.
 These are the highest-priority next targets. Each is a small, self-contained
 schema module with a clear domain.
 
+- [x] `src/account/schema.ts`
 - [x] `src/control-plane/schema.ts`
 - [x] `src/permission/schema.ts`
 - [x] `src/project/schema.ts`
@@ -166,8 +178,10 @@ schema module with a clear domain.
 - [x] `src/pty/schema.ts`
 - [x] `src/question/schema.ts`
 - [x] `src/session/schema.ts`
+- [x] `src/storage/schema.ts`
 - [x] `src/sync/schema.ts`
 - [x] `src/tool/schema.ts`
+- [x] `src/util/schema.ts`
 
 ### Session domain
 
@@ -248,15 +262,15 @@ Possible later tightening after the Schema-first migration is stable:
 - promote repeated opaque strings and timestamp numbers into branded/newtype
   leaf schemas where that adds domain value without changing the wire format
 
-- [ ] `src/session/compaction.ts`
-- [ ] `src/session/message-v2.ts`
-- [ ] `src/session/message.ts`
-- [ ] `src/session/prompt.ts`
-- [ ] `src/session/revert.ts`
-- [ ] `src/session/session.ts`
-- [ ] `src/session/status.ts`
-- [ ] `src/session/summary.ts`
-- [ ] `src/session/todo.ts`
+- [x] `src/session/compaction.ts`
+- [x] `src/session/message-v2.ts`
+- [x] `src/session/message.ts`
+- [x] `src/session/prompt.ts`
+- [x] `src/session/revert.ts`
+- [x] `src/session/session.ts`
+- [x] `src/session/status.ts`
+- [x] `src/session/summary.ts`
+- [x] `src/session/todo.ts`
 
 ### Provider domain
 
@@ -362,7 +376,7 @@ piecewise.
 - [ ] `src/snapshot/index.ts`
 - [ ] `src/storage/db.ts`
 - [ ] `src/storage/storage.ts`
-- [ ] `src/sync/index.ts`
+- [x] `src/sync/index.ts` — public API (`SyncEvent.define`) is Schema-first; still stores derived zod `schema`/`properties` on each `Definition` as a compat bridge for `BusEvent` until `bus/bus-event.ts` migrates
 - [ ] `src/util/fn.ts`
 - [ ] `src/util/log.ts`
 - [ ] `src/util/update-schema.ts`
