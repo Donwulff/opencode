@@ -1883,6 +1883,11 @@ export const defaultLayer = Layer.suspend(() =>
   ),
 )
 
+const ModelRef = Schema.Struct({
+  providerID: ProviderID,
+  modelID: ModelID,
+})
+
 export const PromptInput = Schema.Struct({
   sessionID: SessionID,
   messageID: Schema.optional(MessageID),
