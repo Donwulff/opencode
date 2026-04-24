@@ -1829,6 +1829,7 @@ You should build your plan incrementally by writing to or editing this file. NOT
         messageID: input.messageID,
         model: userModel,
         agent: userAgent,
+        command: input.command,
         parts,
         variant: input.variant,
       })
