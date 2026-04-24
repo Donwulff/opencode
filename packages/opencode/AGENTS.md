@@ -167,3 +167,32 @@ const cb = Instance.bind((err, evts) => {
 })
 nativeAddon.subscribe(dir, cb)
 ```
+
+## Merge Conflict Resolution
+
+When resolving merge conflicts in files partially migrated from Zod to Effect Schema:
+
+- Keep the upstream Effect Schema version as the base
+- Add missing fields from HEAD (e.g., `command` field in User schema)
+- Add missing helper definitions (e.g., `ModelRef` constant before its usage)
+- Run `bun run typecheck` to verify after resolution
+
+## TUI SDK Error Handling
+
+The SDK returns `{ error: ... }` for failed requests, not thrown exceptions. TUI code must check `res.error` and display appropriate error toasts:
+
+```typescript
+sdk.client.session.command({ ... }).then((res) => {
+  if (res.error) {
+    toast.show({ message: res.error, variant: "error" })
+  }
+})
+```
+
+Location: `src/cli/cmd/tui/component/prompt/index.tsx`
+
+## Command Execution
+
+- `/learn` command moved from built-in to user config (`.opencode/command/learn.md`)
+- The `command` field must be passed through to the prompt context for command guards to work
+- `prompt.ts` non-prompt command path was missing `command` field pass-through
