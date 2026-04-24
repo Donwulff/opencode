@@ -315,7 +315,7 @@ export namespace Provenance {
         Bus.subscribe(MessageV2.Event.PartUpdated, (event) => {
           const part = event.properties.part
           if (part.type !== "tool") return
-          void tool(part).catch((error) => {
+          void tool(part as MessageV2.ToolPart).catch((error) => {
             log.error("failed to record tool outcome", {
               partID: part.id,
               tool: part.tool,
