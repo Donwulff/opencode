@@ -808,7 +808,7 @@ export function Prompt(props: PromptProps) {
             id: PartID.ascending(),
             ...x,
           })),
-      })
+      }).catch((e) => console.error("Command failed:", e))
     } else {
       sdk.client.session
         .prompt({
