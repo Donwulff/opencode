@@ -1,30 +1,4 @@
-# opencode agent guidelines
-
-## Build/Test Commands
-
-- **Install**: `bun install`
-- **Run**: `bun run --conditions=browser ./src/index.ts`
-- **Typecheck**: `bun run typecheck` (npm run typecheck)
-- **Test**: `bun test` (runs all tests)
-- **Single test**: `bun test test/tool/tool.test.ts` (specific test file)
-
-## Code Style
-
-- **Runtime**: Bun with TypeScript ESM modules
-- **Imports**: Use relative imports for local modules, named imports preferred
-- **Types**: Zod schemas for validation, TypeScript interfaces for structure
-- **Naming**: camelCase for variables/functions, PascalCase for classes/namespaces
-- **Error handling**: Use Result patterns, avoid throwing exceptions in tools
-- **File structure**: Namespace-based organization (e.g., `Tool.define()`, `Session.create()`)
-
-## Architecture
-
-- **Tools**: Implement `Tool.Info` interface with `execute()` method
-- **Context**: Pass `sessionID` in tool context, use `App.provide()` for DI
-- **Validation**: All inputs validated with Zod schemas
-- **Logging**: Use `Log.create({ service: "name" })` pattern
-- **Storage**: Use `Storage` namespace for persistence
-- **API Client**: The TypeScript TUI (built with SolidJS + OpenTUI) communicates with the OpenCode server using `@opencode-ai/sdk`. When adding/modifying server endpoints in `packages/opencode/src/server/server.ts`, run `./script/generate.ts` to regenerate the SDK and related files.
+# opencode database guide
 
 ## Database
 
@@ -34,13 +8,6 @@
 - **Command**: `bun run db generate --name <slug>`.
 - **Output**: creates `migration/<timestamp>_<slug>/migration.sql` and `snapshot.json`.
 - **Tests**: migration tests should read the per-folder layout (no `_journal.json`).
-
-## Security
-
-- URL validation occurs before fetch in all network-calling code (models.ts, webfetch.ts, websearch.ts, provider.ts)
-- Security validation happens at both provider load time (CUSTOM_LOADERS) and runtime HTTP requests (getSDK fetch wrapper)
-- Provider validation returns `disable: true` instead of throwing, so other providers can still load
-- Audit logger uses JSONL append format; field name is `providerId` (camelCase), not `providerID`
 
 # Module shape
 
@@ -204,3 +171,11 @@ Location: `src/cli/cmd/tui/component/prompt/index.tsx`
 - **Effect Schema readonly arrays**: Effect Schema produces readonly arrays but functions expecting mutable types need casts (e.g., `as MessageV2.ToolPart`).
 
 - **TUI fire-and-forget async**: Use `void (async () => { ... })()` pattern for clean async calls that don't need to await.
+
+## Post-Merge Import Path Issues
+
+When a package is renamed in upstream (e.g., `@opencode-ai/shared` → `@opencode-ai/core`):
+- Local imports using old paths (`@/global`, `@opencode-ai/shared`) will silently break after merge
+- Git doesn't flag these as conflicts since imports are internal to each branch
+- Fix by updating workspace dependency in package.json, then finding/updating all stale imports
+- Run `bun install` first to catch missing workspace deps, then `bun run typecheck` to find broken imports
