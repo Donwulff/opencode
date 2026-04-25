@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test"
 import path from "node:path"
-import { Global } from "@/global"
+import { Global } from "@opencode-ai/core/global"
 import { Provenance } from "@/provenance"
 
 describe("provenance helpers", () => {

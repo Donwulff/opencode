@@ -1,7 +1,7 @@
 import { type ChildProcess } from "child_process"
 import launch from "cross-spawn"
 import { buffer } from "node:stream/consumers"
-import { Flag } from "@/flag/flag.ts"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { errorMessage } from "./error"
 
 // Wrap cmd in a network-isolated namespace when OPENCODE_SPAWN_SANDBOX is set.

@@ -1,7 +1,7 @@
-import * as Log from "./log"
+import * as Log from "@opencode-ai/core/util/log"
 import path from "path"
 import { appendFile } from "node:fs/promises"
-import { Global } from "../global"
+import { Global } from "@opencode-ai/core/global"
 
 const log = Log.create({ service: "audit" })
 
