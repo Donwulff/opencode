@@ -30,6 +30,46 @@ Plan for replacing instance Hono route implementations with Effect `HttpApi` whi
 - Regenerate the SDK after schema or OpenAPI-affecting changes and verify the diff is expected.
 - Do not delete a Hono route until the SDK/OpenAPI pipeline no longer depends on its Hono `describeRoute` entry.
 
+## Route Slice Checklist
+
+Use this checklist for each small HttpApi migration PR:
+
+1. Read the legacy Hono route and copy behavior exactly, including default values, headers, operation IDs, response schemas, and status codes.
+2. Put the new `HttpApiGroup`, route paths, DTO schemas, and handlers in `src/server/routes/instance/httpapi/*`.
+3. Mount the new paths in `src/server/routes/instance/index.ts` only inside the `OPENCODE_EXPERIMENTAL_HTTPAPI` block.
+4. Use `InstanceState.context` / `InstanceState.directory` inside HttpApi handlers instead of `Instance.directory`, `Instance.worktree`, or `Instance.project` ALS globals.
+5. Reuse existing services directly. If a service returns plain objects, use `Schema.Struct`; use `Schema.Class` only when handlers return actual class instances.
+6. Keep legacy Hono routes and `.zod` compatibility in place for SDK/OpenAPI generation.
+7. Add tests that hit the Hono-mounted bridge via `InstanceRoutes`, not only the raw `HttpApi` web handler, when the route depends on auth or instance context.
+8. Run `bun typecheck` from `packages/opencode`, relevant `bun run test:ci ...` tests from `packages/opencode`, and `./packages/sdk/js/script/build.ts` from the repo root.
+
+## Hono Deletion Checklist
+
+Use this checklist before deleting any Hono route implementation. A route being `bridged` is not enough.
+
+1. `HttpApi` parity is complete for the route path, method, auth behavior, query parameters, request body, response status, response headers, and error status.
+2. The route is mounted by default, not only behind `OPENCODE_EXPERIMENTAL_HTTPAPI`.
+3. If a fallback flag exists, tests cover both the default `HttpApi` path and the fallback Hono path until the fallback is removed.
+4. OpenAPI generation uses the Effect `HttpApi` route as the source for that path.
+5. Generated SDK output is unchanged from the Hono-generated contract, or the SDK diff is intentionally reviewed and accepted.
+6. The legacy Hono `describeRoute`, validator, and handler for that path are removed.
+7. Any duplicate Zod-only DTOs are deleted or kept only as `.zod` compatibility on the canonical Effect Schema.
+8. Bridge tests exist for auth, instance selection, success response, and route-specific side effects.
+9. Mutation routes prove persisted side effects and cleanup behavior in tests. If the mutation disposes/reloads the active instance, disposal happens through an explicit post-response lifecycle hook rather than inline handler teardown.
+10. Streaming, SSE, websocket, and UI bridge routes have a specific non-Hono replacement plan. Do not force them through `HttpApi` if raw Effect HTTP is a better fit.
+
+Hono can be removed from the instance server only after all mounted Hono route groups meet this checklist and `server/routes/instance/index.ts` no longer depends on Hono routing for default behavior.
+
+## Experimental Read Slice Guidance
+
+For the experimental route group, port read-only JSON routes before mutations:
+
+- Good first batch: `GET /console`, `GET /console/orgs`, `GET /tool/ids`, `GET /resource`.
+- Consider `GET /worktree` only if the handler uses `InstanceState.context` instead of `Instance.project`.
+- Defer `POST /console/switch`, worktree create/remove/reset, and `GET /session` to separate PRs because they mutate state or have broader pagination/session behavior.
+- Preserve response headers such as pagination cursors if a route is ported.
+- If SDK generation changes, explain whether it is a semantic contract change or a generator-equivalent type normalization.
+
 ## Schema Notes
 
 - Use `Schema.Struct(...).annotate({ identifier })` for named OpenAPI refs when handlers return plain objects.
@@ -130,31 +170,28 @@ Use raw Effect HTTP routes where `HttpApi` does not fit. The goal is deleting Ho
 
 ## Current Route Status
 
-| Area                     | Status            | Notes                                                          |
-| ------------------------ | ----------------- | -------------------------------------------------------------- |
-| `question`               | `bridged`         | `GET /question`, reply, reject                                 |
-| `permission`             | `bridged`         | list and reply                                                 |
-| `provider`               | `bridged`         | list, auth, OAuth authorize/callback                           |
-| `config`                 | `bridged` partial | reads only; mutation remains Hono                              |
-| `project`                | `bridged` partial | reads only; git-init remains Hono                              |
-| `file`                   | `bridged` partial | list/content/status only                                       |
-| `mcp`                    | `bridged` partial | status only                                                    |
-| `workspace`              | `implemented`     | `HttpApi` group exists, but bridge mounting needs verification |
-| top-level instance reads | `next`            | path, vcs, command, agent, skill, lsp, formatter               |
-| experimental JSON routes | `next/later`      | console, tool, worktree, resource, global session list         |
-| `session`                | `later/special`   | large stateful surface plus streaming                          |
-| `sync`                   | `later`           | process/control side effects                                   |
-| `event`                  | `special`         | SSE                                                            |
-| `pty`                    | `special`         | websocket                                                      |
-| `tui`                    | `special`         | UI bridge                                                      |
+| Area                      | Status            | Notes                                                                                              |
+| ------------------------- | ----------------- | -------------------------------------------------------------------------------------------------- |
+| `question`                | `bridged`         | `GET /question`, reply, reject                                                                     |
+| `permission`              | `bridged`         | list and reply                                                                                     |
+| `provider`                | `bridged`         | list, auth, OAuth authorize/callback                                                               |
+| `config`                  | `bridged`         | read, providers, update                                                                            |
+| `project`                 | `bridged` partial | reads only; git-init remains Hono                                                                  |
+| `file`                    | `bridged` partial | find text/file/symbol, list/content/status                                                         |
+| `mcp`                     | `bridged` partial | status only                                                                                        |
+| `workspace`               | `bridged`         | list, get, enter                                                                                   |
+| top-level instance routes | `bridged`         | path, vcs, command, agent, skill, lsp, formatter, dispose                                          |
+| experimental JSON routes  | `bridged` partial | console reads, tool ids, worktree list/mutations, resource list; global session list remains later |
+| `session`                 | `later/special`   | large stateful surface plus streaming                                                              |
+| `sync`                    | `later`           | process/control side effects                                                                       |
+| `event`                   | `special`         | SSE                                                                                                |
+| `pty`                     | `special`         | websocket                                                                                          |
+| `tui`                     | `special`         | UI bridge                                                                                          |
 
 ## Next PRs
 
-1. Add bridge-level auth and instance-context tests for the current `HttpApi` bridge.
-2. Produce a generated route inventory from Hono registrations and update `Current Route Status` with exact paths.
-3. Fix the `workspace` status: mount it if it should be reachable, or remove it from the composed `HttpApi` layer.
-4. Port the top-level JSON reads.
-5. Start the Effect OpenAPI/SDK generation path for already-bridged routes.
+1. Produce a generated route inventory from Hono registrations and update `Current Route Status` with exact paths.
+2. Start the Effect OpenAPI/SDK generation path for already-bridged routes.
 
 ## Checklist
 
@@ -164,10 +201,10 @@ Use raw Effect HTTP routes where `HttpApi` does not fit. The goal is deleting Ho
 - [x] Provide auth, instance lookup, and observability in the Effect route layer.
 - [x] Attach auth middleware in route modules.
 - [x] Support `auth_token` as a query security scheme.
-- [ ] Add bridge-level auth and instance tests.
+- [x] Add bridge-level auth and instance tests.
 - [ ] Complete exact Hono route inventory.
-- [ ] Resolve implemented-but-unmounted route groups.
-- [ ] Port remaining JSON routes.
+- [x] Resolve implemented-but-unmounted route groups.
+- [x] Port remaining top-level JSON reads.
 - [ ] Generate SDK/OpenAPI from Effect routes.
 - [ ] Flip ported JSON routes to default-on with fallback.
 - [ ] Delete replaced Hono route implementations.
