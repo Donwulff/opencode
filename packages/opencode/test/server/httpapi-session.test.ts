@@ -7,10 +7,10 @@ import { ModelID, ProviderID } from "../../src/provider/schema"
 import { Instance } from "../../src/project/instance"
 import { InstanceRoutes } from "../../src/server/routes/instance"
 import { SessionPaths } from "../../src/server/routes/instance/httpapi/session"
-import { Session } from "../../src/session"
+import { Session } from "@/session/session"
 import { MessageID, PartID, type SessionID } from "../../src/session/schema"
 import { MessageV2 } from "../../src/session/message-v2"
-import { Log } from "../../src/util"
+import * as Log from "@opencode-ai/core/util/log"
 import { resetDatabase } from "../fixture/db"
 import { tmpdir } from "../fixture/fixture"
 
@@ -150,6 +150,14 @@ describe("session HttpApi", () => {
   test("serves lifecycle mutation routes through Hono bridge", async () => {
     await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false, share: "disabled" } })
     const headers = { "x-opencode-directory": tmp.path, "content-type": "application/json" }
+
+    const createdEmpty = await json<Session.Info>(
+      await app().request(SessionPaths.create, {
+        method: "POST",
+        headers,
+      }),
+    )
+    expect(createdEmpty.id).toBeTruthy()
 
     const created = await json<Session.Info>(
       await app().request(SessionPaths.create, {
