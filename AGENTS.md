@@ -3,6 +3,8 @@
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch in this repo is `dev`.
 - Local `main` ref may not exist; use `dev` or `origin/dev` for diffs.
+- If `CLAUDE.md` and `CLAUDE-MERGE.md` are present in the working tree, read them — they hold fork-specific build, merge, and security guidance not in this file. Especially relevant before resolving any `upstream/dev` merge conflict.
+- After any `upstream/dev` merge, run `bun turbo typecheck` and audit renames/adds (`git diff <our-merge-head> <upstream-head> --diff-filter=RA --name-status -- packages/opencode/`) before committing. Silent rename-misses do not surface as conflict markers and have shipped broken merges before.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
 - For upstreaming local security work later, follow `specs/security-upstream-playbook.md` (design issue first, then split into small PRs).
 - Provenance tracing POC docs and usage live in `specs/provenance-poc.md` and `.opencode/command/provenance.md`.
