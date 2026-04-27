@@ -31,7 +31,7 @@ import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import * as Stream from "effect/Stream"
 import { Command } from "../command"
 import { pathToFileURL, fileURLToPath } from "url"
-import { ConfigMarkdown } from "../config"
+import { Config, ConfigMarkdown } from "../config"
 import { SessionSummary } from "./summary"
 import { NamedError } from "@opencode-ai/core/util/error"
 import { SessionProcessor } from "./processor"
@@ -53,7 +53,6 @@ import { TaskTool, type TaskPromptOps } from "@/tool/task"
 import { SessionRunState } from "./run-state"
 import { EffectBridge } from "@/effect"
 import { Auth } from "../auth"
-import { Config } from "@/config"
 import { Instance } from "../project/instance"
 
 // @ts-ignore
@@ -95,6 +94,7 @@ export const layer = Layer.effect(
     const compaction = yield* SessionCompaction.Service
     const plugin = yield* Plugin.Service
     const commands = yield* Command.Service
+    const config = yield* Config.Service
     const permission = yield* Permission.Service
     const fsys = yield* AppFileSystem.Service
     const mcp = yield* MCP.Service
@@ -789,49 +789,10 @@ NOTE: At any point in time through this workflow you should feel free to ask the
       }
       yield* sessions.updatePart(part)
 
-      const sh = Shell.preferred()
-      const shellName = (
-        process.platform === "win32" ? path.win32.basename(sh, ".exe") : path.basename(sh)
-      ).toLowerCase()
+      const cfg = yield* config.get()
+      const sh = Shell.preferred(cfg.shell)
       const cwd = ctx.directory
-      const invocations: Record<string, { args: string[] }> = {
-        nu: { args: ["-c", input.command] },
-        fish: { args: ["-c", input.command] },
-        zsh: {
-          args: [
-            "-l",
-            "-c",
-            `
-              [[ -f ~/.zshenv ]] && source ~/.zshenv >/dev/null 2>&1 || true
-              [[ -f "\${ZDOTDIR:-$HOME}/.zshrc" ]] && source "\${ZDOTDIR:-$HOME}/.zshrc" >/dev/null 2>&1 || true
-              cd -- "$1"
-              eval ${JSON.stringify(input.command)}
-            `,
-            "opencode",
-            cwd,
-          ],
-        },
-        bash: {
-          args: [
-            "-l",
-            "-c",
-            `
-              shopt -s expand_aliases
-              [[ -f ~/.bashrc ]] && source ~/.bashrc >/dev/null 2>&1 || true
-              cd -- "$1"
-              eval ${JSON.stringify(input.command)}
-            `,
-            "opencode",
-            cwd,
-          ],
-        },
-        cmd: { args: ["/c", input.command] },
-        powershell: { args: ["-NoProfile", "-Command", input.command] },
-        pwsh: { args: ["-NoProfile", "-Command", input.command] },
-        "": { args: ["-c", input.command] },
-      }
-
-      const args = (invocations[shellName] ?? invocations[""]).args
+      const args = Shell.args(sh, input.command, cwd)
       const shellEnv = yield* plugin.trigger(
         "shell.env",
         { cwd, sessionID: input.sessionID, callID: part.callID },
@@ -848,7 +809,6 @@ NOTE: At any point in time through this workflow you should feel free to ask the
 
       let output = ""
       let aborted = false
-
       const finish = Effect.uninterruptible(
         Effect.gen(function* () {
           if (aborted) {
@@ -1766,7 +1726,8 @@ You should build your plan incrementally by writing to or editing this file. NOT
 
       const shellMatches = ConfigMarkdown.shell(template)
       if (shellMatches.length > 0) {
-        const sh = Shell.preferred()
+        const cfg = yield* config.get()
+        const sh = Shell.preferred(cfg.shell)
         const results = yield* Effect.promise(() =>
           Promise.all(
             shellMatches.map(async ([, cmd]) => (await Process.text([cmd], { shell: sh, nothrow: true })).text),
@@ -1868,6 +1829,7 @@ export const defaultLayer = Layer.suspend(() =>
     Layer.provide(ToolRegistry.defaultLayer),
     Layer.provide(Truncate.defaultLayer),
     Layer.provide(Provider.defaultLayer),
+    Layer.provide(Config.defaultLayer),
     Layer.provide(Instruction.defaultLayer),
     Layer.provide(AppFileSystem.defaultLayer),
     Layer.provide(Plugin.defaultLayer),
