@@ -6,7 +6,7 @@ import DESCRIPTION from "./webfetch.txt"
 import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
-import { Config } from "@/config"
+import { Config } from "@/config/config"
 import { isImageAttachment } from "@/util/media"
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB

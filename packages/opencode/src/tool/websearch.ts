@@ -6,7 +6,7 @@ import DESCRIPTION from "./websearch.txt"
 import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
-import { Config } from "@/config"
+import { Config } from "@/config/config"
 
 export const Parameters = Schema.Struct({
   query: Schema.String.annotate({ description: "Websearch query" }),

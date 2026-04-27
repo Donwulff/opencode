@@ -1,5 +1,5 @@
 import { ZodOverride } from "@/util/effect-zod"
-import { Log } from "../util"
+import * as Log from "@opencode-ai/core/util/log"
 import path from "path"
 import { pathToFileURL } from "url"
 import os from "os"

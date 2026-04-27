@@ -1615,3 +1615,364 @@ it.live(
     ),
   30_000,
 )
+
+// Missing file handling
+
+it.live("does not fail the prompt when a file part is missing", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({})
+
+        const missing = path.join(dir, "does-not-exist.ts")
+        const msg = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [
+            { type: "text", text: "please review @does-not-exist.ts" },
+            {
+              type: "file",
+              mime: "text/plain",
+              url: `file://${missing}`,
+              filename: "does-not-exist.ts",
+            },
+          ],
+        })
+
+        if (msg.info.role !== "user") throw new Error("expected user message")
+        const hasFailure = msg.parts.some(
+          (part) => part.type === "text" && part.synthetic && part.text.includes("Read tool failed to read"),
+        )
+        expect(hasFailure).toBe(true)
+
+        yield* sessions.remove(session.id)
+      }),
+    { git: true, config: cfg },
+  ),
+)
+
+it.live("keeps stored part order stable when file resolution is async", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({})
+
+        const missing = path.join(dir, "still-missing.ts")
+        const msg = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [
+            {
+              type: "file",
+              mime: "text/plain",
+              url: `file://${missing}`,
+              filename: "still-missing.ts",
+            },
+            { type: "text", text: "after-file" },
+          ],
+        })
+
+        if (msg.info.role !== "user") throw new Error("expected user message")
+
+        const stored = MessageV2.get({
+          sessionID: session.id,
+          messageID: msg.info.id,
+        })
+        const text = stored.parts.filter((part) => part.type === "text").map((part) => part.text)
+
+        expect(text[0]?.startsWith("Called the Read tool with the following input:")).toBe(true)
+        expect(text[1]?.includes("Read tool failed to read")).toBe(true)
+        expect(text[2]).toBe("after-file")
+
+        yield* sessions.remove(session.id)
+      }),
+    { git: true, config: cfg },
+  ),
+)
+
+// Special characters in filenames
+
+it.live("handles filenames with # character", () =>
+  provideTmpdirInstance(
+    (dir) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => Bun.write(path.join(dir, "file#name.txt"), "special content\n"))
+
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({})
+        const parts = yield* prompt.resolvePromptParts("Read @file#name.txt")
+        const fileParts = parts.filter((part) => part.type === "file")
+
+        expect(fileParts.length).toBe(1)
+        expect(fileParts[0].filename).toBe("file#name.txt")
+        expect(fileParts[0].url).toContain("%23")
+
+        const decodedPath = fileURLToPath(fileParts[0].url)
+        expect(decodedPath).toBe(path.join(dir, "file#name.txt"))
+
+        const message = yield* prompt.prompt({
+          sessionID: session.id,
+          parts,
+          noReply: true,
+        })
+        const stored = MessageV2.get({ sessionID: session.id, messageID: message.info.id })
+        const textParts = stored.parts.filter((part) => part.type === "text")
+        const hasContent = textParts.some((part) => part.text.includes("special content"))
+        expect(hasContent).toBe(true)
+
+        yield* sessions.remove(session.id)
+      }),
+    { git: true, config: cfg },
+  ),
+)
+
+// Regression: empty assistant turn loop
+
+it.live("does not loop empty assistant turns for a simple reply", () =>
+  provideTmpdirServer(
+    Effect.fnUntraced(function* ({ llm }) {
+      const prompt = yield* SessionPrompt.Service
+      const sessions = yield* Session.Service
+      const session = yield* sessions.create({ title: "Prompt regression" })
+
+      yield* llm.text("packages/opencode/src/session/processor.ts")
+
+      const result = yield* prompt.prompt({
+        sessionID: session.id,
+        agent: "build",
+        parts: [{ type: "text", text: "Where is SessionProcessor?" }],
+      })
+
+      expect(result.info.role).toBe("assistant")
+      expect(result.parts.some((part) => part.type === "text" && part.text.includes("processor.ts"))).toBe(true)
+
+      const msgs = yield* sessions.messages({ sessionID: session.id })
+      expect(msgs.filter((msg) => msg.info.role === "assistant")).toHaveLength(1)
+      expect(yield* llm.calls).toBe(1)
+    }),
+    { git: true, config: providerCfg },
+  ),
+)
+
+it.live(
+  "records aborted errors when prompt is cancelled mid-stream",
+  () =>
+    provideTmpdirServer(
+      Effect.fnUntraced(function* ({ llm }) {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({ title: "Prompt cancel regression" })
+
+        yield* llm.hang
+
+        const fiber = yield* prompt
+          .prompt({
+            sessionID: session.id,
+            agent: "build",
+            parts: [{ type: "text", text: "Cancel me" }],
+          })
+          .pipe(Effect.forkChild)
+
+        yield* llm.wait(1)
+        yield* prompt.cancel(session.id)
+
+        const exit = yield* Fiber.await(fiber)
+        expect(Exit.isSuccess(exit)).toBe(true)
+        if (Exit.isSuccess(exit)) {
+          expect(exit.value.info.role).toBe("assistant")
+          if (exit.value.info.role === "assistant") {
+            expect(exit.value.info.error?.name).toBe("MessageAbortedError")
+          }
+        }
+
+        const msgs = yield* sessions.messages({ sessionID: session.id })
+        const last = msgs.findLast((msg) => msg.info.role === "assistant")
+        expect(last?.info.role).toBe("assistant")
+        if (last?.info.role === "assistant") {
+          expect(last.info.error?.name).toBe("MessageAbortedError")
+        }
+      }),
+      { git: true, config: providerCfg },
+    ),
+  3_000,
+)
+
+// Agent variant
+
+it.live("applies agent variant only when using agent model", () =>
+  provideTmpdirInstance(
+    (_dir) =>
+      Effect.gen(function* () {
+        const prompt = yield* SessionPrompt.Service
+        const sessions = yield* Session.Service
+        const session = yield* sessions.create({})
+
+        const other = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          model: { providerID: ProviderID.make("opencode"), modelID: ModelID.make("kimi-k2.5-free") },
+          noReply: true,
+          parts: [{ type: "text", text: "hello" }],
+        })
+        if (other.info.role !== "user") throw new Error("expected user message")
+        expect(other.info.model.variant).toBeUndefined()
+
+        const match = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          parts: [{ type: "text", text: "hello again" }],
+        })
+        if (match.info.role !== "user") throw new Error("expected user message")
+        expect(match.info.model).toEqual({
+          providerID: ProviderID.make("test"),
+          modelID: ModelID.make("test-model"),
+          variant: "xhigh",
+        })
+        expect(match.info.model.variant).toBe("xhigh")
+
+        const override = yield* prompt.prompt({
+          sessionID: session.id,
+          agent: "build",
+          noReply: true,
+          variant: "high",
+          parts: [{ type: "text", text: "hello third" }],
+        })
+        if (override.info.role !== "user") throw new Error("expected user message")
+        expect(override.info.model.variant).toBe("high")
+
+        yield* sessions.remove(session.id)
+      }),
+    {
+      git: true,
+      config: {
+        ...cfg,
+        provider: {
+          ...cfg.provider,
+          test: {
+            ...cfg.provider.test,
+            models: {
+              "test-model": {
+                ...cfg.provider.test.models["test-model"],
+                variants: { xhigh: {}, high: {} },
+              },
+            },
+          },
+        },
+        agent: {
+          build: {
+            model: "test/test-model",
+            variant: "xhigh",
+          },
+        },
+      },
+    },
+  ),
+)
+
+// Agent / command resolution errors
+
+it.live(
+  "unknown agent throws typed error",
+  () =>
+    provideTmpdirInstance(
+      (_dir) =>
+        Effect.gen(function* () {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({})
+          const exit = yield* prompt
+            .prompt({
+              sessionID: session.id,
+              agent: "nonexistent-agent-xyz",
+              noReply: true,
+              parts: [{ type: "text", text: "hello" }],
+            })
+            .pipe(Effect.exit)
+
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            const err = Cause.squash(exit.cause)
+            expect(err).not.toBeInstanceOf(TypeError)
+            expect(NamedError.Unknown.isInstance(err)).toBe(true)
+            if (NamedError.Unknown.isInstance(err)) {
+              expect(err.data.message).toContain('Agent not found: "nonexistent-agent-xyz"')
+            }
+          }
+        }),
+      { git: true },
+    ),
+  30_000,
+)
+
+it.live(
+  "unknown agent error includes available agent names",
+  () =>
+    provideTmpdirInstance(
+      (_dir) =>
+        Effect.gen(function* () {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({})
+          const exit = yield* prompt
+            .prompt({
+              sessionID: session.id,
+              agent: "nonexistent-agent-xyz",
+              noReply: true,
+              parts: [{ type: "text", text: "hello" }],
+            })
+            .pipe(Effect.exit)
+
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            const err = Cause.squash(exit.cause)
+            expect(NamedError.Unknown.isInstance(err)).toBe(true)
+            if (NamedError.Unknown.isInstance(err)) {
+              expect(err.data.message).toContain("build")
+            }
+          }
+        }),
+      { git: true },
+    ),
+  30_000,
+)
+
+it.live(
+  "unknown command throws typed error with available names",
+  () =>
+    provideTmpdirInstance(
+      (_dir) =>
+        Effect.gen(function* () {
+          const prompt = yield* SessionPrompt.Service
+          const sessions = yield* Session.Service
+          const session = yield* sessions.create({})
+          const exit = yield* prompt
+            .command({
+              sessionID: session.id,
+              command: "nonexistent-command-xyz",
+              arguments: "",
+            })
+            .pipe(Effect.exit)
+
+          expect(Exit.isFailure(exit)).toBe(true)
+          if (Exit.isFailure(exit)) {
+            const err = Cause.squash(exit.cause)
+            expect(err).not.toBeInstanceOf(TypeError)
+            expect(NamedError.Unknown.isInstance(err)).toBe(true)
+            if (NamedError.Unknown.isInstance(err)) {
+              expect(err.data.message).toContain('Command not found: "nonexistent-command-xyz"')
+              expect(err.data.message).toContain("init")
+            }
+          }
+        }),
+      { git: true },
+    ),
+  30_000,
+)
