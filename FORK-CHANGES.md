@@ -1,7 +1,7 @@
 # Fork Changes: donwulff/opencode
 
 This document tracks all changes this fork adds on top of upstream `opencode`.
-Updated against: `upstream/dev` as of 2026-02-20.
+Updated against: `upstream/dev` as of 2026-05-01.
 
 To regenerate the file list: `git diff upstream/dev...dev --stat`
 
