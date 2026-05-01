@@ -200,11 +200,25 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
       }),
     azure: Effect.fnUntraced(function* (provider: Info) {
       const env = yield* dep.env()
+      const auth = yield* dep.auth(provider.id)
       const resource = iife(() => {
-        const name = provider.options?.resourceName
-        if (typeof name === "string" && name.trim() !== "") return name
-        return env["AZURE_RESOURCE_NAME"]
+        return [
+          provider.options?.resourceName,
+          auth?.type === "api" ? auth.metadata?.resourceName : undefined,
+          env["AZURE_RESOURCE_NAME"],
+        ].find((name) => typeof name === "string" && name.trim() !== "")
       })
+
+      if (!resource && !provider.options?.baseURL) {
+        return {
+          autoload: false,
+          async getModel() {
+            throw new Error(
+              "AZURE_RESOURCE_NAME is missing, set it using env var or reconnecting the azure provider and setting it",
+            )
+          },
+        }
+      }
 
       return {
         autoload: false,
@@ -216,11 +230,16 @@ function custom(dep: CustomDep): Record<string, CustomLoader> {
             return sdk.responses(modelID)
           }
         },
-        options: {},
-        vars(_options) {
-          return {
-            ...(resource && { AZURE_RESOURCE_NAME: resource }),
+        options: {
+          resourceName: resource,
+        },
+        vars(_options): Record<string, string> {
+          if (resource) {
+            return {
+              AZURE_RESOURCE_NAME: resource,
+            }
           }
+          return {}
         },
       }
     }),
@@ -849,27 +868,27 @@ const ProviderCapabilities = Schema.Struct({
 })
 
 const ProviderCacheCost = Schema.Struct({
-  read: Schema.Number,
-  write: Schema.Number,
+  read: Schema.Finite,
+  write: Schema.Finite,
 })
 
 const ProviderCost = Schema.Struct({
-  input: Schema.Number,
-  output: Schema.Number,
+  input: Schema.Finite,
+  output: Schema.Finite,
   cache: ProviderCacheCost,
   experimentalOver200K: Schema.optional(
     Schema.Struct({
-      input: Schema.Number,
-      output: Schema.Number,
+      input: Schema.Finite,
+      output: Schema.Finite,
       cache: ProviderCacheCost,
     }),
   ),
 })
 
 const ProviderLimit = Schema.Struct({
-  context: Schema.Number,
-  input: Schema.optional(Schema.Number),
-  output: Schema.Number,
+  context: Schema.Finite,
+  input: Schema.optional(Schema.Finite),
+  output: Schema.Finite,
 })
 
 export const Model = Schema.Struct({
@@ -1120,6 +1139,33 @@ const layer: Layer.Layer<
           if (enabled && !enabled.has(providerID)) return false
           if (disabled.has(providerID)) return false
           return true
+        }
+
+        for (const hook of plugins) {
+          const p = hook.provider
+          const models = p?.models
+          if (!p || !models) continue
+
+          const providerID = ProviderID.make(p.id)
+          if (disabled.has(providerID)) continue
+
+          const provider = database[providerID]
+          if (!provider) continue
+          const pluginAuth = yield* auth.get(providerID).pipe(Effect.orDie)
+
+          provider.models = yield* Effect.promise(async () => {
+            const next = await models(provider, { auth: pluginAuth })
+            return Object.fromEntries(
+              Object.entries(next).map(([id, model]) => [
+                id,
+                {
+                  ...model,
+                  id: ModelID.make(id),
+                  providerID,
+                },
+              ]),
+            )
+          })
         }
 
         // extend database from config
@@ -1397,33 +1443,6 @@ const layer: Layer.Layer<
           })
         }
 
-        for (const hook of plugins) {
-          const p = hook.provider
-          const models = p?.models
-          if (!p || !models) continue
-
-          const providerID = ProviderID.make(p.id)
-          if (disabled.has(providerID)) continue
-
-          const provider = providers[providerID]
-          if (!provider) continue
-          const pluginAuth = yield* auth.get(providerID).pipe(Effect.orDie)
-
-          provider.models = yield* Effect.promise(async () => {
-            const next = await models(provider, { auth: pluginAuth })
-            return Object.fromEntries(
-              Object.entries(next).map(([id, model]) => [
-                id,
-                {
-                  ...model,
-                  id: ModelID.make(id),
-                  providerID,
-                },
-              ]),
-            )
-          })
-        }
-
         for (const [id, provider] of Object.entries(providers)) {
           const providerID = ProviderID.make(id)
           if (!isProviderAllowed(providerID)) {
@@ -1556,10 +1575,13 @@ const layer: Layer.Layer<
           if (combined) opts.signal = combined
 
           // Strip openai itemId metadata following what codex does
-          if (model.api.npm === "@ai-sdk/openai" && opts.body && opts.method === "POST") {
+          if (
+            (model.api.npm === "@ai-sdk/openai" || model.api.npm === "@ai-sdk/azure") &&
+            opts.body &&
+            opts.method === "POST"
+          ) {
             const body = JSON.parse(opts.body as string)
-            const isAzure = model.providerID.includes("azure")
-            const keepIds = isAzure && body.store === true
+            const keepIds = body.store === true
             if (!keepIds && Array.isArray(body.input)) {
               for (const item of body.input) {
                 if ("id" in item) {
