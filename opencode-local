@@ -5,6 +5,16 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
 mkdir -p logs/analysis
 
+# Warn about leftover pre-merge stashes from prior runs. A clean pop auto-drops
+# the stash; survivors mean a prior pop conflicted or the script was interrupted.
+leftover=$(git stash list | grep -c "opencode-local: pre-merge stash" || true)
+if [ "$leftover" -gt 0 ]; then
+  echo "WARNING: $leftover leftover pre-merge stash(es) from prior runs:"
+  git stash list | grep "opencode-local: pre-merge stash"
+  echo "Inspect: git stash show -p stash@{N}"
+  echo "Drop:    git stash drop stash@{N}"
+fi
+
 echo "Updating repository..."
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if ! git remote get-url upstream >/dev/null 2>&1; then
