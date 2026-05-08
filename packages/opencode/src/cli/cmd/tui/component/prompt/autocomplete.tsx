@@ -528,6 +528,8 @@ export function Autocomplete(props: {
     commands: [
       {
         name: "prompt.autocomplete.prev",
+        title: "Previous autocomplete item",
+        category: "Autocomplete",
         run() {
           setStore("input", "keyboard")
           move(-1)
@@ -535,6 +537,8 @@ export function Autocomplete(props: {
       },
       {
         name: "prompt.autocomplete.next",
+        title: "Next autocomplete item",
+        category: "Autocomplete",
         run() {
           setStore("input", "keyboard")
           move(1)
@@ -542,12 +546,16 @@ export function Autocomplete(props: {
       },
       {
         name: "prompt.autocomplete.hide",
+        title: "Hide autocomplete",
+        category: "Autocomplete",
         run() {
           hide()
         },
       },
       {
         name: "prompt.autocomplete.select",
+        title: "Select autocomplete item",
+        category: "Autocomplete",
         run() {
           if (store.visible === "/") {
             const text = props.input().plainText
@@ -568,6 +576,8 @@ export function Autocomplete(props: {
       },
       {
         name: "prompt.autocomplete.complete",
+        title: "Complete autocomplete item",
+        category: "Autocomplete",
         run() {
           const selected = options()[store.selected]
           if (selected?.isDirectory) {
