@@ -1755,7 +1755,7 @@ You should build your plan incrementally by writing to or editing this file. NOT
           system.push(lead, rest.join("\n"))
         }
 
-        const session = yield* sessions.get(input.sessionID)
+        const session = yield* sessions.get(input.sessionID).pipe(Effect.orDie)
         const ctx = yield* InstanceState.context
         const plan = Session.plan(session, ctx)
         const exists = yield* fsys.existsSafe(plan)
