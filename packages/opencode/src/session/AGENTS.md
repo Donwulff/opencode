@@ -24,3 +24,7 @@ Any TS2322 on an `id` field typed as `MessageID`/`PartID` in session code needs 
 it bundles into `OPENCODE_MIGRATIONS`. The `db.ts` Journal type is `{ sql, timestamp, name }`.
 If `name` is missing, drizzle generates malformed SQL: `values(?, ?, , ?)`.
 Dev mode (reads files directly) works fine; only the built binary is affected.
+
+## Model Lookup: currentModel not lastModel
+
+The function to fetch the most recently used model for a session was renamed from `lastModel` to `currentModel` in upstream. Any fork-added code paths that need a model fallback must use `currentModel(input.sessionID)`, not `lastModel`. Defined at `prompt.ts:1076`.

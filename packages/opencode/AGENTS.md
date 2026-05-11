@@ -187,3 +187,15 @@ When a package is renamed in upstream (e.g., `@opencode-ai/shared` → `@opencod
 - Git doesn't flag these as conflicts since imports are internal to each branch
 - Fix by updating workspace dependency in package.json, then finding/updating all stale imports
 - Run `bun install` first to catch missing workspace deps, then `bun run typecheck` to find broken imports
+
+## Merge Conflict Pattern: Layer.provide 20-argument Limit
+
+Effect's `Layer.pipe()` accepts at most 20 function arguments. When resolving merges that add more layers, wrap excess provides in a single `Layer.provide(Layer.mergeAll(A, B, ...))` call.
+
+## Autodiscover Silent Fallback
+
+When provider autodiscover times out (blocked port, unreachable host), the fallback shows default models rather than an empty list. This looks like a working config but loads wrong models. Always check the log for `autodiscover: error` lines.
+
+## websearch Security + Dual Provider Pattern
+
+The websearch tool runs security validation before dispatching to either "parallel" or "exa" providers via `callProvider()`. Security audit logging happens before the actual provider call.
