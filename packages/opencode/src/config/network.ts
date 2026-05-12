@@ -1,6 +1,4 @@
 import { Schema } from "effect"
-import { zod } from "@opencode-ai/core/effect-zod"
-import { withStatics } from "@opencode-ai/core/schema"
 
 const Port = Schema.Number.check(Schema.isInt()).check(Schema.isGreaterThanOrEqualTo(1)).check(Schema.isLessThanOrEqualTo(65535))
 
@@ -21,7 +19,7 @@ export const Egress = Schema.Struct({
     description:
       "Raw nftables rule fragments appended to the filter chain before the default policy. Escape hatch for cases the structured allowlist cannot express (e.g. protocol-specific matches). Use with care.",
   }),
-}).pipe(withStatics((s) => ({ zod: zod(s) })))
+})
 
 export type Egress = Schema.Schema.Type<typeof Egress>
 
@@ -30,7 +28,7 @@ export const Info = Schema.Struct({
     description:
       "Container-level egress firewall policy. Consumed by the analysis-container entrypoint (not the opencode process) to compile an nftables ruleset before dropping privileges. See docker/NETWORK-ARCHITECTURE.md.",
   }),
-}).pipe(withStatics((s) => ({ zod: zod(s) })))
+})
 
 export type Info = Schema.Schema.Type<typeof Info>
 
