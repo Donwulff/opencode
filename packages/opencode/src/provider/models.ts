@@ -227,7 +227,7 @@ export const layer: Layer.Layer<Service, never, AppFileSystem.Service | HttpClie
       ).pipe(
         Effect.tapCause((cause) => {
           auditLogger.logProviderLoad("models.dev", "api", 0, false, `Failed to fetch: ${cause}`)
-          return Effect.logError("Failed to fetch models.dev", { cause })
+          return Effect.logError("Failed to fetch models.dev").pipe(Effect.annotateLogs("cause", cause))
         }),
         Effect.ignore,
       )
