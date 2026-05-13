@@ -773,13 +773,12 @@ export const toModelMessagesEffect = Effect.fnUntraced(function* (
         return part.metadata?.anthropic?.signature != null
       })
       for (const part of msg.parts) {
-        if (msg.info.summary && part.type !== "text") continue
         if (part.type === "text") {
           const text = part.text === "" && hasSignedReasoning ? " " : part.text
           assistantMessage.parts.push({
             type: "text",
             text,
-            ...(differentModel || msg.info.summary ? {} : { providerMetadata: part.metadata }),
+            ...(differentModel ? {} : { providerMetadata: part.metadata }),
           })
         }
         if (part.type === "step-start")
@@ -958,6 +957,17 @@ export function page(input: { sessionID: SessionID; limit: number; before?: stri
   }
 }
 
+export const pageEffect = Effect.fn("MessageV2.pageEffect")(function* (input: {
+  sessionID: SessionID
+  limit: number
+  before?: string
+}) {
+  return yield* Effect.try({
+    try: () => page(input),
+    catch: (error) => error,
+  }).pipe(Effect.catch((error) => (NotFoundError.isInstance(error) ? Effect.fail(error) : Effect.die(error))))
+})
+
 export function* stream(sessionID: SessionID) {
   const size = 50
   let before: string | undefined
@@ -1002,19 +1012,66 @@ export function get(input: { sessionID: SessionID; messageID: MessageID }): With
   }
 }
 
+export const getEffect = Effect.fn("MessageV2.getEffect")(function* (input: {
+  sessionID: SessionID
+  messageID: MessageID
+}) {
+  return yield* Effect.try({
+    try: () => get(input),
+    catch: (error) => error,
+  }).pipe(Effect.catch((error) => (NotFoundError.isInstance(error) ? Effect.fail(error) : Effect.die(error))))
+})
+
 export function filterCompacted(msgs: Iterable<WithParts>) {
   const result = [] as WithParts[]
   const completed = new Set<string>()
+  let retain: MessageID | undefined
   for (const msg of msgs) {
     result.push(msg)
-    if (msg.info.role === "user" && completed.has(msg.info.id)) {
-      if (msg.parts.some((item): item is CompactionPart => item.type === "compaction")) break
+    if (retain) {
+      if (msg.info.id === retain) break
       continue
     }
+    if (msg.info.role === "user" && completed.has(msg.info.id)) {
+      const part = msg.parts.find((item): item is CompactionPart => item.type === "compaction")
+      if (!part) continue
+      if (!part.tail_start_id) break
+      retain = part.tail_start_id
+      if (msg.info.id === retain) break
+      continue
+    }
+    if (msg.info.role === "user" && completed.has(msg.info.id) && msg.parts.some((part) => part.type === "compaction"))
+      break
     if (msg.info.role === "assistant" && msg.info.summary && msg.info.finish && !msg.info.error)
       completed.add(msg.info.parentID)
   }
   result.reverse()
+  const compactionIndex = result.findLastIndex(
+    (msg) =>
+      msg.info.role === "user" &&
+      msg.parts.some((item): item is CompactionPart => item.type === "compaction" && item.tail_start_id !== undefined),
+  )
+  const compaction = result[compactionIndex]
+  const part = compaction?.parts.find(
+    (item): item is CompactionPart => item.type === "compaction" && item.tail_start_id !== undefined,
+  )
+  const summaryIndex = compaction
+    ? result.findIndex(
+        (msg, index) =>
+          index > compactionIndex &&
+          msg.info.role === "assistant" &&
+          msg.info.summary &&
+          msg.info.parentID === compaction.info.id,
+      )
+    : -1
+  const tailIndex = part?.tail_start_id ? result.findIndex((msg) => msg.info.id === part.tail_start_id) : -1
+  if (tailIndex >= 0 && tailIndex < compactionIndex && summaryIndex > compactionIndex) {
+    return [
+      ...result.slice(compactionIndex, summaryIndex + 1),
+      ...result.slice(tailIndex, compactionIndex),
+      ...result.slice(summaryIndex + 1),
+    ]
+  }
   return result
 }
 

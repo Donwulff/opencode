@@ -7,9 +7,9 @@ import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
 import { Config } from "@/config/config"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import { checksum } from "@opencode-ai/core/util/encode"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 
 export const Parameters = Schema.Struct({
   query: Schema.String.annotate({ description: "Websearch query" }),
@@ -31,10 +31,7 @@ export const Parameters = Schema.Struct({
 const WebSearchProviderSchema = Schema.Literals(["exa", "parallel"])
 export type WebSearchProvider = Schema.Schema.Type<typeof WebSearchProviderSchema>
 
-export function selectWebSearchProvider(
-  sessionID: string,
-  flags = { exa: Flag.OPENCODE_ENABLE_EXA, parallel: Flag.OPENCODE_ENABLE_PARALLEL },
-): WebSearchProvider {
+export function selectWebSearchProvider(sessionID: string, flags = { exa: false, parallel: false }): WebSearchProvider {
   const override = process.env.OPENCODE_WEBSEARCH_PROVIDER
   if (override === "exa" || override === "parallel") return override
   if (flags.parallel) return "parallel"
@@ -107,6 +104,7 @@ export const WebSearchTool = Tool.define(
   "websearch",
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
+    const flags = yield* RuntimeFlags.Service
 
     return {
       get description() {
@@ -115,7 +113,10 @@ export const WebSearchTool = Tool.define(
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          const provider = selectWebSearchProvider(ctx.sessionID)
+          const provider = selectWebSearchProvider(ctx.sessionID, {
+            exa: flags.enableExa,
+            parallel: flags.enableParallel,
+          })
           const title = webSearchProviderLabel(provider)
           yield* ctx.metadata({ title: `${title} "${params.query}"`, metadata: { provider } })
 
