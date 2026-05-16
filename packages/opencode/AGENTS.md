@@ -154,6 +154,14 @@ When resolving merge conflicts in files partially migrated from Zod to Effect Sc
 - Add missing helper definitions (e.g., `ModelRef` constant before its usage)
 - Run `bun run typecheck` to verify after resolution
 
+### Stale imports from intra-file refactoring
+
+When a file is being refactored (e.g., migrating from `Flag` to `RuntimeFlags`), unused imports can linger as refactoring artifacts. These won't cause conflict markers during merge but will silently fail `bun typecheck`. After merging files in active migration, audit imports for stale references.
+
+### Sync vs Effect.promise decision
+
+When resolving a conflict where one side wraps a call in `Effect.promise(() => fn())` and the other calls `fn()` directly, check whether `fn` is actually async before keeping the wrapper. Wrapping a synchronous function adds unnecessary overhead and introduces potential unhandled-rejection paths.
+
 ## TUI SDK Error Handling
 
 The SDK returns `{ error: ... }` for failed requests, not thrown exceptions. TUI code must check `res.error` and display appropriate error toasts:
