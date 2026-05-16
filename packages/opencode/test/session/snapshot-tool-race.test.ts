@@ -30,6 +30,7 @@ import { TestLLMServer } from "../lib/llm-server"
 // Same layer setup as prompt-effect.test.ts
 import { NodeFileSystem } from "@effect/platform-node"
 import { Agent as AgentSvc } from "../../src/agent/agent"
+import { BackgroundJob } from "@/background/job"
 import { Git } from "../../src/git"
 import { Bus } from "../../src/bus"
 import { Command } from "../../src/command"
@@ -61,6 +62,7 @@ import { Format } from "../../src/format"
 import { Reference } from "../../src/reference/reference"
 import { SyncEvent } from "@/sync"
 import { RuntimeFlags } from "@/effect/runtime-flags"
+import { EventV2Bridge } from "@/event-v2-bridge"
 
 void Log.init({ print: false })
 
@@ -127,8 +129,10 @@ function makeHttp() {
     lsp,
     mcp,
     AppFileSystem.defaultLayer,
+    BackgroundJob.defaultLayer,
     status,
     SyncEvent.defaultLayer,
+    EventV2Bridge.defaultLayer,
   ).pipe(Layer.provideMerge(infra))
   const question = Question.layer.pipe(Layer.provideMerge(deps))
   const todo = Todo.layer.pipe(Layer.provideMerge(deps))
@@ -140,7 +144,7 @@ function makeHttp() {
     Layer.provide(Reference.defaultLayer),
     Layer.provide(Ripgrep.defaultLayer),
     Layer.provide(Format.defaultLayer),
-    Layer.provide(RuntimeFlags.layer()),
+    Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
     Layer.provideMerge(todo),
     Layer.provideMerge(question),
     Layer.provideMerge(deps),
@@ -149,9 +153,14 @@ function makeHttp() {
   const proc = SessionProcessor.layer.pipe(
     Layer.provide(SessionSummary.defaultLayer),
     Layer.provide(Image.defaultLayer),
+    Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
     Layer.provideMerge(deps),
   )
-  const compact = SessionCompaction.layer.pipe(Layer.provideMerge(proc), Layer.provideMerge(deps))
+  const compact = SessionCompaction.layer.pipe(
+    Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
+    Layer.provideMerge(proc),
+    Layer.provideMerge(deps),
+  )
   return Layer.mergeAll(
     TestLLMServer.layer,
     SessionSummary.defaultLayer,
@@ -167,6 +176,7 @@ function makeHttp() {
       Layer.provideMerge(trunc),
       Layer.provide(Instruction.defaultLayer),
       Layer.provide(SystemPrompt.defaultLayer),
+      Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
       Layer.provideMerge(deps),
     ),
   )

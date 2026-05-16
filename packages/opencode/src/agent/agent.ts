@@ -15,12 +15,12 @@ import PROMPT_TITLE from "./prompt/title.txt"
 import { Permission } from "@/permission"
 import { mergeDeep, pipe, sortBy, values } from "remeda"
 import { Global } from "@opencode-ai/core/global"
-import { Flag } from "@opencode-ai/core/flag/flag"
 import path from "path"
 import { Plugin } from "@/plugin"
 import { Skill } from "../skill"
 import { Effect, Context, Layer, Schema } from "effect"
 import { InstanceState } from "@/effect/instance-state"
+import { RuntimeFlags } from "@/effect/runtime-flags"
 import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { type DeepMutable } from "@opencode-ai/core/schema"
@@ -63,11 +63,14 @@ export interface Interface {
   readonly generate: (input: {
     description: string
     model?: { providerID: ProviderID; modelID: ModelID }
-  }) => Effect.Effect<{
-    identifier: string
-    whenToUse: string
-    systemPrompt: string
-  }>
+  }) => Effect.Effect<
+    {
+      identifier: string
+      whenToUse: string
+      systemPrompt: string
+    },
+    Provider.ModelNotFoundError
+  >
 }
 
 type State = Omit<Interface, "generate">
@@ -82,6 +85,7 @@ export const layer = Layer.effect(
     const plugin = yield* Plugin.Service
     const skill = yield* Skill.Service
     const provider = yield* Provider.Service
+    const flags = yield* RuntimeFlags.Service
 
     const state = yield* InstanceState.make<State>(
       Effect.fn("Agent.state")(function* (ctx) {
@@ -196,7 +200,7 @@ export const layer = Layer.effect(
             mode: "subagent",
             native: true,
           },
-          ...(Flag.OPENCODE_EXPERIMENTAL_SCOUT
+          ...(flags.experimentalScout
             ? {
                 scout: {
                   name: "scout",
@@ -455,6 +459,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(Auth.defaultLayer),
   Layer.provide(Config.defaultLayer),
   Layer.provide(Skill.defaultLayer),
+  Layer.provide(RuntimeFlags.defaultLayer),
 )
 
 export * as Agent from "./agent"

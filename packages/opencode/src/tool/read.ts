@@ -1,8 +1,6 @@
-import { Effect, Option, Schema, Scope } from "effect"
+import { Effect, Option, Schema, Scope, Stream } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
-import { createReadStream } from "fs"
 import * as path from "path"
-import { createInterface } from "readline"
 import * as Tool from "./tool"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
 import { LSP } from "@/lsp/lsp"
@@ -20,10 +18,7 @@ const MAX_BYTES = 50 * 1024
 const MAX_BYTES_LABEL = `${MAX_BYTES / 1024} KB`
 const SAMPLE_BYTES = 4096
 const SUPPORTED_IMAGE_MIMES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"])
-const seen = new Map<
-  string,
-  { requested: number; limit: number; truncated: boolean; cursor: number; explicitOffset: boolean }
->()
+class ReadStop extends Schema.TaggedErrorClass<ReadStop>()("ReadStop", {}) {}
 
 // `offset` and `limit` were originally `z.coerce.number()` — the runtime
 // coercion was useful when the tool was called from a shell but serves no
@@ -107,6 +102,51 @@ export const ReadTool = Tool.define(
           return Option.getOrElse(yield* file.readAlloc(Math.min(sampleSize, fileSize)), () => new Uint8Array())
         }),
       )
+    })
+
+    const lines = Effect.fn("ReadTool.lines")(function* (filepath: string, opts: { limit: number; offset: number }) {
+      const start = opts.offset - 1
+      const raw: string[] = []
+      const flags = { bytes: 0, count: 0, cut: false, more: false, done: false }
+
+      // Note: prefer manual TextDecoder over Stream.decodeText — when the source stream
+      // ends without flushing, decodeText drops the final unterminated line. We also
+      // avoid Stream.runForEachWhile (it currently swallows the final unterminated
+      // line of the upstream splitLines pipeline) and use a tagged error to stop the
+      // upstream file stream as soon as the byte cap is reached.
+      const decoder = new TextDecoder("utf-8")
+      yield* fs.stream(filepath).pipe(
+        Stream.map((bytes) => decoder.decode(bytes, { stream: true })),
+        Stream.splitLines,
+        Stream.runForEach((text) =>
+          Effect.gen(function* () {
+            if (flags.done) return yield* new ReadStop()
+            flags.count += 1
+            if (flags.count <= start) return
+
+            if (raw.length >= opts.limit) {
+              flags.more = true
+              return
+            }
+
+            const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
+            const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
+            if (flags.bytes + size <= MAX_BYTES) {
+              raw.push(line)
+              flags.bytes += size
+              return
+            }
+
+            flags.cut = true
+            flags.more = true
+            flags.done = true
+            return yield* new ReadStop()
+          }),
+        ),
+        Effect.catchTag("ReadStop", () => Effect.void),
+      )
+
+      return { raw, count: flags.count, cut: flags.cut, more: flags.more, offset: opts.offset }
     })
 
     const isBinaryFile = (filepath: string, bytes: Uint8Array) => {
@@ -251,22 +291,12 @@ export const ReadTool = Tool.define(
         return yield* Effect.fail(new Error(`Cannot read binary file: ${filepath}`))
       }
 
-      const limit = params.limit ?? DEFAULT_READ_LIMIT
-      const explicit = params.offset !== undefined
-      const offset = params.offset ?? 1
-      const key = `${ctx.sessionID}:${filepath}`
-      const prev = seen.get(key)
-      const first = yield* Effect.promise(() => lines(filepath, { limit, offset }))
-      if (first.count < first.offset && !(first.count === 0 && first.offset === 1)) {
+      const file = yield* lines(filepath, { limit: params.limit ?? DEFAULT_READ_LIMIT, offset: params.offset || 1 })
+      if (file.count < file.offset && !(file.count === 0 && file.offset === 1)) {
         return yield* Effect.fail(
-          new Error(`Offset ${first.offset} is out of range for this file (${first.count} lines)`),
+          new Error(`Offset ${file.offset} is out of range for this file (${file.count} lines)`),
         )
       }
-
-      const repeat = !explicit && prev && prev.truncated && !prev.explicitOffset && (first.more || first.cut)
-      const file = repeat
-        ? yield* Effect.promise(() => lines(filepath, { limit, offset: prev.cursor }))
-        : first
 
       let output = [`<path>${filepath}</path>`, `<type>file</type>`, "<content>\n"].join("\n")
       output += file.raw.map((line, i) => `${i + file.offset}: ${line}`).join("\n")
@@ -281,9 +311,6 @@ export const ReadTool = Tool.define(
       } else {
         output += `\n\n(End of file - total ${file.count} lines)`
       }
-      if (repeat) {
-        output += `\nSYSTEM NOTICE: Offset not given; continuing from offset ${file.offset} (1-indexed).`
-      }
       output += "\n</content>"
 
       yield* warm(filepath)
@@ -291,14 +318,6 @@ export const ReadTool = Tool.define(
       if (loaded.length > 0) {
         output += `\n\n<system-reminder>\n${loaded.map((item) => item.content).join("\n\n")}\n</system-reminder>`
       }
-
-      seen.set(key, {
-        requested: offset,
-        limit,
-        truncated,
-        cursor: next,
-        explicitOffset: explicit,
-      })
 
       return {
         title,
@@ -319,45 +338,3 @@ export const ReadTool = Tool.define(
     }
   }),
 )
-
-async function lines(filepath: string, opts: { limit: number; offset: number }) {
-  const stream = createReadStream(filepath, { encoding: "utf8" })
-  const rl = createInterface({
-    input: stream,
-    crlfDelay: Infinity,
-  })
-
-  const start = opts.offset - 1
-  const raw: string[] = []
-  let bytes = 0
-  let count = 0
-  let cut = false
-  let more = false
-  try {
-    for await (const text of rl) {
-      count += 1
-      if (count <= start) continue
-
-      if (raw.length >= opts.limit) {
-        more = true
-        continue
-      }
-
-      const line = text.length > MAX_LINE_LENGTH ? text.substring(0, MAX_LINE_LENGTH) + MAX_LINE_SUFFIX : text
-      const size = Buffer.byteLength(line, "utf-8") + (raw.length > 0 ? 1 : 0)
-      if (bytes + size > MAX_BYTES) {
-        cut = true
-        more = true
-        break
-      }
-
-      raw.push(line)
-      bytes += size
-    }
-  } finally {
-    rl.close()
-    stream.destroy()
-  }
-
-  return { raw, count, cut, more, offset: opts.offset }
-}

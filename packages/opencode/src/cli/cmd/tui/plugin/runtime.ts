@@ -35,11 +35,13 @@ import { Filesystem } from "@/util/filesystem"
 import { Process } from "@/util/process"
 import { Flock } from "@opencode-ai/core/util/flock"
 import { Flag } from "@opencode-ai/core/flag/flag"
-import { INTERNAL_TUI_PLUGINS, type InternalTuiPlugin } from "./internal"
+import { internalTuiPlugins, type InternalTuiPlugin } from "./internal"
 import { setupSlots, Slot as View } from "./slots"
 import type { HostPluginApi, HostSlots } from "./slots"
 import { ConfigPlugin } from "@/config/plugin"
 import { createCommandShim } from "./command-shim"
+import { RuntimeFlags } from "@/effect/runtime-flags"
+import { Effect } from "effect"
 
 ensureRuntimePluginSupport({ additional: keymapRuntimeModules })
 
@@ -1065,12 +1067,17 @@ async function load(input: { api: Api; config: TuiConfig.Resolved; dispose?: () 
   }
   runtime = next
   try {
+    const flags = await Effect.runPromise(
+      Effect.gen(function* () {
+        return yield* RuntimeFlags.Service
+      }).pipe(Effect.provide(RuntimeFlags.defaultLayer)),
+    )
     const records = Flag.OPENCODE_PURE ? [] : (config.plugin_origins ?? [])
     if (Flag.OPENCODE_PURE && config.plugin_origins?.length) {
       log.info("skipping external tui plugins in pure mode", { count: config.plugin_origins.length })
     }
 
-    for (const item of INTERNAL_TUI_PLUGINS) {
+    for (const item of internalTuiPlugins(flags)) {
       log.info("loading internal tui plugin", { id: item.id })
       const entry = loadInternalPlugin(item)
       const meta = createMeta(entry.source, entry.spec, entry.target, undefined, entry.id)

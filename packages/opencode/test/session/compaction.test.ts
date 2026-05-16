@@ -28,6 +28,8 @@ import { testEffect } from "../lib/effect"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
 import { TestConfig } from "../fixture/config"
 import { SyncEvent } from "@/sync"
+import { RuntimeFlags } from "@/effect/runtime-flags"
+import { EventV2Bridge } from "@/event-v2-bridge"
 
 void Log.init({ print: false })
 
@@ -225,6 +227,8 @@ const deps = Layer.mergeAll(
   Bus.layer,
   Config.defaultLayer,
   SyncEvent.defaultLayer,
+  RuntimeFlags.layer({ experimentalEventSystem: true }),
+  EventV2Bridge.defaultLayer,
 )
 
 const env = Layer.mergeAll(
@@ -257,6 +261,7 @@ function compactionProcessLayer(options?: CompactionProcessOptions) {
     ? SessionProcessorModule.SessionProcessor.layer.pipe(
         Layer.provide(summary),
         Layer.provide(Image.defaultLayer),
+        Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
         Layer.provide(status),
       )
     : layer(options?.result ?? "continue")
@@ -272,6 +277,8 @@ function compactionProcessLayer(options?: CompactionProcessOptions) {
     Layer.provide(bus),
     Layer.provide(options?.config ?? Config.defaultLayer),
     Layer.provide(SyncEvent.defaultLayer),
+    Layer.provide(RuntimeFlags.layer({ experimentalEventSystem: true })),
+    Layer.provide(EventV2Bridge.defaultLayer),
   )
 }
 
