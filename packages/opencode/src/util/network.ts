@@ -1,4 +1,5 @@
 import { isIP, isIPv4, isIPv6 } from "net"
+import { Schema } from "effect"
 import * as Log from "@opencode-ai/core/util/log"
 import z from "zod"
 
@@ -198,6 +199,36 @@ export const SecurityConfig = z
   })
 
 export type SecurityConfigType = z.infer<typeof SecurityConfig>
+
+// Effect Schema mirror of SecurityConfig. Used only for the generated JSON
+// Schema view of `config.security` — runtime validation still goes through
+// the zod parser via `validateUrlFromConfig`. Keep both in sync.
+export const SecurityConfigSchema = Schema.Struct({
+  mode: Schema.optional(Schema.Literals(["internal-only", "external-allowed", "strict"])).annotate({
+    description: "Security mode",
+  }),
+  allow_internal_dns_suffixes: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+    description: "Internal DNS suffixes to allow",
+  }),
+  block_domain_regex: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+    description: "Regular expressions to match and block domains",
+  }),
+  allow_local: Schema.optional(Schema.Boolean).annotate({ description: "Allow localhost URLs" }),
+  allow_private_ip: Schema.optional(Schema.Boolean).annotate({ description: "Allow private IP addresses" }),
+  models_dev_enabled: Schema.optional(Schema.Boolean).annotate({
+    description: "Enable fetching models from models.dev",
+  }),
+  audit_log_enabled: Schema.optional(Schema.Boolean).annotate({ description: "Enable audit logging" }),
+  external_domains: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+    description: "Explicitly allowed external domains",
+  }),
+  allow_external_ips: Schema.optional(Schema.Boolean).annotate({
+    description: "Allow external/public IP addresses",
+  }),
+  allowed_ip_ranges: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
+    description: "Additional allowed IP ranges in CIDR notation",
+  }),
+}).annotate({ identifier: "SecurityConfig" })
 
 export function validateUrlFromConfig(url: string, config: SecurityConfigType): ValidationResult {
   if (!url) {

@@ -16,7 +16,8 @@ import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { iife } from "@/util/iife"
 import { auditLogger, setAuditLogEnabled } from "@/util/audit"
-import { validateUrlFromConfig } from "@/util/network"
+import { validateUrlFromConfig, SecurityConfigSchema, type SecurityConfigType } from "@/util/network"
+import { ModelsDev } from "@opencode-ai/core/models"
 import { Account } from "@/account/account"
 import { isRecord } from "@/util/record"
 import type { ConsoleState } from "./console-state"
@@ -243,7 +244,7 @@ export const Info = Schema.Struct({
       url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),
     }),
   ),
-  security: Schema.optional(Schema.Any).annotate({
+  security: Schema.optional(SecurityConfigSchema).annotate({
     description: "Security configuration for audit logging and network controls",
   }),
   network: Schema.optional(ConfigNetwork.Info).annotate({
@@ -831,6 +832,28 @@ export const layer = Layer.effect(
 
     // Register the standalone async getter for non-Effect callers
     _asyncGet = () => Effect.runPromise(get())
+
+    // Fork: gate models.dev fetches from core/models.ts on SecurityConfig.
+    ModelsDev.registerGuard(async (source) => {
+      const cfg = await _asyncGet!()
+      const security = cfg.security as SecurityConfigType | undefined
+      if (!security) return { allowed: true }
+      if (security.models_dev_enabled === false) {
+        auditLogger.logProviderLoad("models.dev", "api", 0, false, "models_dev disabled")
+        return { allowed: false, reason: "models_dev disabled" }
+      }
+      const api = `${source}/api.json`
+      const result = validateUrlFromConfig(source, security)
+      auditLogger.logUrlCheck(api, result.allowed, result.reason, {
+        providerId: "models.dev",
+        source: "config",
+      })
+      if (!result.allowed) {
+        auditLogger.logProviderLoad("models.dev", "api", 0, false, result.reason)
+        return { allowed: false, reason: result.reason }
+      }
+      return { allowed: true }
+    })
 
     return Service.of({
       get,

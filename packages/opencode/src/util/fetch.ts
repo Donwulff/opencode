@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { Config } from "@/config/config"
 import { auditLogger } from "./audit"
-import { validateUrlFromConfig } from "./network"
+import { validateUrlFromConfig, type SecurityConfigType } from "./network"
 
 /**
  * Effect-based URL validation + audit logging.  Validates the URL against
@@ -13,8 +13,9 @@ import { validateUrlFromConfig } from "./network"
 export function auditedUrl(url: string, source = "internal"): Effect.Effect<void, Error> {
   return Effect.promise(() => Config.get()).pipe(
     Effect.flatMap((config) => {
-      if (!config.security) return Effect.void
-      const result = validateUrlFromConfig(url, config.security)
+      const security = config.security as SecurityConfigType | undefined
+      if (!security) return Effect.void
+      const result = validateUrlFromConfig(url, security)
       auditLogger.logUrlCheck(url, result.allowed, result.reason, { source })
       if (!result.allowed) return Effect.fail(new Error(`Fetch blocked (${result.reason}): ${url}`))
       return Effect.void
@@ -33,8 +34,9 @@ export function auditedUrl(url: string, source = "internal"): Effect.Effect<void
  */
 export async function auditedFetch(url: string, init?: RequestInit, source = "internal"): Promise<Response> {
   const config = await Config.get()
-  if (config.security) {
-    const result = validateUrlFromConfig(url, config.security)
+  const security = config.security as SecurityConfigType | undefined
+  if (security) {
+    const result = validateUrlFromConfig(url, security)
     auditLogger.logUrlCheck(url, result.allowed, result.reason, { source })
     if (!result.allowed) throw new Error(`Fetch blocked (${result.reason}): ${url}`)
   }

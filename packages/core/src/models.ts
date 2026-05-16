@@ -13,6 +13,14 @@ export type CatalogModelStatus = typeof CatalogModelStatus.Type
 
 const USER_AGENT = `opencode/${InstallationChannel}/${InstallationVersion}/${Flag.OPENCODE_CLIENT}`
 
+export type GuardResult = { allowed: boolean; reason?: string }
+export type Guard = (source: string) => Promise<GuardResult>
+
+let _guard: Guard | undefined
+export function registerGuard(fn: Guard) {
+  _guard = fn
+}
+
 const CostTier = Schema.Struct({
   input: Schema.Finite,
   output: Schema.Finite,
@@ -174,12 +182,25 @@ export const layer: Layer.Layer<Service, never, Requirements> = Layer.effect(
       return text
     })
 
+    // Fork: external policy gate. Registered via registerGuard() from opencode.
+    // Default-allow when not registered to preserve upstream behavior.
+    const guard = Effect.fn("ModelsDev.guard")(function* () {
+      if (!_guard) return true
+      const result = yield* Effect.promise(() => _guard!(source))
+      if (!result.allowed) {
+        yield* Effect.logInfo("models.dev fetch blocked", { reason: result.reason ?? "policy" })
+        return false
+      }
+      return true
+    })
+
     const populate = Effect.gen(function* () {
       const fromDisk = yield* loadFromDisk
       if (fromDisk) return fromDisk
       const snapshot = yield* loadSnapshot
       if (snapshot) return snapshot
       if (Flag.OPENCODE_DISABLE_MODELS_FETCH) return {}
+      if (!(yield* guard())) return {}
       // Flock is cross-process: concurrent opencode CLIs can race on this cache file.
       const text = yield* Effect.scoped(
         Effect.gen(function* () {
@@ -196,6 +217,7 @@ export const layer: Layer.Layer<Service, never, Requirements> = Layer.effect(
 
     const refresh = Effect.fn("ModelsDev.refresh")(function* (force = false) {
       if (!force && (yield* fresh())) return
+      if (!(yield* guard())) return
       yield* Effect.scoped(
         Effect.gen(function* () {
           yield* Flock.effect(lockKey)
