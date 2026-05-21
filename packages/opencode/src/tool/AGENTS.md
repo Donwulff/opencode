@@ -19,9 +19,11 @@ The guard reads `ctx.extra?.command` to determine which slash command is active.
 
 **Limitation**: blocklist-based approach; does not cover every file-writing utility (`tee`, `dd`, etc.). The user permission prompt displays the full command string before execution, providing a second line of defense.
 
-## Bash Tool (bash.ts)
+## Shell Tool (shell.ts)
 
-- **Audit logging**: every permitted bash command is logged to `audit.jsonl` via `auditLogger.logToolRequest()` AFTER both `ctx.ask()` permission checks pass — only permitted commands are logged, never blocked ones
+Renamed from `bash.ts` in the 2026-05-03 upstream merge. ToolID is still `"bash"` for plugin/permission compatibility — see `tool/shell/id.ts`.
+
+- **Audit logging**: every permitted shell command is logged to `audit.jsonl` via `auditLogger.logToolRequest()` AFTER `yield* ask(ctx, scan)` permission check passes — only permitted commands are logged, never blocked ones
 - **Sandbox fallback**: if `OPENCODE_SPAWN_SANDBOX=1` but neither `bwrap` nor `unshare` is found, logs a warning and runs unsandboxed (no error thrown). Check logs if sandbox coverage is uncertain.
-- bash.ts uses inline `sandboxedArgs()` (direct `child_process.spawn`), not `Process.spawn`. If migrating to `Process.spawn`, the sandbox wrapper in `util/process.ts` (`sandboxedCmd()`) would cover it automatically.
+- shell.ts uses inline `sandboxedArgs()` with Effect `ChildProcessSpawner`; it does NOT route through `util/process.ts` `sandboxedCmd()`. Both helpers wrap commands via the same bwrap/unshare invocation; future tools that spawn subprocesses should use shell.ts's inline helper or `sandboxedCmd()` from util/process.ts.
 - `ip link set lo up` is prepended to the command inside the network namespace — required to bring loopback up so test servers on localhost are reachable within the sandbox
