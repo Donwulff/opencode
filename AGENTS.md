@@ -9,6 +9,14 @@
 - For upstreaming local security work later, follow `specs/security-upstream-playbook.md` (design issue first, then split into small PRs).
 - Provenance tracing POC docs and usage live in `specs/provenance-poc.md` and `.opencode/command/provenance.md`.
 
+## Commits and PR Titles
+
+Use conventional commit-style messages and PR titles: `type(scope): summary`.
+
+Valid types are `feat`, `fix`, `docs`, `chore`, `refactor`, and `test`. Scopes are optional; use the affected package or area when helpful, e.g. `core`, `opencode`, `tui`, `app`, `desktop`, `sdk`, or `plugin`.
+
+Examples: `fix(tui): simplify thinking toggle styling`, `docs: update contributing guide`, `chore(sdk): regenerate types`.
+
 ## Style Guide
 
 ### General Principles

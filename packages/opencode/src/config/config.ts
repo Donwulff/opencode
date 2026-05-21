@@ -1,4 +1,5 @@
 import * as Log from "@opencode-ai/core/util/log"
+import { serviceUse } from "@/effect/service-use"
 import path from "path"
 import { pathToFileURL } from "url"
 import os from "os"
@@ -17,7 +18,7 @@ import { Event } from "../server/event"
 import { iife } from "@/util/iife"
 import { auditLogger, setAuditLogEnabled } from "@/util/audit"
 import { validateUrlFromConfig, SecurityConfigSchema, type SecurityConfigType } from "@/util/network"
-import { ModelsDev } from "@opencode-ai/core/models"
+import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Account } from "@/account/account"
 import { isRecord } from "@/util/record"
 import type { ConsoleState } from "./console-state"
@@ -341,6 +342,8 @@ export interface Interface {
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/Config") {}
+
+export const use = serviceUse(Service)
 
 function globalConfigFile() {
   const candidates = ["opencode.jsonc", "opencode.json", "config.json"].map((file) =>
@@ -721,7 +724,11 @@ export const layer = Layer.effect(
         }
 
         if (Flag.OPENCODE_PERMISSION) {
-          result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
+          try {
+            result.permission = mergeDeep(result.permission ?? {}, JSON.parse(Flag.OPENCODE_PERMISSION))
+          } catch (err) {
+            log.warn("OPENCODE_PERMISSION contains invalid JSON, skipping", { err })
+          }
         }
 
         if (result.tools) {
@@ -833,8 +840,8 @@ export const layer = Layer.effect(
     // Register the standalone async getter for non-Effect callers
     _asyncGet = () => Effect.runPromise(get())
 
-    // Fork: gate models.dev fetches from core/models.ts on SecurityConfig.
-    ModelsDev.registerGuard(async (source) => {
+    // Fork: gate models.dev fetches from core/models-dev.ts on SecurityConfig.
+    ModelsDev.registerGuard(async (source: string) => {
       const cfg = await _asyncGet!()
       const security = cfg.security as SecurityConfigType | undefined
       if (!security) return { allowed: true }
