@@ -223,19 +223,13 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
             const navigate = useNavigate()
             const homeMatch = useMatch(() => "/")
 
-            const openNewSession = () => {
-              if (params.dir) {
-                navigate(`/${params.dir}/session`)
-                return
-              }
+            const newSessionHref = () => {
+              if (params.dir) return `/${params.dir}/session`
 
               const project = layout.projects.list()[0]
-              if (!project) {
-                navigate("/")
-                return
-              }
+              if (!project) return "/"
 
-              navigate(`/${base64Encode(project.worktree)}/session`)
+              return `/${base64Encode(project.worktree)}/session`
             }
 
             type Tab = { dir: string; sessionId: string; href: string }
@@ -313,19 +307,84 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
               return true
             }
 
+            const closeNewSessionTab = () => {
+              if (!(params.dir && !params.id)) return false
+              const last = tabsStore[tabsStore.length - 1]
+              if (last) navigate(last.href)
+              else navigate("/")
+              return true
+            }
+
             makeEventListener(
               document,
               "keydown",
               (event) => {
                 if (!event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
                 if (event.key.toLowerCase() !== "w") return
-                if (!closeCurrentSessionTab()) return
+                if (!(closeCurrentSessionTab() || closeNewSessionTab())) return
 
                 event.preventDefault()
                 event.stopPropagation()
               },
               { capture: true },
             )
+
+            command.register(() => {
+              const commands = [
+                {
+                  id: `tab.prev`,
+                  category: "tab",
+                  title: "",
+                  keybind: `mod+option+ArrowLeft`,
+                  hidden: true,
+                  onSelect: () => {
+                    let index = tabsStore.findIndex((tab) => tab.href === currentSessionTab())
+                    if (index === -1) return
+
+                    index -= 1
+                    if (index === -1) index = tabsStore.length - 1
+
+                    const next = tabsStore[index]
+                    if (next) navigate(next.href)
+                  },
+                },
+                {
+                  id: `tab.next`,
+                  category: "tab",
+                  title: "",
+                  keybind: `mod+option+ArrowRight`,
+                  hidden: true,
+                  onSelect: () => {
+                    let index = tabsStore.findIndex((tab) => tab.href === currentSessionTab())
+                    if (index === -1) return
+
+                    index += 1
+                    if (index === tabsStore.length) index = 0
+
+                    const next = tabsStore[index]
+                    if (next) navigate(next.href)
+                  },
+                },
+                ...Array.from({ length: 9 }, (_, i) => {
+                  const index = i
+                  const number = index + 1
+                  return {
+                    id: `tab.${number}`,
+                    category: "tab",
+                    title: "",
+                    keybind: `mod+${number}`,
+                    disabled: layout.projects.list().length <= index,
+                    hidden: true,
+                    onSelect: () => {
+                      const tab = tabsStore[index]
+                      if (tab) navigate(tab.href)
+                    },
+                  }
+                }),
+              ]
+
+              return commands
+            })
 
             const tabsEnriched = iife(() => {
               const base = mapArray(
@@ -391,7 +450,8 @@ export function Titlebar(props: { update?: TitlebarUpdate }) {
                         size="large"
                         class="shrink-0"
                         icon={<IconV2 name="plus" />}
-                        onClick={openNewSession}
+                        as="a"
+                        href={newSessionHref()}
                         aria-label={language.t("command.session.new")}
                       />
                     }
