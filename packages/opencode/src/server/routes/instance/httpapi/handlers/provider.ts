@@ -1,5 +1,6 @@
 import { ProviderAuth } from "@/provider/auth"
 import { Config } from "@/config/config"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Provider } from "@/provider/provider"
 import { ProviderID } from "@/provider/schema"
@@ -41,8 +42,11 @@ export const providerHandlers = HttpApiBuilder.group(InstanceHttpApi, "provider"
       const all = yield* ModelsDev.Service.use((s) => s.get())
       const disabled = new Set(config.disabled_providers ?? [])
       const enabled = config.enabled_providers ? new Set(config.enabled_providers) : undefined
+      const restrictToConfigured = config.restrict_to_configured_providers ?? Flag.OPENCODE_RESTRICT_PROVIDERS
+      const configuredSet = restrictToConfigured ? new Set(Object.keys(config.provider ?? {})) : undefined
       const filtered: Record<string, (typeof all)[string]> = {}
       for (const [key, value] of Object.entries(all)) {
+        if (configuredSet && !configuredSet.has(key)) continue
         if ((enabled ? enabled.has(key) : true) && !disabled.has(key)) filtered[key] = value
       }
       const connected = yield* provider.list()

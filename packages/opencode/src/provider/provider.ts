@@ -1,6 +1,7 @@
 import os from "os"
 import fuzzysort from "fuzzysort"
 import { Config } from "@/config/config"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { mapValues, mergeDeep, omit, pickBy, sortBy } from "remeda"
 import { NoSuchModelError, type Provider as SDK } from "ai"
 import * as Log from "@opencode-ai/core/util/log"
@@ -1259,8 +1260,11 @@ export const layer = Layer.effect(
         const configProviders = Object.entries(cfg.provider ?? {})
         const disabled = new Set(cfg.disabled_providers ?? [])
         const enabled = cfg.enabled_providers ? new Set(cfg.enabled_providers) : null
+        const restrictToConfigured = cfg.restrict_to_configured_providers ?? Flag.OPENCODE_RESTRICT_PROVIDERS
+        const configuredSet = restrictToConfigured ? new Set(configProviders.map(([id]) => id)) : null
 
         function isProviderAllowed(providerID: ProviderID): boolean {
+          if (configuredSet && !configuredSet.has(providerID)) return false
           if (enabled && !enabled.has(providerID)) return false
           if (disabled.has(providerID)) return false
           return true

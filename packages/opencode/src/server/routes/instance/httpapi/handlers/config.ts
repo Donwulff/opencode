@@ -1,5 +1,7 @@
 import { Config } from "@/config/config"
+import { Flag } from "@opencode-ai/core/flag/flag"
 import { Provider } from "@/provider/provider"
+import { validateUrlFromConfig, type SecurityConfigType } from "@/util/network"
 import * as InstanceState from "@/effect/instance-state"
 import { Effect } from "effect"
 import { HttpApiBuilder } from "effect/unstable/httpapi"
@@ -22,10 +24,30 @@ export const configHandlers = HttpApiBuilder.group(InstanceHttpApi, "config", (h
     })
 
     const providers = Effect.fn("ConfigHttpApi.providers")(function* () {
-      const providers = yield* providerSvc.list()
+      const loaded = yield* providerSvc.list()
+      let providerList = Object.values(loaded)
+
+      const cfg = yield* configSvc.get()
+      const restrictToConfigured = cfg.restrict_to_configured_providers ?? Flag.OPENCODE_RESTRICT_PROVIDERS
+      if (restrictToConfigured) {
+        const configuredSet = new Set(Object.keys(cfg.provider ?? {}))
+        providerList = providerList.filter((p) => configuredSet.has(p.id))
+      }
+
+      const security = cfg.security as SecurityConfigType | undefined
+      if (security) {
+        providerList = providerList.filter((p) => {
+          const urls = Object.values(p.models).map((m) => m.api?.url).filter(Boolean)
+          if (urls.length === 0) return true
+          return urls.some((url) => validateUrlFromConfig(url!, security).allowed)
+        })
+      }
+
       return {
-        providers: Object.values(providers).map(Provider.toPublicInfo),
-        default: Provider.defaultModelIDs(providers),
+        providers: providerList.map(Provider.toPublicInfo),
+        default: Provider.defaultModelIDs(
+          Object.fromEntries(providerList.map((p) => [p.id, p])),
+        ),
       }
     })
 
