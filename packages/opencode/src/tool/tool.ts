@@ -117,6 +117,16 @@ function wrap<Parameters extends Schema.Decoder<unknown>, Result extends Metadat
         }
         return Effect.gen(function* () {
           const decoded = yield* decode(args).pipe(
+            Effect.catch((error) => {
+              // Less-capable models sometimes emit string params with stray
+              // whitespace around values (e.g. format: " text "). Retry once
+              // with shallow-trimmed string leaves so a single rewrite round
+              // isn't burned on trivial whitespace issues. The original error
+              // is surfaced if the trimmed input still doesn't validate.
+              const trimmed = trimStringLeaves(args)
+              if (trimmed === args) return Effect.fail(error)
+              return decode(trimmed).pipe(Effect.catch(() => Effect.fail(error)))
+            }),
             Effect.mapError(
               (error) =>
                 new InvalidArgumentsError({
@@ -176,6 +186,30 @@ export function init<P extends Schema.Decoder<unknown>, M extends Metadata>(
       id: info.id,
     }
   })
+}
+
+function trimStringLeaves(value: unknown): unknown {
+  if (typeof value === "string") return value.trim()
+  if (Array.isArray(value)) {
+    let changed = false
+    const next = value.map((item) => {
+      const trimmed = trimStringLeaves(item)
+      if (trimmed !== item) changed = true
+      return trimmed
+    })
+    return changed ? next : value
+  }
+  if (value && typeof value === "object") {
+    let changed = false
+    const next: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value)) {
+      const trimmed = trimStringLeaves(v)
+      if (trimmed !== v) changed = true
+      next[k] = trimmed
+    }
+    return changed ? next : value
+  }
+  return value
 }
 
 export * as Tool from "./tool"

@@ -51,7 +51,7 @@ The upstreaming split for security-related product changes is documented in:
 
 | # | Feature | Status | Config key | Key files |
 |---|---------|--------|------------|-----------|
-| 1 | [Security & Network Validation](#1-security--network-validation) | Complete | `security` | `util/network.ts`, `util/audit.ts`, `tool/bash.ts`, `util/process.ts` |
+| 1 | [Security & Network Validation](#1-security--network-validation) | Complete | `security` | `util/network.ts`, `util/audit.ts`, `tool/shell.ts`, `util/process.ts` |
 | 2 | [Provenance & Event Tracing](#2-provenance--event-tracing) | POC/Complete | `provenance` | `provenance/index.ts` |
 | 3 | [Local llama.cpp Support](#3-local-llamacpp-support) | Complete | `provider.llama.cpp` | `provider/provider.ts` |
 | 4 | [Read Tool: Cursor Tracking](#4-read-tool-cursor-tracking) | Complete | — | `tool/read.ts` |
@@ -62,6 +62,7 @@ The upstreaming split for security-related product changes is documented in:
 | 9 | [Commands: /review, /learn, /provenance](#9-commands-review-learn-provenance) | Complete | — | `.opencode/command/` |
 | 10 | [TUI: Mouse Toggle & Slash Commands](#10-tui-mouse-toggle--slash-commands) | Partial | — | `tui/app.tsx` |
 | 11 | [Documentation & Specs](#11-documentation--specs) | Complete | — | `CLAUDE.md`, `specs/`, `packages/web/` |
+| 12 | [Tool-call Robustness](#12-tool-call-robustness) | Complete | — | `tool/tool.ts`, `session/llm.ts` |
 
 ---
 
@@ -88,11 +89,11 @@ Adds an enterprise security layer with two complementary mechanisms:
 | `packages/opencode/src/util/audit.ts` | Structured JSONL audit logger; logs URL checks, provider loads, model access, tool requests, sub-agent invocations, and denials to `~/.local/state/opencode/audit.jsonl` |
 | `packages/opencode/src/util/fetch.ts` | `auditedFetch()` / `auditedUrl()` — validates + logs all internal `fetch()` calls (instruction URLs, skill discovery); also used by Effect-based pipelines |
 | `packages/opencode/src/tool/command-guard.ts` | Read-only guard for review/learn sessions; blocks file writes, shell redirection, destructive git operations |
-| `packages/opencode/src/tool/webfetch.ts` | Validates + audit-logs before every fetch; validates redirects too |
+| `packages/opencode/src/tool/webfetch.ts` | Validates + audit-logs before every fetch; sanitizes Unicode steganography. Redirects auto-followed by Effect HttpClient (per-redirect validation not available) |
 | `packages/opencode/src/tool/websearch.ts` | Validates MCP endpoint URLs before search requests |
 | `packages/opencode/src/provider/models.ts` | Blocks models.dev fetch if security config disallows external URLs; audit-logs provider loads |
-| `packages/opencode/src/tool/bash.ts` | Subprocess sandbox via `sandboxedArgs()` — wraps bash spawn in bwrap/unshare network namespace |
-| `packages/opencode/src/util/process.ts` | `sandboxedCmd()` — wraps all `Process.spawn` calls (grep, ripgrep) in the same network namespace |
+| `packages/opencode/src/tool/shell.ts` | Subprocess sandbox via inline `sandboxedArgs()` — wraps shell spawn in bwrap/unshare network namespace. Renamed from `bash.ts` in the 2026-05-03 upstream merge; ToolID still `"bash"` for plugin/permission compatibility |
+| `packages/opencode/src/util/process.ts` | Legacy `sandboxedCmd()` helper — historically wrapped `Process.spawn` calls (grep, ripgrep). Grep/ripgrep are now in-process WASM workers; shell.ts uses its own inline `sandboxedArgs()` via Effect `ChildProcessSpawner` |
 | `packages/opencode/src/flag/flag.ts` | `OPENCODE_SPAWN_SANDBOX` flag definition |
 
 ### Configuration
@@ -389,6 +390,36 @@ Substantial documentation additions:
 | `packages/web/src/content/docs/tui.mdx` | TUI usage additions |
 | `packages/opencode/src/*/AGENTS.md` | Per-subsystem agent guidance files |
 | `packages/web/AGENTS.md` | Web package agent guidance |
+
+---
+
+## 12. Tool-call Robustness
+
+**Status:** Complete
+
+### What it does
+
+Two small generic hardenings to make less-capable models (Qwen3-class, local Llama variants, etc.) usable without burning rewrite rounds on protocol-shape issues that don't change tool intent:
+
+**Whitespace-trim retry** (`tool/tool.ts` `wrap()`): when schema decode fails, recursively trim string leaves in the args object/array and re-decode once. If the trimmed version validates, the tool runs; otherwise the ORIGINAL error is surfaced (so error messages stay truthful about what the model sent). Covers `format: " text "` and similar stray-whitespace cases on enum-typed params. The JSON Schema view shown to the LLM is unchanged — the `enum` constraint is still visible.
+
+**XML-style tool-call leak guidance** (`session/llm.ts` `experimental_repairToolCall`): when an AI-SDK adapter fails to translate a model's XML/Hermes-style tool call into JSON and the malformed tool name leaks through (e.g. `webfetch\n<parameter=format`), the error routed via the `invalid` tool now tells the model "This runtime expects JSON tool calls — emit input as a JSON object matching '<best-guess-tool>'s parameter schema" instead of just "unavailable tool". The deeper fix belongs in the AI-SDK provider; this is a graceful degradation.
+
+### Key files
+
+| File | Role |
+|------|------|
+| `packages/opencode/src/tool/tool.ts` | Generic `trimStringLeaves()` retry inside the decode pipeline of `Tool.define()`'s wrapper |
+| `packages/opencode/src/session/llm.ts` | `experimental_repairToolCall` enhancement — detects whitespace/`<` in tool name, suggests JSON format and the likely intended tool |
+
+### Tests
+
+`test/tool/webfetch.test.ts` includes a regression case calling webfetch with `format: " text "` — the trim retry runs once and the tool succeeds.
+
+### Known gaps
+
+- The trim retry only handles whitespace; other normalization shapes (lowercasing enum values, quote-style normalization, etc.) are not attempted. Could expand if specific patterns become common.
+- The XML-style tool-call repair only adds error-message guidance; it does not attempt to parse XML-style tool call args back into JSON. Different models use different tag conventions, so a generic parser would be brittle. The right fix is in the provider adapter.
 
 ---
 

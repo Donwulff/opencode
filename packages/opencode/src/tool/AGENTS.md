@@ -1,6 +1,13 @@
 ## Webfetch Tool (webfetch.ts)
 
 - `htmlparser2` `Parser` is fully synchronous — `write()` + `end()` + result access all happen in the same tick. Do NOT wrap `extractTextFromHTML()` in `async`/`Effect.promise`; call it directly.
+- `sanitizeForLLM` regex MUST use the `u` flag and `\u{...}` syntax for supra-BMP ranges (e.g. `/[\u{E0000}-\u{E007F}]/gu`). Without `u`, JS character-class parsing treats `0` as `` + `0`, producing a stray `0-` range that strips nearly all printable ASCII. The Unicode tag block is in plane 14 and only supra-BMP-aware regex matches it.
+
+## Config access in Effect-based tools
+
+Use `yield* Config.Service` in the OUTER `Tool.define` Effect.gen, then `yield* config.get()` inside `execute`. Do NOT use the standalone `Config.get()` async function — it runs `Effect.runPromise(get())` with no layer, so `InstanceState.use(state, ...)` dies with `InstanceRef not provided` in every realistic call path (the only callers that work are inside an `AppRuntime.runPromise` boundary that re-attaches refs via `attach()`).
+
+Tests for tools that pull Config must include `Config.defaultLayer` in the test layer; `it.instance(...)` provides InstanceRef via the fixture.
 
 ## URL Validation
 

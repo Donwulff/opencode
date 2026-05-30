@@ -99,7 +99,11 @@ output from system instructions.
   TurndownService conversion verbatim → **FIXED** in `webfetch.ts`: strip before markdown conversion
 - **Unicode steganography**: U+E0000–U+E007F tag-block and U+200B–U+200D zero-width
   characters encode base64 instructions invisible to humans but present in LLM token
-  stream → **FIXED** in `webfetch.ts`: `sanitizeForLLM()` strips both classes
+  stream → **FIXED** in `webfetch.ts`: `sanitizeForLLM()` strips both classes. (The
+  tag-block regex was originally `/[0-F]/g` — without the `u` flag, JS
+  parses that as `` + `0-` + `F-`, stripping printable ASCII
+  instead of the intended plane-14 range. Corrected to `/[\u{E0000}-\u{E007F}]/gu`;
+  the mitigation was non-functional from its introduction until this fix.)
 - **AGENTS.md auto-injection**: `InstructionPrompt.resolve()` auto-loads AGENTS.md/CLAUDE.md
   from any subdirectory the agent reads files in, injecting them as system instructions →
   **Partial** — workspace AGENTS.md is treated as trusted (intentional); bash network sandbox

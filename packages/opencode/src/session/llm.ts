@@ -277,10 +277,11 @@ const live: Layer.Layer<
             })
           },
           async experimental_repairToolCall(failed) {
-            const lower = failed.toolCall.toolName.toLowerCase()
-            if (lower !== failed.toolCall.toolName && prepared.tools[lower]) {
+            const original = failed.toolCall.toolName
+            const lower = original.toLowerCase()
+            if (lower !== original && prepared.tools[lower]) {
               l.info("repairing tool call", {
-                tool: failed.toolCall.toolName,
+                tool: original,
                 repaired: lower,
               })
               return {
@@ -288,11 +289,20 @@ const live: Layer.Layer<
                 toolName: lower,
               }
             }
+            // Detect XML/Hermes-style tool calls that leaked through as the tool name
+            // (e.g. "webfetch\n<parameter=format" or "webfetch<arg>..."). The provider
+            // adapter should normally convert these to JSON tool calls; when it doesn't,
+            // give the model an actionable hint instead of just "unavailable tool".
+            const head = original.split(/[\s<>]/, 1)[0]?.toLowerCase()
+            const guess = head && head !== lower && prepared.tools[head] ? head : undefined
+            const error = guess
+              ? `The tool name '${original}' looks like an XML-style tool call (e.g. <tool>\\n<parameter=...>). This runtime expects JSON tool calls — emit input as a JSON object matching '${guess}'s parameter schema.`
+              : failed.error.message
             return {
               ...failed.toolCall,
               input: JSON.stringify({
-                tool: failed.toolCall.toolName,
-                error: failed.error.message,
+                tool: original,
+                error,
               }),
               toolName: "invalid",
             }

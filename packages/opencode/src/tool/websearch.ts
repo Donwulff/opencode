@@ -105,6 +105,7 @@ export const WebSearchTool = Tool.define(
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
     const flags = yield* RuntimeFlags.Service
+    const config = yield* Config.Service
 
     return {
       get description() {
@@ -134,7 +135,7 @@ export const WebSearchTool = Tool.define(
             },
           })
 
-          const cfg = yield* Effect.promise(() => Config.get())
+          const cfg = yield* config.get()
           const securityConfig = cfg.security as SecurityConfigType | undefined
           if (securityConfig) {
             const mcpUrl = "https://mcp.exa.ai/mcp"

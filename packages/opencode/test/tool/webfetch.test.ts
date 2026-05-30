@@ -2,13 +2,16 @@ import { describe, expect } from "bun:test"
 import { Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { Agent } from "../../src/agent/agent"
+import { Config } from "@/config/config"
 import { Truncate } from "@/tool/truncate"
 import { WebFetchTool } from "../../src/tool/webfetch"
 import { SessionID, MessageID } from "../../src/session/schema"
 import { Tool } from "@/tool/tool"
 import { testEffect } from "../lib/effect"
 
-const it = testEffect(Layer.mergeAll(FetchHttpClient.layer, Truncate.defaultLayer, Agent.defaultLayer))
+const it = testEffect(
+  Layer.mergeAll(FetchHttpClient.layer, Truncate.defaultLayer, Agent.defaultLayer, Config.defaultLayer),
+)
 
 const ctx = {
   sessionID: SessionID.make("ses_test"),
@@ -107,6 +110,21 @@ describe("tool.webfetch", () => {
           const result = yield* exec({ url: new URL("/page.html", url).toString(), format: "text" })
           expect(result.output).toBe("Hello world")
           expect(result.attachments).toBeUndefined()
+        }),
+    ),
+  )
+
+  it.instance("tolerates whitespace-padded string params from less-capable models", () =>
+    withFetch(
+      () =>
+        new Response("hello", {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        }),
+      (url) =>
+        Effect.gen(function* () {
+          const result = yield* exec({ url: new URL("/file.txt", url).toString(), format: " text " } as never)
+          expect(result.output).toBe("hello")
         }),
     ),
   )

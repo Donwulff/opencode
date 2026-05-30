@@ -30,6 +30,7 @@ export const WebFetchTool = Tool.define(
   Effect.gen(function* () {
     const http = yield* HttpClient.HttpClient
     const httpOk = HttpClient.filterStatusOk(http)
+    const config = yield* Config.Service
 
     return {
       description: DESCRIPTION,
@@ -40,8 +41,7 @@ export const WebFetchTool = Tool.define(
             throw new Error("URL must start with http:// or https://")
           }
 
-          // Validate URL against security config
-          const cfg = yield* Effect.promise(() => Config.get())
+          const cfg = yield* config.get()
           const securityConfig = cfg.security as SecurityConfigType | undefined
           if (securityConfig) {
             const validation = validateUrlFromConfig(params.url, securityConfig)
@@ -178,7 +178,7 @@ export const WebFetchTool = Tool.define(
  */
 function sanitizeForLLM(text: string): string {
   return text
-    .replace(/[\uE0000-\uE007F]/g, "") // Unicode tag block — steganographic injection
+    .replace(/[\u{E0000}-\u{E007F}]/gu, "") // Unicode tag block — steganographic injection
     .replace(/[\u200B-\u200D\uFEFF]/g, "") // Zero-width characters
 }
 
