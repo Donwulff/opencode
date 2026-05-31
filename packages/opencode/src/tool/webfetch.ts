@@ -37,27 +37,31 @@ export const WebFetchTool = Tool.define(
       parameters: Parameters,
       execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
         Effect.gen(function* () {
-          if (!params.url.startsWith("http://") && !params.url.startsWith("https://")) {
+          // Trim defensively: less-capable models sometimes emit URLs with
+          // stray surrounding whitespace, which fails the startsWith check
+          // below and produces a confusing "must start with http://" error.
+          const url = params.url.trim()
+          if (!url.startsWith("http://") && !url.startsWith("https://")) {
             throw new Error("URL must start with http:// or https://")
           }
 
           const cfg = yield* config.get()
           const securityConfig = cfg.security as SecurityConfigType | undefined
           if (securityConfig) {
-            const validation = validateUrlFromConfig(params.url, securityConfig)
+            const validation = validateUrlFromConfig(url, securityConfig)
             if (!validation.allowed) {
-              auditLogger.logToolRequest(ctx.sessionID, "webfetch", params.url, "unknown", false, validation.reason)
+              auditLogger.logToolRequest(ctx.sessionID, "webfetch", url, "unknown", false, validation.reason)
               throw new Error(validation.reason)
             }
-            auditLogger.logToolRequest(ctx.sessionID, "webfetch", params.url, "unknown", true, "URL validated")
+            auditLogger.logToolRequest(ctx.sessionID, "webfetch", url, "unknown", true, "URL validated")
           }
 
           yield* ctx.ask({
             permission: "webfetch",
-            patterns: [params.url],
+            patterns: [url],
             always: ["*"],
             metadata: {
-              url: params.url,
+              url: url,
               format: params.format,
               timeout: params.timeout,
             },
@@ -89,7 +93,7 @@ export const WebFetchTool = Tool.define(
             "Accept-Language": "en-US,en;q=0.9",
           }
 
-          const request = HttpClientRequest.get(params.url).pipe(HttpClientRequest.setHeaders(headers))
+          const request = HttpClientRequest.get(url).pipe(HttpClientRequest.setHeaders(headers))
 
           // Retry with honest UA if blocked by Cloudflare bot detection (TLS fingerprint mismatch)
           const response = yield* httpOk.execute(request).pipe(
@@ -100,7 +104,7 @@ export const WebFetchTool = Tool.define(
                 err.reason.response.headers["cf-mitigated"] === "challenge",
               () =>
                 httpOk.execute(
-                  HttpClientRequest.get(params.url).pipe(
+                  HttpClientRequest.get(url).pipe(
                     HttpClientRequest.setHeaders({ ...headers, "User-Agent": "opencode" }),
                   ),
                 ),
@@ -121,7 +125,7 @@ export const WebFetchTool = Tool.define(
 
           const contentType = response.headers["content-type"] || ""
           const mime = contentType.split(";")[0]?.trim().toLowerCase() || ""
-          const title = `${params.url} (${contentType})`
+          const title = `${url} (${contentType})`
 
           if (isImageAttachment(mime)) {
             const base64Content = Buffer.from(arrayBuffer).toString("base64")

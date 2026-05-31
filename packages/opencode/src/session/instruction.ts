@@ -1,4 +1,5 @@
 import path from "path"
+import { SessionLegacy } from "@opencode-ai/core/session/legacy"
 import { Effect, Layer, Context } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { Config } from "@/config/config"
@@ -18,7 +19,7 @@ const files = (disableClaudeCodePrompt: boolean) => [
   "CONTEXT.md", // deprecated
 ]
 
-function extract(messages: MessageV2.WithParts[]) {
+function extract(messages: SessionLegacy.WithParts[]) {
   const paths = new Set<string>()
   for (const msg of messages) {
     for (const part of msg.parts) {
@@ -41,7 +42,7 @@ export interface Interface {
   readonly system: () => Effect.Effect<string[], AppFileSystem.Error>
   readonly find: (dir: string) => Effect.Effect<string | undefined, AppFileSystem.Error>
   readonly resolve: (
-    messages: MessageV2.WithParts[],
+    messages: SessionLegacy.WithParts[],
     filepath: string,
     messageID: MessageID,
   ) => Effect.Effect<{ filepath: string; content: string }[], AppFileSystem.Error>
@@ -182,7 +183,7 @@ export const layer: Layer.Layer<
     })
 
     const resolve = Effect.fn("Instruction.resolve")(function* (
-      messages: MessageV2.WithParts[],
+      messages: SessionLegacy.WithParts[],
       filepath: string,
       messageID: MessageID,
     ) {
@@ -237,7 +238,7 @@ export const defaultLayer = layer.pipe(
   Layer.provide(RuntimeFlags.defaultLayer),
 )
 
-export function loaded(messages: MessageV2.WithParts[]) {
+export function loaded(messages: SessionLegacy.WithParts[]) {
   return extract(messages)
 }
 

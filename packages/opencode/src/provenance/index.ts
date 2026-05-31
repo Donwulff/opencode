@@ -1,14 +1,9 @@
-import { Bus } from "@/bus"
-import { Command } from "@/command"
 import { Config } from "@/config/config"
 import { Global } from "@opencode-ai/core/global"
 import { Installation } from "@/installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Instance } from "@/project/instance"
-import { Session } from "@/session/session"
-import { SessionCompaction } from "@/session/compaction"
-import { MessageV2 } from "@/session/message-v2"
-import { SessionStatus } from "@/session/status"
+import { SessionLegacy } from "@opencode-ai/core/session/legacy"
 import { Lock } from "@/util/lock"
 import * as Log from "@opencode-ai/core/util/log"
 import { createHash, randomUUID } from "node:crypto"
@@ -122,7 +117,7 @@ export namespace Provenance {
     }
   }
 
-  async function tool(part: MessageV2.ToolPart) {
+  async function tool(part: SessionLegacy.ToolPart) {
     const current = await state()
     if (!current.enabled) return
     if (part.state.status !== "completed" && part.state.status !== "error") return
@@ -169,7 +164,7 @@ export namespace Provenance {
     })
   }
 
-  async function assistant(msg: MessageV2.Assistant) {
+  async function assistant(msg: SessionLegacy.Assistant) {
     const current = await state()
     if (!current.enabled) return
     if (!msg.time.completed) return
@@ -241,116 +236,14 @@ export namespace Provenance {
       await mkdir(path.dirname(file), { recursive: true })
       await mkdir(path.dirname(incidents), { recursive: true })
 
-      next.unsub.push(
-        Bus.subscribe(Session.Event.Created, (event) => {
-          void mark({
-            kind: "session.created",
-            level: "info",
-            sessionID: event.properties.info.id,
-            data: {
-              title: event.properties.info.title,
-              directory: event.properties.info.directory,
-              parent_id: event.properties.info.parentID,
-            },
-          })
-        }),
-      )
-
-      next.unsub.push(
-        Bus.subscribe(Session.Event.Deleted, (event) => {
-          void mark({
-            kind: "session.deleted",
-            level: "warn",
-            sessionID: event.properties.info.id,
-          })
-        }),
-      )
-
-      next.unsub.push(
-        Bus.subscribe(Session.Event.Error, (event) => {
-          const error = event.properties.error
-          if (!error) return
-          const detail = error.data as Record<string, unknown>
-          void mark({
-            kind: "session.error",
-            level: "error",
-            sessionID: event.properties.sessionID,
-            data: {
-              error: error.name,
-              message: typeof detail.message === "string" ? detail.message : undefined,
-            },
-          })
-        }),
-      )
-
-      next.unsub.push(
-        Bus.subscribe(Command.Event.Executed, (event) => {
-          const argumentsText = event.properties.arguments.trim()
-          void mark({
-            kind: "command.executed",
-            level: "info",
-            sessionID: event.properties.sessionID,
-            data: {
-              name: event.properties.name,
-              message_id: event.properties.messageID,
-              arguments_hash: hash(argumentsText),
-              arguments_preview: preview(argumentsText, previewChars),
-            },
-          })
-        }),
-      )
-
-      next.unsub.push(
-        Bus.subscribe(MessageV2.Event.Updated, (event) => {
-          if (event.properties.info.role !== "assistant") return
-          void assistant(event.properties.info).catch((error) => {
-            log.error("failed to record assistant completion", {
-              messageID: event.properties.info.id,
-              error,
-            })
-          })
-        }),
-      )
-
-      next.unsub.push(
-        Bus.subscribe(MessageV2.Event.PartUpdated, (event) => {
-          const part = event.properties.part
-          if (part.type !== "tool") return
-          void tool(part as MessageV2.ToolPart).catch((error) => {
-            log.error("failed to record tool outcome", {
-              partID: part.id,
-              tool: part.tool,
-              error,
-            })
-          })
-        }),
-      )
-
-      next.unsub.push(
-        Bus.subscribe(SessionStatus.Event.Status, (event) => {
-          if (event.properties.status.type !== "retry") return
-          void mark({
-            kind: "session.retry",
-            level: "warn",
-            sessionID: event.properties.sessionID,
-            data: {
-              attempt: event.properties.status.attempt,
-              message: event.properties.status.message,
-              next: event.properties.status.next,
-            },
-          })
-        }),
-      )
-
-      next.unsub.push(
-        Bus.subscribe(SessionCompaction.Event.Compacted, (event) => {
-          void mark({
-            kind: "session.compacted",
-            level: "info",
-            sessionID: event.properties.sessionID,
-          })
-        }),
-      )
+      // Event subscriptions disabled pending port from Bus.subscribe to EventV2 streams.
+      // Upstream removed Bus.subscribe in the database-schema-ownership refactor (#29068)
+      // — provenance write/paths APIs still work, but live event capture is off until a
+      // SessionLegacy.Event listener is wired through the new EventV2.Service. Tracked in
+      // FORK-CHANGES.md §2.
+      void tool
+      void assistant
+      void mark
 
       log.info("provenance enabled", {
         file,
