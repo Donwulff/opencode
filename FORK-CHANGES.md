@@ -176,6 +176,7 @@ Records a structured event log for every session: tool calls (with input/output 
 - No compliance export workflow (users must build their own)
 - No data retention/rotation policy
 - `/learn` command integration with provenance incidents is mentioned but not fully wired
+- **Live event capture is currently OFF** following upstream's database-schema refactor (PR #29068) which removed the `Bus.subscribe` API the fork relied on. Path helpers (`Provenance.filePath`, `paths()`) and the `write()` API still work, so a manual `mark()` call or a future `EventV2.Service` stream listener will resume capture. The `Bus.subscribe` block in `provenance/index.ts` is currently a stub.
 
 ---
 
