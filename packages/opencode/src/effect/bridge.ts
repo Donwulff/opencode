@@ -3,6 +3,9 @@ import { WorkspaceContext } from "@/control-plane/workspace-context"
 import type { WorkspaceV2 } from "@opencode-ai/core/workspace"
 import { InstanceRef, WorkspaceRef } from "./instance-ref"
 import { attachWith } from "./run-service"
+import * as Log from "@opencode-ai/core/util/log"
+
+const log = Log.create({ service: "effect.bridge" })
 
 export interface Shape {
   readonly promise: <A, E, R>(effect: Effect.Effect<A, E, R>) => Promise<A>
@@ -55,8 +58,15 @@ export function make(): Effect.Effect<Shape> {
   return Effect.gen(function* () {
     const ctx = yield* Effect.context()
     const captured = captureSync()
-    const instance = (yield* InstanceRef) ?? captured.instance
+    const fromRef = yield* InstanceRef
+    const instance = fromRef ?? captured.instance
     const workspace = (yield* WorkspaceRef) ?? captured.workspace
+    log.info("EffectBridge.make capture", {
+      hasRef: !!fromRef,
+      hasCaptured: !!captured.instance,
+      hasWorkspace: !!workspace,
+      ctxHasInstance: Context.getReferenceUnsafe(ctx, InstanceRef) !== undefined,
+    })
     const wrap = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
       attachWith(effect.pipe(Effect.provide(ctx)) as Effect.Effect<A, E, never>, { instance, workspace })
 
