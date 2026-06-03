@@ -2,7 +2,7 @@ import { Effect, Option, Schema, Scope, Stream } from "effect"
 import { NonNegativeInt } from "@opencode-ai/core/schema"
 import * as path from "path"
 import * as Tool from "./tool"
-import { AppFileSystem } from "@opencode-ai/core/filesystem"
+import { FSUtil } from "@opencode-ai/core/fs-util"
 import { LSP } from "@/lsp/lsp"
 import DESCRIPTION from "./read.txt"
 import { InstanceState } from "@/effect/instance-state"
@@ -38,7 +38,7 @@ export const Parameters = Schema.Struct({
 export const ReadTool = Tool.define(
   "read",
   Effect.gen(function* () {
-    const fs = yield* AppFileSystem.Service
+    const fs = yield* FSUtil.Service
     const instruction = yield* Instruction.Service
     const lsp = yield* LSP.Service
     const reference = yield* Reference.Service
@@ -207,7 +207,7 @@ export const ReadTool = Tool.define(
         filepath = path.resolve(instance.directory, filepath)
       }
       if (process.platform === "win32") {
-        filepath = AppFileSystem.normalizePath(filepath)
+        filepath = FSUtil.normalizePath(filepath)
       }
       yield* reference.ensure(filepath)
       const title = path.relative(instance.worktree, filepath)
@@ -264,7 +264,7 @@ export const ReadTool = Tool.define(
       const loaded = yield* instruction.resolve(ctx.messages, filepath, ctx.messageID)
       const sample = yield* readSample(filepath, Number(stat.size), SAMPLE_BYTES)
 
-      const mime = sniffAttachmentMime(sample, AppFileSystem.mimeType(filepath))
+      const mime = sniffAttachmentMime(sample, FSUtil.mimeType(filepath))
       const isImage = SUPPORTED_IMAGE_MIMES.has(mime)
 
       if (isImage || isPdfAttachment(mime)) {
