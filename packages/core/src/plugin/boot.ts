@@ -24,6 +24,7 @@ import { ConfigProviderPlugin } from "../config/plugin/provider"
 import { EnvPlugin } from "./env"
 import { ModelsDevPlugin } from "./models-dev"
 import { ProviderPlugins } from "./provider"
+import { RestrictProvidersPlugin } from "./provider/restrict"
 import { SkillV2 } from "../skill"
 
 type Plugin = {
@@ -104,6 +105,9 @@ export const layer = Layer.effect(
       yield* add(ConfigAgentPlugin.Plugin)
       yield* add(ConfigCommandPlugin.Plugin)
       yield* add(ConfigSkillPlugin.Plugin)
+      // Registered last so its catalog.transform runs after the provider/config plugins
+      // that enable providers, giving the restriction filter the final say on `enabled`.
+      yield* add(RestrictProvidersPlugin)
     }).pipe(Effect.withSpan("PluginBoot.boot"))
 
     yield* boot.pipe(

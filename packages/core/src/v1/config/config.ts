@@ -68,6 +68,10 @@ export const Info = Schema.Struct({
   enabled_providers: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
     description: "When set, ONLY these providers will be enabled. All other providers will be ignored",
   }),
+  restrict_to_configured_providers: Schema.optional(Schema.Boolean).annotate({
+    description:
+      "When true, only providers explicitly defined in 'provider' are available; all others (cloud, models.dev catalog) are hidden. Intended for managed/restricted environments. Also driven by the OPENCODE_RESTRICT_PROVIDERS env flag.",
+  }),
   model: Schema.optional(Schema.String).annotate({
     description: "Model to use in the format of provider/model, eg anthropic/claude-2",
   }),

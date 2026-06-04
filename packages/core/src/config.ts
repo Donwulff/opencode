@@ -100,6 +100,10 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   }),
   experimental: ConfigExperimental.Experimental.pipe(Schema.optional),
   providers: Schema.Record(Schema.String, ConfigProvider.Info).pipe(Schema.optional),
+  restrict_to_configured_providers: Schema.Boolean.pipe(Schema.optional).annotate({
+    description:
+      "When true, only providers explicitly defined in 'providers' are available; all others (cloud, models.dev catalog) are hidden. Intended for managed/restricted environments. Also driven by the OPENCODE_RESTRICT_PROVIDERS env flag.",
+  }),
 }) {}
 
 export class Document extends Schema.Class<Document>("Config.Document")({

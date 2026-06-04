@@ -124,10 +124,6 @@ async function resolveLoadedPlugins<T extends { plugin?: ConfigPluginV1.Spec[] }
 // the parse sites below use this local `Info` rather than `ConfigV1.Info`.
 export const Info = Schema.Struct({
   ...ConfigV1.Info.fields,
-  restrict_to_configured_providers: Schema.optional(Schema.Boolean).annotate({
-    description:
-      "When true, only providers explicitly defined in 'provider' config are available. All others (cloud, models.dev catalog) are hidden. Intended for managed/restricted environments.",
-  }),
   security: Schema.optional(SecurityConfigSchema).annotate({
     description: "Security configuration for audit logging and network controls",
   }),
