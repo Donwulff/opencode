@@ -6,7 +6,6 @@ import os from "os"
 import { mergeDeep } from "remeda"
 import { Global } from "@opencode-ai/core/global"
 import fsNode from "fs/promises"
-import { NamedError } from "@opencode-ai/core/util/error"
 import { Flag } from "@opencode-ai/core/flag/flag"
 import { Auth } from "../auth"
 import { Env } from "../env"
@@ -21,36 +20,27 @@ import { validateUrlFromConfig, SecurityConfigSchema, type SecurityConfigType } 
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Account } from "@/account/account"
 import { isRecord } from "@/util/record"
-import type { ConsoleState } from "./console-state"
+import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
 import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
 import { containsPath, type InstanceContext } from "../project/instance-context"
-import { NonNegativeInt, PositiveInt, type DeepMutable } from "@opencode-ai/core/schema"
+import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
+import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
+import { ConfigPluginV1 } from "@opencode-ai/core/v1/config/plugin"
 import { ConfigAgent } from "./agent"
-import { ConfigAttachment } from "./attachment"
 import { ConfigCommand } from "./command"
-import { ConfigFormatter } from "./formatter"
-import { ConfigLayout } from "./layout"
-import { ConfigLSP } from "./lsp"
 import { ConfigManaged } from "./managed"
-import { ConfigMCP } from "./mcp"
-import { ConfigModelID } from "./model-id"
 import { ConfigNetwork } from "./network"
+import { PositiveInt, type DeepMutable } from "@opencode-ai/core/schema"
 import { ConfigParse } from "./parse"
 import { ConfigPaths } from "./paths"
-import { ConfigPermission } from "./permission"
 import { ConfigPlugin } from "./plugin"
-import { ConfigProvider } from "./provider"
-import { ConfigReference } from "./reference"
-import { ConfigServer } from "./server"
-import { ConfigSkills } from "./skills"
 import { ConfigVariable } from "./variable"
 import { Npm } from "@opencode-ai/core/npm"
 import { withTransientReadRetry } from "@/util/effect-http-client"
-import { ConfigExperimental } from "@opencode-ai/core/config/experimental"
 
 const log = Log.create({ service: "config" })
 
@@ -117,12 +107,7 @@ async function substituteWellKnownRemoteConfig(input: {
   return { url, headers }
 }
 
-const WellKnownConfig = Schema.Struct({
-  config: Schema.optional(Schema.Json),
-  remote_config: Schema.optional(Schema.Json),
-})
-
-async function resolveLoadedPlugins<T extends { plugin?: ConfigPlugin.Spec[] }>(config: T, filepath: string) {
+async function resolveLoadedPlugins<T extends { plugin?: ConfigPluginV1.Spec[] }>(config: T, filepath: string) {
   if (!config.plugin) return config
   for (let i = 0; i < config.plugin.length; i++) {
     // Normalize path-like plugin specs while we still know which config file declared them.
@@ -132,137 +117,17 @@ async function resolveLoadedPlugins<T extends { plugin?: ConfigPlugin.Spec[] }>(
   return config
 }
 
-export type Layout = ConfigLayout.Layout
-
-const LogLevelRef = Schema.Literals(["DEBUG", "INFO", "WARN", "ERROR"]).annotate({
-  identifier: "LogLevel",
-  description: "Log level",
-})
-
+// Fork superset of the upstream config schema. Spreads every field from the canonical
+// `ConfigV1.Info` (so upstream config additions are inherited automatically) and layers the
+// fork-only security/network fields on top. Parsing (`ConfigParse.schema`) rejects unknown
+// top-level keys, so these must live in the schema that actually decodes user config — hence
+// the parse sites below use this local `Info` rather than `ConfigV1.Info`.
 export const Info = Schema.Struct({
-  $schema: Schema.optional(Schema.String).annotate({
-    description: "JSON schema reference for configuration validation",
-  }),
-  shell: Schema.optional(Schema.String).annotate({
-    description: "Default shell to use for terminal and bash tool",
-  }),
-  logLevel: Schema.optional(LogLevelRef).annotate({ description: "Log level" }),
-  server: Schema.optional(ConfigServer.Server).annotate({
-    description: "Server configuration for opencode serve and web commands",
-  }),
-  command: Schema.optional(Schema.Record(Schema.String, ConfigCommand.Info)).annotate({
-    description: "Command configuration, see https://opencode.ai/docs/commands",
-  }),
-  skills: Schema.optional(ConfigSkills.Info).annotate({ description: "Additional skill folder paths" }),
-  reference: Schema.optional(ConfigReference.Info).annotate({
-    description: "Named git or local directory references that can be mentioned as @alias or @alias/path",
-  }),
-  watcher: Schema.optional(
-    Schema.Struct({
-      ignore: Schema.optional(Schema.mutable(Schema.Array(Schema.String))),
-    }),
-  ),
-  snapshot: Schema.optional(Schema.Boolean).annotate({
-    description:
-      "Enable or disable snapshot tracking. When false, filesystem snapshots are not recorded and undoing or reverting will not undo/redo file changes. Defaults to true.",
-  }),
-  // User-facing plugin config is stored as Specs; provenance gets attached later while configs are merged.
-  plugin: Schema.optional(Schema.mutable(Schema.Array(ConfigPlugin.Spec))),
-  share: Schema.optional(Schema.Literals(["manual", "auto", "disabled"])).annotate({
-    description:
-      "Control sharing behavior:'manual' allows manual sharing via commands, 'auto' enables automatic sharing, 'disabled' disables all sharing",
-  }),
-  autoshare: Schema.optional(Schema.Boolean).annotate({
-    description: "@deprecated Use 'share' field instead. Share newly created sessions automatically",
-  }),
-  autoupdate: Schema.optional(Schema.Union([Schema.Boolean, Schema.Literal("notify")])).annotate({
-    description:
-      "Automatically update to the latest version. Set to true to auto-update, false to disable, or 'notify' to show update notifications",
-  }),
-  disabled_providers: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-    description: "Disable providers that are loaded automatically",
-  }),
-  enabled_providers: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-    description: "When set, ONLY these providers will be enabled. All other providers will be ignored",
-  }),
+  ...ConfigV1.Info.fields,
   restrict_to_configured_providers: Schema.optional(Schema.Boolean).annotate({
     description:
       "When true, only providers explicitly defined in 'provider' config are available. All others (cloud, models.dev catalog) are hidden. Intended for managed/restricted environments.",
   }),
-  model: Schema.optional(ConfigModelID).annotate({
-    description: "Model to use in the format of provider/model, eg anthropic/claude-2",
-  }),
-  small_model: Schema.optional(ConfigModelID).annotate({
-    description: "Small model to use for tasks like title generation in the format of provider/model",
-  }),
-  default_agent: Schema.optional(Schema.String).annotate({
-    description:
-      "Default agent to use when none is specified. Must be a primary agent. Falls back to 'build' if not set or if the specified agent is invalid.",
-  }),
-  username: Schema.optional(Schema.String).annotate({
-    description: "Custom username to display in conversations instead of system username",
-  }),
-  mode: Schema.optional(
-    Schema.StructWithRest(
-      Schema.Struct({
-        build: Schema.optional(ConfigAgent.Info),
-        plan: Schema.optional(ConfigAgent.Info),
-      }),
-      [Schema.Record(Schema.String, ConfigAgent.Info)],
-    ),
-  ).annotate({ description: "@deprecated Use `agent` field instead." }),
-  agent: Schema.optional(
-    Schema.StructWithRest(
-      Schema.Struct({
-        // primary
-        plan: Schema.optional(ConfigAgent.Info),
-        build: Schema.optional(ConfigAgent.Info),
-        // subagent
-        general: Schema.optional(ConfigAgent.Info),
-        explore: Schema.optional(ConfigAgent.Info),
-        // specialized
-        title: Schema.optional(ConfigAgent.Info),
-        summary: Schema.optional(ConfigAgent.Info),
-        compaction: Schema.optional(ConfigAgent.Info),
-      }),
-      [Schema.Record(Schema.String, ConfigAgent.Info)],
-    ),
-  ).annotate({ description: "Agent configuration, see https://opencode.ai/docs/agents" }),
-  provider: Schema.optional(Schema.Record(Schema.String, ConfigProvider.Info)).annotate({
-    description: "Custom provider configurations and model overrides",
-  }),
-  mcp: Schema.optional(
-    Schema.Record(
-      Schema.String,
-      Schema.Union([
-        ConfigMCP.Info,
-        // Matches the legacy `{ enabled: false }` form used to disable a server.
-        Schema.Struct({ enabled: Schema.Boolean }),
-      ]),
-    ),
-  ).annotate({ description: "MCP (Model Context Protocol) server configurations" }),
-  formatter: Schema.optional(ConfigFormatter.Info).annotate({
-    description:
-      "Enable or configure formatters. Omit or set to false to disable, true to enable built-ins, or an object to enable built-ins with overrides.",
-  }),
-  lsp: Schema.optional(ConfigLSP.Info).annotate({
-    description:
-      "Enable or configure LSP servers. Omit or set to false to disable, true to enable built-ins, or an object to enable built-ins with overrides.",
-  }),
-  instructions: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-    description: "Additional instruction files or patterns to include",
-  }),
-  layout: Schema.optional(ConfigLayout.Layout).annotate({ description: "@deprecated Always uses stretch layout." }),
-  permission: Schema.optional(ConfigPermission.Info),
-  tools: Schema.optional(Schema.Record(Schema.String, Schema.Boolean)),
-  attachment: Schema.optional(ConfigAttachment.Info).annotate({
-    description: "Attachment processing configuration, including image size limits and resizing behavior",
-  }),
-  enterprise: Schema.optional(
-    Schema.Struct({
-      url: Schema.optional(Schema.String).annotate({ description: "Enterprise URL" }),
-    }),
-  ),
   security: Schema.optional(SecurityConfigSchema).annotate({
     description: "Security configuration for audit logging and network controls",
   }),
@@ -279,60 +144,6 @@ export const Info = Schema.Struct({
       }),
     }),
   ).annotate({ description: "Provenance logging configuration" }),
-  tool_output: Schema.optional(
-    Schema.Struct({
-      max_lines: Schema.optional(PositiveInt).annotate({
-        description: "Maximum lines of tool output before it is truncated and saved to disk (default: 2000)",
-      }),
-      max_bytes: Schema.optional(PositiveInt).annotate({
-        description: "Maximum bytes of tool output before it is truncated and saved to disk (default: 51200)",
-      }),
-    }),
-  ).annotate({
-    description:
-      "Thresholds for truncating tool output. When output exceeds either limit, the full text is written to the truncation directory and a preview is returned.",
-  }),
-  compaction: Schema.optional(
-    Schema.Struct({
-      auto: Schema.optional(Schema.Boolean).annotate({
-        description: "Enable automatic compaction when context is full (default: true)",
-      }),
-      prune: Schema.optional(Schema.Boolean).annotate({
-        description: "Enable pruning of old tool outputs (default: true)",
-      }),
-      tail_turns: Schema.optional(NonNegativeInt).annotate({
-        description:
-          "Number of recent user turns, including their following assistant/tool responses, to keep verbatim during compaction (default: 2)",
-      }),
-      preserve_recent_tokens: Schema.optional(NonNegativeInt).annotate({
-        description: "Maximum number of tokens from recent turns to preserve verbatim after compaction",
-      }),
-      reserved: Schema.optional(NonNegativeInt).annotate({
-        description: "Token buffer for compaction. Leaves enough window to avoid overflow during compaction.",
-      }),
-    }),
-  ),
-  experimental: Schema.optional(
-    Schema.Struct({
-      disable_paste_summary: Schema.optional(Schema.Boolean),
-      batch_tool: Schema.optional(Schema.Boolean).annotate({ description: "Enable the batch tool" }),
-      openTelemetry: Schema.optional(Schema.Boolean).annotate({
-        description: "Enable OpenTelemetry spans for AI SDK calls (using the 'experimental_telemetry' flag)",
-      }),
-      primary_tools: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-        description: "Tools that should only be available to primary agents.",
-      }),
-      continue_loop_on_deny: Schema.optional(Schema.Boolean).annotate({
-        description: "Continue the agent loop when a tool call is denied",
-      }),
-      mcp_timeout: Schema.optional(PositiveInt).annotate({
-        description: "Timeout in milliseconds for model context protocol (MCP) requests",
-      }),
-      policies: Schema.optional(Schema.mutable(Schema.Array(ConfigExperimental.Policy))).annotate({
-        description: "Policy statements applied to supported resources, such as provider access",
-      }),
-    }),
-  ),
 }).annotate({ identifier: "Config" })
 
 // Uses the shared `DeepMutable` from `@opencode-ai/core/schema`. See the definition
@@ -401,12 +212,6 @@ function writableGlobal(info: Info) {
   if ("shell" in next && next.shell === "") return { ...next, shell: undefined }
   return next
 }
-
-export const ConfigDirectoryTypoError = NamedError.create("ConfigDirectoryTypoError", {
-  path: Schema.String,
-  dir: Schema.String,
-  suggestion: Schema.String,
-})
 
 export const layer = Layer.effect(
   Service,
@@ -552,7 +357,7 @@ export const layer = Layer.effect(
           source: string,
           // mergePluginOrigins receives raw Specs from one config source, before provenance for this merge step
           // is attached.
-          list: ConfigPlugin.Spec[] | undefined,
+          list: ConfigPluginV1.Spec[] | undefined,
           // Scope can be inferred from the source path, but some callers already know whether the config should
           // behave as global or local and can pass that explicitly.
           kind?: ConfigPlugin.Scope,
@@ -580,7 +385,7 @@ export const layer = Layer.effect(
             authEnv[value.key] = value.token
             const wellknownURL = `${url}/.well-known/opencode`
             log.debug("fetching remote config", { url: wellknownURL })
-            const wellknown = yield* fetchRemoteJson(wellknownURL, undefined, WellKnownConfig)
+            const wellknown = yield* fetchRemoteJson(wellknownURL, undefined, ConfigV1.WellKnown)
             const remote = yield* Effect.promise(() =>
               substituteWellKnownRemoteConfig({
                 value: wellknown.remote_config,
@@ -775,9 +580,9 @@ export const layer = Layer.effect(
         }
 
         if (result.tools) {
-          const perms: Record<string, ConfigPermission.Action> = {}
+          const perms: Record<string, ConfigPermissionV1.Action> = {}
           for (const [tool, enabled] of Object.entries(result.tools)) {
-            const action: ConfigPermission.Action = enabled ? "allow" : "deny"
+            const action: ConfigPermissionV1.Action = enabled ? "allow" : "deny"
             if (tool === "write" || tool === "edit" || tool === "patch") {
               perms.edit = action
               continue

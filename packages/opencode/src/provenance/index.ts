@@ -3,7 +3,7 @@ import { Global } from "@opencode-ai/core/global"
 import { Installation } from "@/installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { Instance } from "@/project/instance"
-import { SessionLegacy } from "@opencode-ai/core/session/legacy"
+import { SessionV1 } from "@opencode-ai/core/v1/session"
 import { Lock } from "@/util/lock"
 import * as Log from "@opencode-ai/core/util/log"
 import { createHash, randomUUID } from "node:crypto"
@@ -117,7 +117,7 @@ export namespace Provenance {
     }
   }
 
-  async function tool(part: SessionLegacy.ToolPart) {
+  async function tool(part: SessionV1.ToolPart) {
     const current = await state()
     if (!current.enabled) return
     if (part.state.status !== "completed" && part.state.status !== "error") return
@@ -164,7 +164,7 @@ export namespace Provenance {
     })
   }
 
-  async function assistant(msg: SessionLegacy.Assistant) {
+  async function assistant(msg: SessionV1.Assistant) {
     const current = await state()
     if (!current.enabled) return
     if (!msg.time.completed) return

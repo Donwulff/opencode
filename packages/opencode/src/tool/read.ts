@@ -35,7 +35,37 @@ export const Parameters = Schema.Struct({
   }),
 })
 
-export const ReadTool = Tool.define(
+type Display =
+  | {
+      type: "directory"
+      path: string
+      entries: string[]
+      offset: number
+      totalEntries: number
+      truncated: boolean
+    }
+  | {
+      type: "file"
+      path: string
+      text: string
+      lineStart: number
+      lineEnd: number
+      totalLines: number
+      truncated: boolean
+    }
+
+type Metadata = {
+  preview: string
+  truncated: boolean
+  loaded: string[]
+  display?: Display
+}
+
+export const ReadTool = Tool.define<
+  typeof Parameters,
+  Metadata,
+  FSUtil.Service | Instruction.Service | LSP.Service | Reference.Service | Scope.Scope
+>(
   "read",
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
@@ -199,7 +229,7 @@ export const ReadTool = Tool.define(
 
     const run = Effect.fn("ReadTool.execute")(function* (
       params: Schema.Schema.Type<typeof Parameters>,
-      ctx: Tool.Context,
+      ctx: Tool.Context<Metadata>,
     ) {
       const instance = yield* InstanceState.context
       let filepath = params.filePath
@@ -257,6 +287,14 @@ export const ReadTool = Tool.define(
             preview: sliced.slice(0, 20).join("\n"),
             truncated,
             loaded: [] as string[],
+            display: {
+              type: "directory" as const,
+              path: filepath,
+              entries: sliced,
+              offset,
+              totalEntries: items.length,
+              truncated,
+            },
           },
         }
       }
@@ -327,6 +365,15 @@ export const ReadTool = Tool.define(
           preview: file.raw.slice(0, 20).join("\n"),
           truncated,
           loaded: loaded.map((item) => item.filepath),
+          display: {
+            type: "file" as const,
+            path: filepath,
+            text: file.raw.join("\n"),
+            lineStart: file.offset,
+            lineEnd: last,
+            totalLines: file.count,
+            truncated,
+          },
         },
       }
     })
@@ -334,7 +381,7 @@ export const ReadTool = Tool.define(
     return {
       description: DESCRIPTION,
       parameters: Parameters,
-      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context) =>
+      execute: (params: Schema.Schema.Type<typeof Parameters>, ctx: Tool.Context<Metadata>) =>
         run(params, ctx).pipe(Effect.orDie),
     }
   }),
