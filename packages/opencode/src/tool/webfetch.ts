@@ -8,11 +8,7 @@ import { auditLogger } from "@/util/audit"
 import { validateUrlFromConfig } from "@/util/network"
 import type { SecurityConfigType } from "@/util/network"
 import { Config } from "@/config/config"
-import { InstanceRef } from "@/effect/instance-ref"
 import { isImageAttachment } from "@/util/media"
-import * as Log from "@opencode-ai/core/util/log"
-
-const log = Log.create({ service: "tool.webfetch" })
 
 const MAX_RESPONSE_SIZE = 5 * 1024 * 1024 // 5MB
 const DEFAULT_TIMEOUT = 30 * 1000 // 30 seconds
@@ -48,12 +44,6 @@ export const WebFetchTool = Tool.define(
           if (!url.startsWith("http://") && !url.startsWith("https://")) {
             throw new Error("URL must start with http:// or https://")
           }
-
-          const refProbe = yield* InstanceRef
-          log.info("webfetch execute entry", {
-            sessionID: ctx.sessionID,
-            hasInstanceRef: !!refProbe,
-          })
 
           const cfg = yield* config.get()
           const securityConfig = cfg.security as SecurityConfigType | undefined
