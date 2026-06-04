@@ -16,7 +16,7 @@ import { GlobalBus } from "@/bus/global"
 import { Event } from "../server/event"
 import { iife } from "@/util/iife"
 import { auditLogger, setAuditLogEnabled } from "@/util/audit"
-import { validateUrlFromConfig, SecurityConfigSchema, type SecurityConfigType } from "@/util/network"
+import { validateUrlFromConfig, type SecurityConfigType } from "@/util/network"
 import { ModelsDev } from "@opencode-ai/core/models-dev"
 import { Account } from "@/account/account"
 import { isRecord } from "@/util/record"
@@ -124,9 +124,6 @@ async function resolveLoadedPlugins<T extends { plugin?: ConfigPluginV1.Spec[] }
 // the parse sites below use this local `Info` rather than `ConfigV1.Info`.
 export const Info = Schema.Struct({
   ...ConfigV1.Info.fields,
-  security: Schema.optional(SecurityConfigSchema).annotate({
-    description: "Security configuration for audit logging and network controls",
-  }),
   network: Schema.optional(ConfigNetwork.Info).annotate({
     description:
       "Container-level networking policy. Currently only 'egress' is used, consumed by the analysis-container entrypoint to program nftables. Has no effect outside the container entrypoint.",

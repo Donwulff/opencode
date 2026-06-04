@@ -16,6 +16,7 @@ import { ConfigProviderV1 } from "./provider"
 import { ConfigReferenceV1 } from "./reference"
 import { ConfigServerV1 } from "./server"
 import { ConfigSkillsV1 } from "./skills"
+import { SecurityConfigSchema } from "../../util/network"
 
 export type Layout = ConfigLayoutV1.Layout
 
@@ -71,6 +72,9 @@ export const Info = Schema.Struct({
   restrict_to_configured_providers: Schema.optional(Schema.Boolean).annotate({
     description:
       "When true, only providers explicitly defined in 'provider' are available; all others (cloud, models.dev catalog) are hidden. Intended for managed/restricted environments. Also driven by the OPENCODE_RESTRICT_PROVIDERS env flag.",
+  }),
+  security: Schema.optional(SecurityConfigSchema).annotate({
+    description: "Security configuration for audit logging and network controls",
   }),
   model: Schema.optional(Schema.String).annotate({
     description: "Model to use in the format of provider/model, eg anthropic/claude-2",

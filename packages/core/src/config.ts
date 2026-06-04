@@ -24,6 +24,7 @@ import { ConfigToolOutput } from "./config/tool-output"
 import { ConfigWatcher } from "./config/watcher"
 import { ConfigV1 } from "./v1/config/config"
 import { ConfigMigrateV1 } from "./v1/config/migrate"
+import { SecurityConfigSchema } from "./util/network"
 
 export class Info extends Schema.Class<Info>("Config.Info")({
   $schema: Schema.optional(Schema.String).annotate({
@@ -103,6 +104,9 @@ export class Info extends Schema.Class<Info>("Config.Info")({
   restrict_to_configured_providers: Schema.Boolean.pipe(Schema.optional).annotate({
     description:
       "When true, only providers explicitly defined in 'providers' are available; all others (cloud, models.dev catalog) are hidden. Intended for managed/restricted environments. Also driven by the OPENCODE_RESTRICT_PROVIDERS env flag.",
+  }),
+  security: SecurityConfigSchema.pipe(Schema.optional).annotate({
+    description: "Security configuration for audit logging and network controls",
   }),
 }) {}
 
