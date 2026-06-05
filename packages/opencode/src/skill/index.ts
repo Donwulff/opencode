@@ -16,6 +16,10 @@ import { Glob } from "@opencode-ai/core/util/glob"
 import * as Log from "@opencode-ai/core/util/log"
 import { Discovery } from "./discovery"
 import { isRecord } from "@/util/record"
+// `with { type: "file" }` makes Bun embed the asset and return its path (real in dev, bunfs
+// in the compiled binary). `new URL(..., import.meta.url)` was not embedded by --compile and
+// the binary failed to find this file at runtime — mirror image.ts's proven embedding.
+import customizeOpencodeMd from "../../../core/src/plugin/skill/customize-opencode.md" with { type: "file" }
 
 const log = Log.create({ service: "skill" })
 const CLAUDE_EXTERNAL_DIR = ".claude"
@@ -32,9 +36,7 @@ const SKILL_PATTERN = "**/SKILL.md"
 const CUSTOMIZE_OPENCODE_SKILL_NAME = "customize-opencode"
 const CUSTOMIZE_OPENCODE_SKILL_DESCRIPTION =
   "Use ONLY when the user is editing or creating opencode's own configuration: opencode.json, opencode.jsonc, files under .opencode/, or files under ~/.config/opencode/. Also use when creating or fixing opencode agents, subagents, skills, plugins, MCP servers, or permission rules. Do not use for the user's own application code, or for any project that is not configuring opencode itself."
-const CUSTOMIZE_OPENCODE_SKILL_BODY = await Bun.file(
-  new URL("../../../core/src/plugin/skill/customize-opencode.md", import.meta.url),
-).text()
+const CUSTOMIZE_OPENCODE_SKILL_BODY = await Bun.file(customizeOpencodeMd).text()
 
 export const Info = Schema.Struct({
   name: Schema.String,
