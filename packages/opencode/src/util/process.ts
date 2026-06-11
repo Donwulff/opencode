@@ -1,4 +1,5 @@
 import { type ChildProcess } from "child_process"
+import type { Stream } from "node:stream"
 import launch from "cross-spawn"
 import { buffer } from "node:stream/consumers"
 import { Flag } from "@opencode-ai/core/flag/flag"
@@ -31,7 +32,7 @@ function sandboxedCmd(cmd: string[]): string[] {
   return cmd
 }
 
-export type Stdio = "inherit" | "pipe" | "ignore"
+export type Stdio = "inherit" | "pipe" | "ignore" | number | Stream
 export type Shell = boolean | string
 
 export interface Options {
