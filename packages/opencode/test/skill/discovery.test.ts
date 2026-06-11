@@ -50,7 +50,7 @@ afterAll(async () => {
 })
 
 describe("Discovery.pull", () => {
-  it.live("downloads skills from cloudflare url", () =>
+  it.instance("downloads skills from cloudflare url", () =>
     Effect.gen(function* () {
       const fsys = yield* FSUtil.Service
       const discovery = yield* Discovery.Service
@@ -64,7 +64,7 @@ describe("Discovery.pull", () => {
     }),
   )
 
-  it.live("url without trailing slash works", () =>
+  it.instance("url without trailing slash works", () =>
     Effect.gen(function* () {
       const fsys = yield* FSUtil.Service
       const discovery = yield* Discovery.Service
@@ -77,7 +77,7 @@ describe("Discovery.pull", () => {
     }),
   )
 
-  it.live("returns empty array for invalid url", () =>
+  it.instance("returns empty array for invalid url", () =>
     Effect.gen(function* () {
       const discovery = yield* Discovery.Service
       const dirs = yield* discovery.pull(`http://localhost:${server.port}/invalid-url/`)
@@ -85,7 +85,7 @@ describe("Discovery.pull", () => {
     }),
   )
 
-  it.live("returns empty array for non-json response", () =>
+  it.instance("returns empty array for non-json response", () =>
     Effect.gen(function* () {
       // any url not explicitly handled in server returns 404 text "Not Found"
       const discovery = yield* Discovery.Service
@@ -94,7 +94,7 @@ describe("Discovery.pull", () => {
     }),
   )
 
-  it.live("downloads reference files alongside SKILL.md", () =>
+  it.instance("downloads reference files alongside SKILL.md", () =>
     Effect.gen(function* () {
       const fsys = yield* FSUtil.Service
       const discovery = yield* Discovery.Service
@@ -114,7 +114,7 @@ describe("Discovery.pull", () => {
     }),
   )
 
-  it.live("caches downloaded files on second pull", () =>
+  it.instance("caches downloaded files on second pull", () =>
     Effect.gen(function* () {
       // clear dir and downloadCount
       yield* Effect.promise(() => rm(cacheDir, { recursive: true, force: true }))

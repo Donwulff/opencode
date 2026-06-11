@@ -10,17 +10,19 @@ import { validateUrlFromConfig, type SecurityConfigType } from "./network"
  *
  * @param source  Short label for the caller that appears in the audit log.
  */
-export function auditedUrl(url: string, source = "internal"): Effect.Effect<void, Error> {
-  return Effect.promise(() => Config.get()).pipe(
-    Effect.flatMap((config) => {
-      const security = config.security as SecurityConfigType | undefined
-      if (!security) return Effect.void
-      const result = validateUrlFromConfig(url, security)
-      auditLogger.logUrlCheck(url, result.allowed, result.reason, { source })
-      if (!result.allowed) return Effect.fail(new Error(`Fetch blocked (${result.reason}): ${url}`))
-      return Effect.void
-    }),
-  )
+export function auditedUrl(url: string, source = "internal") {
+  return Effect.gen(function* () {
+    // Read Config through Config.Service so the running fiber's InstanceRef is inherited directly.
+    // The standalone Config.get() spawns a fresh root fiber (Effect.runPromise) that only resolves
+    // InstanceRef from the instance ALS — Effect callers that carry InstanceRef but no ALS (skill
+    // discovery, EffectBridge handlers) would otherwise die with "InstanceRef not provided".
+    const config = yield* (yield* Config.Service).get()
+    const security = config.security as SecurityConfigType | undefined
+    if (!security) return
+    const result = validateUrlFromConfig(url, security)
+    auditLogger.logUrlCheck(url, result.allowed, result.reason, { source })
+    if (!result.allowed) return yield* Effect.fail(new Error(`Fetch blocked (${result.reason}): ${url}`))
+  })
 }
 
 /**

@@ -6,6 +6,7 @@ import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } fr
 import { withTransientReadRetry } from "@/util/effect-http-client"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { Global } from "@opencode-ai/core/global"
+import { Config } from "@/config/config"
 import { auditedUrl } from "@/util/fetch"
 
 const skillConcurrency = 4
@@ -26,11 +27,16 @@ export interface Interface {
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SkillDiscovery") {}
 
-export const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | HttpClient.HttpClient> = Layer.effect(
+export const layer: Layer.Layer<
+  Service,
+  never,
+  FSUtil.Service | Path.Path | HttpClient.HttpClient | Config.Service
+> = Layer.effect(
   Service,
   Effect.gen(function* () {
     const fs = yield* FSUtil.Service
     const path = yield* Path.Path
+    const config = yield* Config.Service
     const http = HttpClient.filterStatusOk(withTransientReadRetry(yield* HttpClient.HttpClient))
     const cache = path.join(Global.Path.cache, "skills")
 
@@ -38,6 +44,7 @@ export const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | Htt
       if (yield* fs.exists(dest).pipe(Effect.orDie)) return true
 
       return yield* auditedUrl(url, "skill-discovery").pipe(
+        Effect.provideService(Config.Service, config),
         Effect.flatMap(() =>
           HttpClientRequest.get(url).pipe(
             http.execute,
@@ -58,6 +65,7 @@ export const layer: Layer.Layer<Service, never, FSUtil.Service | Path.Path | Htt
       yield* Effect.logInfo("fetching index", { url: index })
 
       const data = yield* auditedUrl(index, "skill-discovery").pipe(
+        Effect.provideService(Config.Service, config),
         Effect.flatMap(() =>
           HttpClientRequest.get(index).pipe(
             HttpClientRequest.acceptJson,
@@ -111,8 +119,9 @@ export const defaultLayer: Layer.Layer<Service> = layer.pipe(
   Layer.provide(FetchHttpClient.layer),
   Layer.provide(FSUtil.defaultLayer),
   Layer.provide(NodePath.layer),
+  Layer.provide(Config.defaultLayer),
 )
 
-export const node = LayerNode.make(layer, [FSUtil.node, path, httpClient])
+export const node = LayerNode.make(layer, [FSUtil.node, path, httpClient, Config.node])
 
 export * as Discovery from "./discovery"

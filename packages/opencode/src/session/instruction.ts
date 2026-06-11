@@ -95,6 +95,7 @@ export const layer: Layer.Layer<
 
     const fetch = Effect.fnUntraced(function* (url: string) {
       const blocked = yield* auditedUrl(url, "instruction").pipe(
+        Effect.provideService(Config.Service, cfg),
         Effect.as(false),
         Effect.catch(() => Effect.succeed(true)),
       )
