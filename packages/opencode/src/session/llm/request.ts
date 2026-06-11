@@ -61,7 +61,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     : SystemPrompt.provider(input.model)
   const system = [
     [
-      ...(input.agent.prompt ? [input.agent.prompt] : isOpenaiOauth ? [] : providerPrompt),
+      ...(input.agent.prompt ? [input.agent.prompt] : providerPrompt),
       ...input.system,
       ...(input.user.system ? [input.user.system] : []),
     ]
@@ -100,7 +100,7 @@ export const prepare = Effect.fn("LLMRequestPrep.prepare")(function* (input: Pre
     delete options.reasoningSummary
     delete options.include
   }
-  if (isOpenaiOauth) options.instructions = providerPrompt.join("\n")
+  if (isOpenaiOauth) options.instructions = system.join("\n")
 
   const messages =
     isOpenaiOauth || input.isWorkflow
