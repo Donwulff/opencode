@@ -24,10 +24,11 @@ import { isRecord } from "@/util/record"
 import type { ConsoleState } from "@opencode-ai/core/v1/config/console-state"
 import { FSUtil } from "@opencode-ai/core/fs-util"
 import { InstanceState } from "@/effect/instance-state"
+import { InstanceRef } from "@/effect/instance-ref"
 import { Context, Duration, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
-import { containsPath, type InstanceContext } from "../project/instance-context"
+import { containsPath, context as instanceContext, type InstanceContext } from "../project/instance-context"
 import { ConfigV1 } from "@opencode-ai/core/v1/config/config"
 import { RemoteAuthError } from "@opencode-ai/core/v1/config/error"
 import { ConfigPermissionV1 } from "@opencode-ai/core/v1/config/permission"
@@ -690,8 +691,16 @@ export const layer = Layer.effect(
       return { info: next, changed }
     })
 
-    // Register the standalone async getter for non-Effect callers
-    _asyncGet = () => Effect.runPromise(get())
+    // Register the standalone async getter for non-Effect callers.
+    // Effect.runPromise spawns a fresh root fiber with no InstanceRef in context (InstanceRef
+    // is a Context.Reference with a default, so it stays out of the R channel and silently
+    // resolves to undefined → "InstanceRef not provided" death). Callers that run inside an
+    // instance ALS (e.g. provenance init via Instance.restore) expose the InstanceContext
+    // synchronously, so provide it to InstanceRef before running.
+    _asyncGet = () => {
+      const ctx = instanceContext.tryUse()
+      return Effect.runPromise(ctx ? get().pipe(Effect.provideService(InstanceRef, ctx)) : get())
+    }
 
     // Fork: gate models.dev fetches from core/models-dev.ts on SecurityConfig.
     ModelsDev.registerGuard(async (source: string) => {
