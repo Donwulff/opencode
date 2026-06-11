@@ -132,7 +132,7 @@ Commands:
   opencode debug agent <name>  show agent configuration details
   opencode debug v2            debug v2 catalog and built-in plugins
   opencode debug info          show debug information
-  opencode debug paths         show global paths (data, config, cache, state)
+  opencode debug paths         show global paths (data, config, cache, state, provenance)
   opencode debug wait          wait indefinitely (for debugging)
 
 Options:
