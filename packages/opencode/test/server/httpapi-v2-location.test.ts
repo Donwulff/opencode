@@ -28,16 +28,23 @@ const Event = Schema.Struct({
   data: Schema.Unknown,
 })
 
-async function readEvent(reader: ReadableStreamDefaultReader<Uint8Array>) {
+async function readRaw(reader: ReadableStreamDefaultReader<Uint8Array>) {
   const value = await reader.read()
   if (value.done) throw new Error("event stream closed")
-  return Schema.decodeUnknownSync(Event)(JSON.parse(new TextDecoder().decode(value.value).replace(/^data: /, "")))
+  return JSON.parse(new TextDecoder().decode(value.value).replace(/^data: /, "")) as { type: string }
+}
+
+async function readEvent(reader: ReadableStreamDefaultReader<Uint8Array>) {
+  return Schema.decodeUnknownSync(Event)(await readRaw(reader))
 }
 
 async function readEventType(reader: ReadableStreamDefaultReader<Uint8Array>, type: string) {
+  // Only decode against the strict Event schema for the type we are waiting for.
+  // Other events in the stream (e.g. file.watcher.updated) may race ahead and
+  // carry a partial location without a resolved project.
   for (let index = 0; index < 20; index++) {
-    const event = await readEvent(reader)
-    if (event.type === type) return event
+    const event = await readRaw(reader)
+    if (event.type === type) return Schema.decodeUnknownSync(Event)(event)
   }
   throw new Error(`timed out waiting for ${type}`)
 }
