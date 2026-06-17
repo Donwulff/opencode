@@ -12,8 +12,8 @@ import { validateUrlFromConfig, type SecurityConfigType } from "../../util/netwo
 //
 // Registered last in PluginBoot so it runs after the provider/config plugins that enable
 // providers — disabling here has the final say. Works on the v2 catalog path the TUI model
-// selector uses: `catalog.provider.available()` returns only providers whose `enabled` is
-// truthy, so setting `enabled = false` removes them from the selector.
+// selector uses: `catalog.provider.available()` filters out providers whose `disabled` is
+// truthy, so setting `disabled = true` removes them from the selector.
 export const RestrictProvidersPlugin = PluginV2.define({
   id: PluginV2.ID.make("restrict-providers"),
   effect: Effect.gen(function* () {
@@ -43,7 +43,7 @@ export const RestrictProvidersPlugin = PluginV2.define({
           const blockedByUrl = !!security && !!url && !validateUrlFromConfig(url, security).allowed
           if (!blockedByRestrict && !blockedByUrl) continue
           evt.provider.update(item.provider.id, (provider) => {
-            provider.enabled = false
+            provider.disabled = true
           })
         }
       }),
