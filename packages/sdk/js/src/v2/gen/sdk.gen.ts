@@ -5348,7 +5348,7 @@ export class Session3 extends HeyApiClient {
   /**
    * Switch session agent
    *
-   * Switch the agent used by subsequent session activity.
+   * Switch the agent used by subsequent provider turns.
    */
   public switchAgent<ThrowOnError extends boolean = false>(
     parameters: {
@@ -5387,7 +5387,7 @@ export class Session3 extends HeyApiClient {
   /**
    * Switch session model
    *
-   * Switch the model used by subsequent session activity.
+   * Switch the model used by subsequent provider turns.
    */
   public switchModel<ThrowOnError extends boolean = false>(
     parameters: {

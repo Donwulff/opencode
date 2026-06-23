@@ -1,7 +1,7 @@
+import { define } from "../internal"
 import { Effect } from "effect"
 import { Flag } from "../../flag/flag"
 import { Config } from "../../config"
-import { PluginV2 } from "../../plugin"
 import { validateUrlFromConfig, type SecurityConfigType } from "../../util/network"
 
 // Fork feature: hide providers that are not explicitly configured, and (defense-in-depth)
@@ -10,13 +10,13 @@ import { validateUrlFromConfig, type SecurityConfigType } from "../../util/netwo
 // or a `security` config block. No-op unless one of those is set, so this is inert in stock
 // builds.
 //
-// Registered last in PluginBoot so it runs after the provider/config plugins that enable
+// Registered last in PluginInternal so it runs after the provider/config plugins that enable
 // providers — disabling here has the final say. Works on the v2 catalog path the TUI model
 // selector uses: `catalog.provider.available()` filters out providers whose `disabled` is
 // truthy, so setting `disabled = true` removes them from the selector.
-export const RestrictProvidersPlugin = PluginV2.define({
-  id: PluginV2.ID.make("restrict-providers"),
-  effect: Effect.gen(function* () {
+export const RestrictProvidersPlugin = define({
+  id: "restrict-providers",
+  effect: Effect.fn(function* (ctx) {
     const config = yield* Config.Service
     const documents = (yield* config.entries()).filter(
       (entry): entry is Config.Document => entry.type === "document",
@@ -35,18 +35,18 @@ export const RestrictProvidersPlugin = PluginV2.define({
 
     const configured = new Set(documents.flatMap((doc) => Object.keys(doc.info.providers ?? {})))
 
-    return {
-      "catalog.transform": Effect.fn(function* (evt) {
-        for (const item of evt.provider.list()) {
+    yield* ctx.catalog.transform(
+      Effect.fn(function* (catalog) {
+        for (const item of catalog.provider.list()) {
           const blockedByRestrict = restrict && !configured.has(item.provider.id)
           const url = item.provider.api.url
           const blockedByUrl = !!security && !!url && !validateUrlFromConfig(url, security).allowed
           if (!blockedByRestrict && !blockedByUrl) continue
-          evt.provider.update(item.provider.id, (provider) => {
+          catalog.provider.update(item.provider.id, (provider) => {
             provider.disabled = true
           })
         }
       }),
-    }
+    )
   }),
 })
