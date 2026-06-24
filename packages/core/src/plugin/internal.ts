@@ -23,12 +23,14 @@ import { Npm } from "../npm"
 import { PluginV2 } from "../plugin"
 import { Reference } from "../reference"
 import { SkillV2 } from "../skill"
+import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { AgentPlugin } from "./agent"
 import { CommandPlugin } from "./command"
 import { ModelsDevPlugin } from "./models-dev"
 import { ProviderPlugins } from "./provider"
 import { RestrictProvidersPlugin } from "./provider/restrict"
 import { SkillPlugin } from "./skill"
+import { VariantPlugin } from "./variant"
 
 export type Requirements =
   | AgentV2.Service
@@ -39,6 +41,7 @@ export type Requirements =
   | FileSystem.Service
   | FSUtil.Service
   | Global.Service
+  | HttpClient.HttpClient
   | Integration.Service
   | Location.Service
   | ModelsDev.Service
@@ -70,6 +73,7 @@ export const locationLayer = Layer.effectDiscard(
     const fs = yield* FSUtil.Service
     const filesystem = yield* FileSystem.Service
     const global = yield* Global.Service
+    const http = yield* HttpClient.HttpClient
     const skill = yield* SkillV2.Service
     const reference = yield* Reference.Service
     const add = <R>(input: Plugin<R>) => {
@@ -91,6 +95,7 @@ export const locationLayer = Layer.effectDiscard(
               Effect.provideService(FSUtil.Service, fs),
               Effect.provideService(FileSystem.Service, filesystem),
               Effect.provideService(Global.Service, global),
+              Effect.provideService(HttpClient.HttpClient, http),
               Effect.provideService(SkillV2.Service, skill),
               Effect.provideService(Reference.Service, reference),
             ),
@@ -104,12 +109,13 @@ export const locationLayer = Layer.effectDiscard(
       yield* add(CommandPlugin.Plugin)
       yield* add(SkillPlugin.Plugin)
       yield* add(ModelsDevPlugin)
-      yield* add(ConfigProviderPlugin.Plugin)
       yield* add(ConfigAgentPlugin.Plugin)
       yield* add(ConfigCommandPlugin.Plugin)
       yield* add(ConfigSkillPlugin.Plugin)
       for (const item of ProviderPlugins) yield* add(item)
       yield* add(ConfigExternalPlugin.Plugin)
+      yield* add(ConfigProviderPlugin.Plugin)
+      yield* add(VariantPlugin.Plugin)
       // Registered last so its catalog.transform runs after the provider/config plugins that
       // enable providers, giving the restriction filter the final say on `disabled`.
       yield* add(RestrictProvidersPlugin)
@@ -119,4 +125,5 @@ export const locationLayer = Layer.effectDiscard(
   Layer.provideMerge(PluginV2.locationLayer),
   Layer.provideMerge(Config.locationLayer),
   Layer.provideMerge(FileSystem.locationLayer),
+  Layer.provideMerge(FetchHttpClient.layer),
 )

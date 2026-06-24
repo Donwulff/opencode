@@ -2,7 +2,6 @@ export * as Catalog from "./catalog"
 
 import { Array, Context, Effect, Layer, Option, Order, pipe, Schema } from "effect"
 import { ModelV2 } from "./model"
-import { ModelRequest } from "./model-request"
 import { ProviderV2 } from "./provider"
 import { EventV2 } from "./event"
 import { Policy } from "./policy"
@@ -73,7 +72,7 @@ export const layer = Layer.effect(
       if (provider.disabled) return false
       if (typeof provider.request.body.apiKey === "string") return true
       if (integration?.connections.length) return true
-      return !integration
+      return provider.integrationID === undefined && !integration
     }
 
     const projectModel = (model: ModelV2.Info, provider: ProviderV2.Info) => {
@@ -86,10 +85,11 @@ export const layer = Layer.effect(
               ? { ...model.api, settings: { ...provider.api.settings, ...model.api.settings } }
               : model.api
       const request = {
-        ...ModelRequest.merge({ ...provider.request, generation: {}, options: {} }, model.request),
+        headers: { ...provider.request.headers, ...model.request.headers },
+        body: { ...provider.request.body, ...model.request.body },
         variant: model.request.variant,
       }
-      return new ModelV2.Info({
+      return ModelV2.Info.make({
         ...model,
         api,
         request,
@@ -184,7 +184,7 @@ export const layer = Layer.effect(
         available: Effect.fn("CatalogV2.provider.available")(function* () {
           const active = new Map((yield* integrations.list()).map((integration) => [integration.id, integration]))
           return (yield* result.provider.all()).filter((provider) =>
-            available(provider, active.get(Integration.ID.make(provider.id))),
+            available(provider, active.get(provider.integrationID ?? Integration.ID.make(provider.id))),
           )
         }),
       },
