@@ -1,6 +1,8 @@
 import { describe, expect } from "bun:test"
+import { LayerNode } from "@opencode-ai/core/effect/layer-node"
+import { httpClient } from "@opencode-ai/core/effect/app-node-platform"
 import { Effect, Layer } from "effect"
-import { FetchHttpClient } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient } from "effect/unstable/http"
 import { Agent } from "../../src/agent/agent"
 import { Config } from "@/config/config"
 import { Truncate } from "@/tool/truncate"
@@ -10,7 +12,9 @@ import { Tool } from "@/tool/tool"
 import { testEffect } from "../lib/effect"
 
 const it = testEffect(
-  Layer.mergeAll(FetchHttpClient.layer, Truncate.defaultLayer, Agent.defaultLayer, Config.defaultLayer),
+  LayerNode.compile(LayerNode.group([httpClient, Truncate.node, Agent.node, Config.node]), [
+    [httpClient, FetchHttpClient.layer as Layer.Layer<HttpClient.HttpClient>],
+  ]),
 )
 
 const ctx = {
