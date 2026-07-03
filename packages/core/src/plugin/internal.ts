@@ -129,9 +129,7 @@ const layer = Layer.effectDiscard(
 )
 
 export const locationLayer = layer.pipe(
-  Layer.provideMerge(PluginV2.locationLayer),
   Layer.provideMerge(Config.locationLayer),
-  Layer.provideMerge(FileSystem.locationLayer),
   Layer.provideMerge(FetchHttpClient.layer),
 )
 
