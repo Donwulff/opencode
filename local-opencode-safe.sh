@@ -4,16 +4,20 @@ set -euo pipefail
 # local-opencode-safe.sh
 #
 # Purpose:
-# - Launch local OpenCode like opencode-local does.
-# - Add automatic safety snapshots (tracked + untracked files).
+# - Launch local OpenCode with automatic safety snapshots (tracked + untracked).
 # - Optionally guard destructive git subcommands during the OpenCode session.
 #
+# The update/build stages are NOT reimplemented here: they are delegated to
+# ./opencode-local --no-run, which owns the single copy of the merge logic
+# (stash handling, skip-worktree flags, generated-SDK noise, merge commit,
+# `bun install`). Keeping one implementation avoids the two drifting apart —
+# this wrapper previously carried a stale copy that omitted `bun install`.
+#
 # Default behavior:
-# 1) Merge upstream + origin updates (same style as opencode-local).
-# 2) Build packages/opencode.
-# 3) Save a safety snapshot.
-# 4) Start an auto-snapshot loop (every 300s).
-# 5) Run OpenCode with a guarded PATH that blocks risky git commands.
+# 1) Delegate update + build to ./opencode-local --no-run.
+# 2) Save a safety snapshot.
+# 3) Start an auto-snapshot loop (every 300s).
+# 4) Run OpenCode with a guarded PATH that blocks risky git commands.
 #
 # Snapshot files are written under:
 #   .scripts/opencode-safety/
@@ -26,7 +30,7 @@ Usage:
 
 Wrapper options:
   --no-update            Skip upstream/origin merge step.
-  --no-build             Skip build step.
+  --no-build             Skip `bun install` and the build step.
   --no-guard             Do not guard git subcommands in this run.
   --no-snapshot-loop     Take one snapshot at start only (no periodic snapshots).
   --snapshot-interval N  Auto-snapshot interval in seconds (default: 300).
@@ -48,6 +52,11 @@ Examples:
   ./local-opencode-safe.sh --snapshot-only
   OPENCODE_SAFE_ALLOW_GIT_DESTRUCTIVE=1 ./local-opencode-safe.sh --no-guard
 
+Note:
+  The git guard blocks `merge`, `stash`, `checkout`, `reset`, `restore`, `clean`
+  and `rebase` inside the session, so an agent cannot resolve merge conflicts for
+  you while it is active. Use --no-guard (or the env override) for merge work.
+
 Recovery notes:
   - Tracked changes snapshot: .scripts/opencode-safety/<ts>.tracked.patch
       git apply .scripts/opencode-safety/<ts>.tracked.patch
@@ -58,6 +67,8 @@ EOF
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
+
+binary="./packages/opencode/dist/opencode-linux-x64/bin/opencode"
 
 update_repo=1
 build_project=1
@@ -158,59 +169,17 @@ if [ "$snapshot_only" -eq 1 ]; then
   exit 0
 fi
 
-if [ "$update_repo" -eq 1 ]; then
-  echo "Updating repository..."
-  branch="$(git rev-parse --abbrev-ref HEAD)"
-  if ! git remote get-url upstream >/dev/null 2>&1; then
-    git remote add upstream https://github.com/anomalyco/opencode.git
+# Delegate update/build to the single implementation. This runs before the git
+# guard is installed, so the merge stage is never blocked by our own PATH shim.
+if [ "$update_repo" -eq 1 ] || [ "$build_project" -eq 1 ]; then
+  declare -a delegate=(--no-run)
+  if [ "$update_repo" -eq 0 ]; then
+    delegate+=(--no-update)
   fi
-
-  git fetch upstream
-  upstream_ref="upstream/${branch}"
-  if ! git show-ref --verify --quiet "refs/remotes/${upstream_ref}"; then
-    upstream_ref="upstream/dev"
+  if [ "$build_project" -eq 0 ]; then
+    delegate+=(--no-build)
   fi
-
-  if ! git merge --no-edit "${upstream_ref}"; then
-    if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-      echo "Merge in progress with conflicts."
-    else
-      echo "git merge ${upstream_ref} failed. Resolve and re-run."
-      exit 1
-    fi
-  fi
-
-  git fetch origin
-  origin_ref="origin/${branch}"
-  if git show-ref --verify --quiet "refs/remotes/${origin_ref}"; then
-    if ! git merge --no-edit "${origin_ref}"; then
-      if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
-        echo "Merge in progress with conflicts."
-      else
-        echo "git merge ${origin_ref} failed. Resolve and re-run."
-        exit 1
-      fi
-    fi
-  fi
-
-  conflicts="$(git diff --name-only --diff-filter=U || true)"
-  if [ -n "$conflicts" ]; then
-    echo "Conflicts detected:"
-    echo "$conflicts"
-    while [ -n "$conflicts" ]; do
-      read -rp "Resolve conflicts, then press Enter to continue (Ctrl+C to abort)..." _
-      conflicts="$(git diff --name-only --diff-filter=U || true)"
-      if [ -n "$conflicts" ]; then
-        echo "Still conflicted:"
-        echo "$conflicts"
-      fi
-    done
-  fi
-fi
-
-if [ "$build_project" -eq 1 ]; then
-  echo "Building opencode..."
-  bun run --cwd packages/opencode script/build.ts --single
+  ./opencode-local "${delegate[@]}"
 fi
 
 snapshot_once "startup"
@@ -291,4 +260,4 @@ EOF
 fi
 
 echo "Launching OpenCode..."
-OPENCODE_DISABLE_MOUSE="$disable_mouse" ./packages/opencode/dist/opencode-linux-x64/bin/opencode "${opencode_args[@]}"
+OPENCODE_DISABLE_MOUSE="$disable_mouse" "$binary" "${opencode_args[@]}"
