@@ -199,14 +199,17 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if [ "$use_snapshot_loop" -eq 1 ]; then
+  # Log instead of echoing: the loop runs while the TUI owns the terminal,
+  # and anything written to stdout/stderr corrupts the screen.
+  snapshot_log="$snapshot_dir/snapshot.log"
   (
     while true; do
       sleep "$snapshot_interval"
       snapshot_once "auto"
     done
-  ) &
+  ) >> "$snapshot_log" 2>&1 &
   snapshot_loop_pid="$!"
-  echo "Auto-snapshot loop running every ${snapshot_interval}s (pid $snapshot_loop_pid)."
+  echo "Auto-snapshot loop running every ${snapshot_interval}s (pid $snapshot_loop_pid, log: $snapshot_log)."
 fi
 
 if [ "$use_guard" -eq 1 ]; then
