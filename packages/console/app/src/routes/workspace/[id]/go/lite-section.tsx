@@ -643,6 +643,7 @@ export function LiteSection(props: { lite: LiteSubscription | undefined }) {
             <li>Space Bunny Free</li>
             <li>Grok 4.7</li>
             <li>Grok 4.6</li>
+            <li>GPT 6 Luna</li>
             <li>GPT 5.6 Luna</li>
             <li>GLM-5.3-Flash</li>
             <li>GLM-5.3</li>
@@ -661,7 +662,7 @@ export function LiteSection(props: { lite: LiteSubscription | undefined }) {
             <li>Qwen3.7 Max</li>
             <li>Qwen3.7 Plus</li>
             <li>Qwen3.6 Plus</li>
-            <li>DeepSeek V4.1 Flash — {i18n.t("go.graph.bonus", { count: 4 })}</li>
+            <li>DeepSeek V4.1 Flash</li>
             <li>DeepSeek V4 Pro</li>
             <li>DeepSeek V4 Flash</li>
             <li>DeepSeek V4 Flash Vision Exp</li>
