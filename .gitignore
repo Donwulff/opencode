@@ -36,3 +36,4 @@ packages/opencode/src/provider/models-snapshot.js
 packages/opencode/src/provider/models-snapshot.d.ts
 *.bun-build
 tsconfig.tsbuildinfo
+/artifacts/
