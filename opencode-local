@@ -33,7 +33,7 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
 mkdir -p logs/analysis
 
-binary="./packages/opencode/dist/opencode-linux-x64/bin/opencode"
+binary="./packages/cli/dist/cli-linux-x64/bin/opencode"
 
 update=1
 build=1
@@ -206,13 +206,19 @@ fi
 # bumps a workspace dependency (e.g. a vendored tarball) leaves node_modules stale,
 # and the resulting unresolved module detonates into dozens of misleading
 # "implicitly has an 'any' type" errors in files that are themselves fine.
+if [ -x "$root/.scripts/runtime/bun" ]; then
+  export PATH="$root/.scripts/runtime:$PATH"
+fi
+
 if [ "$build" -eq 1 ]; then
   echo "Installing dependencies..."
   bun install
 
   echo "Building opencode..."
-  bun run --cwd packages/opencode script/build.ts --single
+  bun run --cwd packages/cli script/build.ts --single --skip-install
 fi
+
+binary="./packages/cli/dist/cli-linux-x64/bin/opencode"
 
 if [ "$run" -eq 0 ]; then
   exit 0

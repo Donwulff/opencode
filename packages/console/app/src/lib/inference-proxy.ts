@@ -1,8 +1,8 @@
-import { Resource } from "@opencode-ai/console-resource"
-import { and, Database, eq, isNotNull, isNull, sql } from "@opencode-ai/console-core/drizzle/index.js"
-import { KeyTable } from "@opencode-ai/console-core/schema/key.sql.js"
-import { ProviderTable } from "@opencode-ai/console-core/schema/provider.sql.js"
-import { WorkspaceTable } from "@opencode-ai/console-core/schema/workspace.sql.js"
+import { Resource } from "@opencode/console-resource"
+import { and, Database, eq, isNotNull, isNull, sql } from "@opencode/console-core/drizzle/index.js"
+import { KeyTable } from "@opencode/console-core/schema/key.sql.js"
+import { ProviderTable } from "@opencode/console-core/schema/provider.sql.js"
+import { WorkspaceTable } from "@opencode/console-core/schema/workspace.sql.js"
 
 const paths: Record<string, string | undefined> = {
   "POST /zen/v1/chat/completions": "/openai/v1/chat/completions",
@@ -44,7 +44,8 @@ export async function proxyInference(
       ? request.headers.get("x-goog-api-key")
       : request.headers.get("authorization")?.split(" ")[1]
   const anonymous = !key || key === "public"
-  if (anonymous && !generation?.anonymous) return undefined
+  // The destination answers keyless reads itself; keyless generation is only forwarded for free models.
+  if (anonymous && request.method !== "GET" && !generation?.anonymous) return undefined
 
   // New Console keys are never in the legacy key table; every legacy key is `sk-`.
   const legacy = !anonymous && !key.startsWith("oc_sk_")
@@ -92,7 +93,10 @@ export async function proxyInference(
   const requestID = request.headers.get("x-opencode-request-id") ?? request.headers.get("x-opencode-request")
   if (requestID) forwarded.headers.set("x-opencode-request-id", requestID)
 
-  return fetch(forwarded, { redirect: "manual" })
+  const response = await fetch(forwarded, { redirect: "manual" })
+  // SolidStart replaces 404 responses with its own route-not-found body, hiding the inference error.
+  if (response.status !== 404) return response
+  return new Response(response.body, { status: 400, statusText: "Bad Request", headers: response.headers })
 }
 
 // Routing only; the destination owns authentication and revocation after cutover.

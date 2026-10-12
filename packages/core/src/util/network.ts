@@ -1,9 +1,6 @@
 import { isIP, isIPv4, isIPv6 } from "net"
-import { Schema } from "effect"
-import * as Log from "./log"
+import { ConfigSecurity } from "@opencode/schema/config/security"
 import z from "zod"
-
-const log = Log.create({ service: "network-validation" })
 
 export type IPRange = {
   start: number[]
@@ -198,37 +195,9 @@ export const SecurityConfig = z
     ref: "SecurityConfig",
   })
 
-export type SecurityConfigType = z.infer<typeof SecurityConfig>
+export type SecurityConfigType = ConfigSecurity.Info
 
-// Effect Schema mirror of SecurityConfig. Used only for the generated JSON
-// Schema view of `config.security` — runtime validation still goes through
-// the zod parser via `validateUrlFromConfig`. Keep both in sync.
-export const SecurityConfigSchema = Schema.Struct({
-  mode: Schema.optional(Schema.Literals(["internal-only", "external-allowed", "strict"])).annotate({
-    description: "Security mode",
-  }),
-  allow_internal_dns_suffixes: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-    description: "Internal DNS suffixes to allow",
-  }),
-  block_domain_regex: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-    description: "Regular expressions to match and block domains",
-  }),
-  allow_local: Schema.optional(Schema.Boolean).annotate({ description: "Allow localhost URLs" }),
-  allow_private_ip: Schema.optional(Schema.Boolean).annotate({ description: "Allow private IP addresses" }),
-  models_dev_enabled: Schema.optional(Schema.Boolean).annotate({
-    description: "Enable fetching models from models.dev",
-  }),
-  audit_log_enabled: Schema.optional(Schema.Boolean).annotate({ description: "Enable audit logging" }),
-  external_domains: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-    description: "Explicitly allowed external domains",
-  }),
-  allow_external_ips: Schema.optional(Schema.Boolean).annotate({
-    description: "Allow external/public IP addresses",
-  }),
-  allowed_ip_ranges: Schema.optional(Schema.mutable(Schema.Array(Schema.String))).annotate({
-    description: "Additional allowed IP ranges in CIDR notation",
-  }),
-}).annotate({ identifier: "SecurityConfig" })
+export const SecurityConfigSchema = ConfigSecurity.Info
 
 export function validateUrlFromConfig(url: string, config: SecurityConfigType): ValidationResult {
   if (!url) {
@@ -242,12 +211,12 @@ export function validateUrlFromConfig(url: string, config: SecurityConfigType): 
   }
 
   if (isLocalhost(host)) {
-    if (config.allow_local) return { allowed: true, reason: "Localhost allowed" }
+    if (config.allow_local !== false) return { allowed: true, reason: "Localhost allowed" }
     return { allowed: false, reason: "Localhost blocked (allow_local is false)" }
   }
 
   if (isPrivateIP(host)) {
-    if (config.allow_private_ip) return { allowed: true, reason: "Private IP allowed" }
+    if (config.allow_private_ip !== false) return { allowed: true, reason: "Private IP allowed" }
     return { allowed: false, reason: "Private/internal IP blocked (allow_private_ip is false)" }
   }
 

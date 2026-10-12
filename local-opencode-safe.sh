@@ -68,7 +68,7 @@ EOF
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$root"
 
-binary="./packages/opencode/dist/opencode-linux-x64/bin/opencode"
+binary="./packages/cli/dist/cli-linux-x64/bin/opencode"
 
 update_repo=1
 build_project=1
