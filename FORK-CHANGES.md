@@ -77,7 +77,7 @@ Adds an enterprise security layer with two complementary mechanisms:
 
 **HTTP-level validation**: Every URL used by a tool (webfetch, websearch, provider model fetches, instruction URLs, skill discovery) is validated against a configurable policy before the request is made. Blocked requests are audit-logged.
 
-**Subprocess network isolation** (`OPENCODE_SPAWN_SANDBOX=1`): All subprocess spawns (bash tool, ripgrep, grep) run in a Linux user+network namespace so they have no outbound network access. This is the primary defense against data exfiltration via the bash tool — the subprocess has no network interface to send data through. bwrap (bubblewrap) is preferred; unshare is used as fallback. The flag is baked into `Dockerfile.analysis` as `ENV OPENCODE_SPAWN_SANDBOX=1`. Loopback is brought up inside the namespace so localhost test servers remain reachable.
+**Subprocess network isolation** (`OPENCODE_SPAWN_SANDBOX=1`): The bash tool runs in a Linux user+network namespace so it has no outbound network access. This is the primary defense against data exfiltration via the bash tool — the subprocess has no network interface to send data through. bwrap (bubblewrap) is preferred; unshare is used as fallback. Grep and ripgrep are in-process WASM and are not a network path. The flag is set in the analysis container images. Loopback is brought up inside the namespace so localhost in that namespace stays reachable. JS `fetch()` in the parent process is a separate path, gated by `security.*`.
 
 **Read-only command enforcement**: `command-guard.ts` enforces read-only mode for `/review` and `/learn` commands, blocking file writes, shell redirection, file-mutating commands, and destructive git operations.
 
