@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# A suspended launcher can otherwise read changed bytes after its own merge.
+# Execute a snapshot in memory so updates cannot change the running script.
+if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+  launcher="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  exec bash -c "$(cat -- "$launcher")" "$launcher" "$@"
+fi
+
 # opencode-local
 #
 # Single implementation of the local update/build/run cycle:
@@ -29,7 +36,7 @@ Defaults to `--continue` when no binary arguments are given.
 EOF
 }
 
-root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "$(dirname "$0")" && pwd)"
 cd "$root"
 mkdir -p logs/analysis
 
@@ -82,7 +89,29 @@ done
 declare -a skip_worktree_files=()
 stashed=0
 
+finish_merge() {
+  local conflicts
+  conflicts=$(git diff --name-only --diff-filter=U)
+  while [ -n "$conflicts" ]; do
+    echo "Conflicts detected:"
+    echo "$conflicts"
+    read -rp "Resolve and stage conflicts, then press Enter to continue (Ctrl+C to abort)..." _
+    conflicts=$(git diff --name-only --diff-filter=U)
+  done
+
+  if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    echo "Committing merge..."
+    git commit --no-edit
+  fi
+}
+
 if [ "$update" -eq 1 ]; then
+  # Preserve an interrupted merge's index before stashing or starting another.
+  if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
+    echo "Finishing the existing merge..."
+    finish_merge
+  fi
+
   # Warn about leftover pre-merge stashes from prior runs. A clean pop auto-drops
   # the stash; survivors mean a prior pop conflicted or the script was interrupted.
   leftover=$(git stash list | grep -c "opencode-local: pre-merge stash" || true)
@@ -144,6 +173,7 @@ if [ "$update" -eq 1 ]; then
       exit 1
     fi
   fi
+  finish_merge
 
   git fetch origin
   origin_ref="origin/${branch}"
@@ -157,31 +187,7 @@ if [ "$update" -eq 1 ]; then
       fi
     fi
   fi
-
-  # Bailing out here (Ctrl-C) skips the merge commit, the stash pop, the
-  # skip-worktree restore, and `bun install` — the usual cause of a dangling
-  # MERGE_HEAD plus a typecheck that fails on unresolved workspace modules.
-  conflicts=$(git diff --name-only --diff-filter=U || true)
-  if [ -n "$conflicts" ]; then
-    echo "Conflicts detected:"
-    echo "$conflicts"
-    while [ -n "$conflicts" ]; do
-      read -rp "Resolve conflicts, then press Enter to continue (Ctrl+C to abort)..." _
-      conflicts=$(git diff --name-only --diff-filter=U || true)
-      if [ -n "$conflicts" ]; then
-        echo "Still conflicted:"
-        echo "$conflicts"
-      fi
-    done
-  fi
-
-  # Commit the merge if one is in progress (conflict resolution loop exits with
-  # all files staged but MERGE_HEAD still set — without this commit the next run
-  # re-merges and re-generates the same conflicts).
-  if git rev-parse -q --verify MERGE_HEAD >/dev/null 2>&1; then
-    echo "Committing merge..."
-    git commit --no-edit
-  fi
+  finish_merge
 
   # Restore stashed local changes if any
   if [ "$stashed" -eq 1 ]; then
