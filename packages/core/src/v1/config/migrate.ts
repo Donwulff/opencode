@@ -111,13 +111,16 @@ export function migrateProvider(sourceID: string, info: ConfigProviderV1.Info) {
 }
 
 function migrateStandardProvider(info: ConfigProviderV1.Info) {
-  const options = ConfigProviderOptionsV1.provider(info.options ?? {})
+  // V1 `setCacheKey` toggled `prompt_cache_key` for the whole provider; it is not a provider package setting.
+  const { setCacheKey, ...rest } = info.options ?? {}
+  const options = ConfigProviderOptionsV1.provider(rest)
   return {
     system_prompt: info.system_prompt,
     autodiscover: info.autodiscover,
     name: info.name,
     env: info.env,
-    package: info.npm ? Provider.aisdk(info.npm) : undefined,
+    package: info.npm ? packageSpecifier(info.npm) : undefined,
+    compatibility: setCacheKey === undefined ? undefined : { supportsPromptCacheKey: setCacheKey },
     settings: info.api ? { ...options.settings, baseURL: info.api } : info.options ? options.settings : undefined,
     headers: info.options && options.headers,
     body: info.options && options.body,
@@ -160,6 +163,12 @@ function migrateGoogleVertexAnthropicProvider(info: ConfigProviderV1.Info) {
         ]),
       ),
   }
+}
+
+// Built-in provider routes are already native package specifiers; only npm packages load through the AI SDK.
+function packageSpecifier(npm: string) {
+  const name = Provider.packageName(npm)
+  return name.startsWith("@opencode/ai/") ? name : Provider.aisdk(npm)
 }
 
 // Renames retired provider IDs in V1 fields and the shared top-level model.
@@ -229,7 +238,7 @@ function migrateModel(info: typeof ConfigProviderV1.Model.Type, npm: string | un
     compatibility: disableThinkingBlockBinding
       ? { ...compatibility, supportsThinkingBlockBinding: false }
       : compatibility,
-    package: info.provider?.npm ? Provider.aisdk(info.provider.npm) : undefined,
+    package: info.provider?.npm ? packageSpecifier(info.provider.npm) : undefined,
     settings: info.provider?.api ? { ...settings, baseURL: info.provider.api } : settings,
     capabilities,
     headers: info.headers,
