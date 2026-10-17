@@ -4,6 +4,7 @@
 - ALWAYS USE PARALLEL TOOLS WHEN APPLICABLE.
 - The default branch is `dev`. Base branches and worktrees on `origin/dev`, target PRs at `dev`, and diff against `origin/dev` unless told otherwise.
 - If `CLAUDE.md` and `CLAUDE-MERGE.md` are present in the working tree, read them — they hold fork-specific build, merge, and security guidance not in this file. Especially relevant before resolving any `upstream/dev` merge conflict.
+- The V2 fork hook inventory and merge checks live in `specs/merging-upstream.md`; current security coverage and limits live in `SECURITY-ANALYSIS.md`. Preserve active callers and plugin registrations, not just compatibility code under `core/src/v1`.
 - After any `upstream/dev` merge, run `bun install` **before** `bun run check`, then audit renames/adds (`git diff <our-merge-head> <upstream-head> --diff-filter=RA --name-status -- packages/`) before committing. Silent rename-misses do not surface as conflict markers and have shipped broken merges before.
 - A merge that changes `package.json`/`bun.lock` or adds a workspace package leaves `node_modules` stale, and one unresolved module then cascades into dozens of misleading `TS7006: implicitly has an 'any' type` errors in files that are themselves correct. If typecheck reports `TS2307: Cannot find module '@opencode-ai/…'`, suspect a missing `bun install` before suspecting the merge resolution. Also check where the specifier actually resolves — some `@opencode-ai/*` names are vendored tarballs (`file:` deps), not the workspace package of the same name.
 - Prefer automation: execute requested actions without confirmation unless blocked by missing info or safety/irreversibility.
@@ -173,6 +174,7 @@ const table = sqliteTable("session", {
 - Avoid mocks as much as possible, you shouldn't be using globalThis.\* at all unless it's the only option.
 - Test actual implementation, do not duplicate logic into tests
 - Tests cannot run from repo root (guard: `do-not-run-tests-from-root`); run from package directories such as `packages/core`.
+- Before writing or changing tests, read the matching skill in `.opencode/skills`: `unit-tests` (bun test), `tui-tests` (OpenTUI renderer tests), `app-e2e-tests` (Playwright in `packages/app/e2e`) or `component-tests` (Storybook Playwright). They cover what has made tests slow or flaky in CI.
 
 ## Checks
 

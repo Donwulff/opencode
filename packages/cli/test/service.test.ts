@@ -18,13 +18,27 @@ import { testEffect } from "../../core/test/lib/effect"
 const it = testEffect(NodeFileSystem.layer)
 
 test("managed service ports are stable per installation channel", () => {
-  expect(ServiceConfig.defaultPort("latest")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("dev")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("beta")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("next")).toBe(0xc0de)
-  expect(ServiceConfig.defaultPort("local")).toBe(0xc0df)
-  expect(ServiceConfig.defaultPort("preview-a")).toBe(ServiceConfig.defaultPort("preview-a"))
-  expect(ServiceConfig.defaultPort("preview-a")).not.toBe(ServiceConfig.defaultPort("preview-b"))
+  expect(ServiceConfig.defaultPort("latest", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("dev", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("beta", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("next", "linux")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("local", "linux")).toBe(0xc0df)
+  expect(ServiceConfig.defaultPort("latest", "darwin")).toBe(0xc0de)
+  expect(ServiceConfig.defaultPort("preview-a", "linux")).toBe(ServiceConfig.defaultPort("preview-a", "linux"))
+  expect(ServiceConfig.defaultPort("preview-a", "linux")).not.toBe(ServiceConfig.defaultPort("preview-b", "linux"))
+})
+
+test("managed service ports on Windows stay below the range Windows reserves", () => {
+  expect(ServiceConfig.defaultPort("latest", "win32")).toBe(0xc0de - 4096)
+  expect(ServiceConfig.defaultPort("dev", "win32")).toBe(0xc0de - 4096)
+  expect(ServiceConfig.defaultPort("local", "win32")).toBe(0xc0df - 4096)
+  const ports = Array.from({ length: 200 }, (_, index) => ({
+    windows: ServiceConfig.defaultPort(`preview-${index}`, "win32"),
+    linux: ServiceConfig.defaultPort(`preview-${index}`, "linux"),
+  }))
+  expect(ports.some((port) => port.linux >= 0xc000)).toBe(true)
+  expect(ports.every((port) => port.windows >= 10_000 && port.windows < 0xc000)).toBe(true)
+  expect(ports.filter((port) => port.linux < 0xc000 && port.windows !== port.linux)).toEqual([])
 })
 
 test("service disabled accepts only booleans without changing configuration on invalid input", async () => {
@@ -177,6 +191,62 @@ test("service config manages environment variables", async () => {
     await fs.rm(root, { recursive: true, force: true })
   }
 })
+
+test("managed service loads configured environment", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-service-env-"))
+  const registration = path.join(root, "state", "opencode", ServiceConfig.filename())
+  await fs.mkdir(path.join(root, "config"), { recursive: true })
+  await fs.writeFile(
+    path.join(root, "config", ServiceConfig.filename()),
+    JSON.stringify({ env: { OPENCODE_SERVICE_ENV_TEST: "configured", OPENCODE_SERVICE_ENV_EMPTY_TEST: "" } }),
+  )
+  await fs.writeFile(
+    path.join(root, "config", "opencode.json"),
+    JSON.stringify({
+      mcp: {
+        servers: {
+          env: {
+            type: "local",
+            command: ["true"],
+            environment: {
+              configured: "{env:OPENCODE_SERVICE_ENV_TEST}",
+              empty: "{env:OPENCODE_SERVICE_ENV_EMPTY_TEST}",
+              inherited: "{env:OPENCODE_SERVICE_ENV_INHERITED_TEST}",
+            },
+          },
+        },
+      },
+    }),
+  )
+  const owner = Bun.spawn(
+    [process.execPath, path.join(import.meta.dir, "../src/index.ts"), "serve", "--service", "--port", "0"],
+    {
+      env: isolatedEnv(root, {
+        OPENCODE_SERVICE_ENV_TEST: "inherited",
+        OPENCODE_SERVICE_ENV_EMPTY_TEST: "inherited",
+        OPENCODE_SERVICE_ENV_INHERITED_TEST: "inherited",
+      }),
+      stderr: "pipe",
+      stdout: "ignore",
+    },
+  )
+  try {
+    const info = await waitForInfo(registration)
+    const url = new URL("/api/config", info.url)
+    url.searchParams.set("location[directory]", root)
+    const response = await fetch(url, { headers: { authorization: "Basic " + btoa(`opencode:${info.password}`) } })
+    expect(response.status).toBe(200)
+    expect((await response.json())[0].info.mcp.servers.env.environment).toEqual({
+      configured: "configured",
+      empty: "",
+      inherited: "inherited",
+    })
+  } finally {
+    owner.kill("SIGTERM")
+    await owner.exited
+    await fs.rm(root, { recursive: true, force: true })
+  }
+}, 30_000)
 
 test("service filenames share release channels and identify preview channels", () => {
   expect(ServiceConfig.filename("latest")).toBe("service.json")

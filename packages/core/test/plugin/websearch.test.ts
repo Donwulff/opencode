@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect } from "bun:test"
 import { Effect } from "effect"
+import { Document, Info } from "@opencode/schema/config"
+import { Config } from "@opencode/core/config"
 import { Integration } from "@opencode/core/integration"
 import { WebSearch } from "@opencode/core/websearch"
 import { WebSearchExa } from "@opencode/core/plugin/websearch/exa"
@@ -8,7 +10,13 @@ import { WebSearchParallel } from "@opencode/core/plugin/websearch/parallel"
 import { WebSearchTavily } from "@opencode/core/plugin/websearch/tavily"
 import { WebSearchTinyFish } from "@opencode/core/plugin/websearch/tinyfish"
 import { host, integrationHost, webSearchHost } from "./host"
-import { requests, signals, resetWebSearchFixture, webSearchIntegrationTest } from "./websearch-fixture"
+import {
+  requests,
+  signals,
+  resetWebSearchFixture,
+  setResponseHeaders,
+  webSearchIntegrationTest,
+} from "./websearch-fixture"
 
 beforeEach(() => {
   resetWebSearchFixture(
@@ -38,6 +46,31 @@ describe("built-in web search providers", () => {
     WebSearchTavily.Plugin,
     WebSearchTinyFish.Plugin,
   ].forEach((plugin) => {
+    it.effect(`blocks network requests for ${plugin.id} under internal-only policy`, () =>
+      Effect.gen(function* () {
+        const integrations = yield* Integration.Service
+        const websearch = yield* WebSearch.Service
+        yield* plugin
+          .effect(host({ integration: integrationHost(integrations), websearch: webSearchHost(websearch) }))
+          .pipe(
+            Effect.provide(
+              Config.testLayer([
+                new Document({
+                  type: "document",
+                  info: new Info({ security: { mode: "internal-only", audit_log_enabled: false } }),
+                }),
+              ]),
+            ),
+          )
+        // A keyed TinyFish search must be blocked before even the initialize handshake.
+        if (plugin.id === WebSearchTinyFish.Plugin.id)
+          yield* integrations.connection.key({ integrationID: Integration.ID.make("tinyfish"), key: "test secret" })
+        yield* websearch.select("random")
+        expect(yield* websearch.query({ query: "blocked" }).pipe(Effect.flip)).toBeInstanceOf(WebSearch.RequestError)
+        expect(requests).toEqual([])
+      }),
+    )
+
     it.effect(`releases rate-limited HTTP requests for ${plugin.id} before caching their errors`, () =>
       Effect.gen(function* () {
         resetWebSearchFixture("Rate limited", 429)
@@ -353,11 +386,15 @@ describe("built-in web search providers", () => {
         integrationID: Integration.ID.make("tinyfish"),
         key: "tinyfish-secret",
       })
+      setResponseHeaders({ "mcp-session-id": "ses_tinyfish" })
       yield* websearch.query({ query: "effect typescript", providerID: WebSearch.ID.make("tinyfish") })
-      expect(requests[1]).toMatchObject({
-        headers: { "x-api-key": "tinyfish-secret" },
+      expect(requests[1]?.body).toMatchObject({ method: "initialize" })
+      expect(requests[2]?.body).toMatchObject({ method: "notifications/initialized" })
+      expect(requests[3]).toMatchObject({
+        headers: { "x-api-key": "tinyfish-secret", "mcp-session-id": "ses_tinyfish" },
+        body: { method: "tools/call" },
       })
-      expect(requests[1]?.headers["x-tinyfish-access-mode"]).toBeUndefined()
+      expect(requests[3]?.headers["x-tinyfish-access-mode"]).toBeUndefined()
     }),
   )
 })
