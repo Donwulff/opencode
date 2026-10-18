@@ -41,19 +41,16 @@ describe("SessionRunnerRetry.policy", () => {
 
   it.effect("keeps the general allowance for other transient failures", () =>
     Effect.gen(function* () {
-      expect(yield* decisions(internal, 10)).toEqual(Array(10).fill(true))
+      expect(yield* decisions(internal, 11)).toEqual([...Array(10).fill(true), false])
     }),
   )
 })
 
-it.effect("caps oversized provider retry hints and plugin delay overrides at 61 seconds", () =>
+it.effect("caps plugin delay overrides at 61 seconds", () =>
   Effect.gen(function* () {
     const decide = yield* SessionRunnerRetry.policy(SessionSchema.ID.make("ses_capped"))
-    const cause = new AIError({
-      reason: new ProviderInternalError({ message: "retry later", retryAfterMs: 3_600_000 }),
-    })
     const decision = yield* decide({
-      ...input(cause),
+      ...input(internal),
       hook: (event) =>
         Effect.sync(() => {
           if (event.decision.retry) event.decision.delay = 7_200_000

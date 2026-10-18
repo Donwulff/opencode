@@ -88,7 +88,7 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
      test/tool-webfetch.test.ts test/plugin/provider-restrict.test.ts \
      test/plugin/provider-autodiscover.test.ts test/provenance.test.ts \
      test/config/normalization.test.ts test/config/config.test.ts test/config/reload.test.ts \
-     test/session-projector.test.ts test/session-runner-retry.test.ts)
+     test/session-projector.test.ts test/session-runner-retry.test.ts test/model-retry.test.ts)
    ```
 
    Review marker matches: some fixtures intentionally contain markers. Run changed
@@ -115,22 +115,22 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
 
 Paths in this table are relative to `packages/core/src` unless qualified.
 
-| Concern                        | Implementation and active callers                                                                                                                                                    |
-| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Config compatibility           | `packages/schema/src/config{,/security,/provider}.ts`, `config/normalize.ts`, `v1/config/migrate.ts`; keep security/provenance/restriction and provider override fields              |
-| Managed precedence             | `config.ts` keeps managed settings last; `Config.latest` consumers must use that effective value                                                                                     |
-| URL policy and auditing        | `util/security.ts`, `util/network.ts`, `util/audit.ts`; check callers, not only definitions                                                                                          |
-| Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content |
-| Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                    |
-| Search                         | All five `plugin/websearch/*` providers; TinyFish must check before initialize as well as search                                                                                     |
-| Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output                                                                                                                     |
-| Voice                          | `voice.ts` gates actual setup requests with Location config; do not rely on provider registry filtering                                                                              |
-| Provider restriction/discovery | `plugin/provider/restrict.ts`, `plugin/provider/autodiscover.ts`, and registrations in `plugin/internal.ts`; restriction remains guarded against plugin removal                      |
-| Catalog                        | `models-dev.ts` guard and registration in `config.ts`; bundled snapshot now exists and can remain usable with network refresh disabled                                               |
-| Shell                          | `shell.ts` must call `shell/sandbox.ts` before Environment spawn; tool/plugin/shell keeps command guard and post-approval audit                                                      |
-| Command restrictions           | `tool/command-guard.ts`, tool plugins for shell/edit/write/patch/subagent; command survives Schema → admission → delivery → SessionStore                                             |
-| Provenance                     | `provenance.ts`, `plugin/internal.ts`, tool execute hooks and current session event names                                                                                            |
-| Other fork behavior            | Provider `system_prompt` in `plugin/optimize.ts`, agent `plan_reminder` in config/plan plugins, debug/review/learn commands, retry delay cap in `session/runner/retry.ts`            |
+| Concern                        | Implementation and active callers                                                                                                                                                                                             |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Config compatibility           | `packages/schema/src/config{,/security,/provider}.ts`, `config/normalize.ts`, `v1/config/migrate.ts`; keep security/provenance/restriction and provider override fields                                                       |
+| Managed precedence             | `config.ts` keeps managed settings last; `Config.latest` consumers must use that effective value                                                                                                                              |
+| URL policy and auditing        | `util/security.ts`, `util/network.ts`, `util/audit.ts`; check callers, not only definitions                                                                                                                                   |
+| Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content                                          |
+| Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                                                             |
+| Search                         | All five `plugin/websearch/*` providers; TinyFish must check before initialize as well as search                                                                                                                              |
+| Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output                                                                                                                                                              |
+| Voice                          | `voice.ts` gates actual setup requests with Location config; do not rely on provider registry filtering                                                                                                                       |
+| Provider restriction/discovery | `plugin/provider/restrict.ts`, `plugin/provider/autodiscover.ts`, and registrations in `plugin/internal.ts`; restriction remains guarded against plugin removal                                                               |
+| Catalog                        | `models-dev.ts` guard and registration in `config.ts`; bundled snapshot now exists and can remain usable with network refresh disabled                                                                                        |
+| Shell                          | `shell.ts` must call `shell/sandbox.ts` before Environment spawn; tool/plugin/shell keeps command guard and post-approval audit                                                                                               |
+| Command restrictions           | `tool/command-guard.ts`, tool plugins for shell/edit/write/patch/subagent; command survives Schema → admission → delivery → SessionStore                                                                                      |
+| Provenance                     | `provenance.ts`, `plugin/internal.ts`, tool execute hooks and current session event names                                                                                                                                     |
+| Other fork behavior            | Provider `system_prompt` in `plugin/optimize.ts`, agent `plan_reminder` in config/plan plugins, debug/review/learn commands, shared retry delay cap in `model-retry.ts` plus the post-plugin cap in `session/runner/retry.ts` |
 
 The [security analysis](../SECURITY-ANALYSIS.md) documents coverage limits. Neither
 URL hooks nor shell namespacing cover every V2 network/process path.
@@ -147,3 +147,9 @@ TinyFish adds an authenticated MCP handshake; keep the check before its first
 request. The cleanly added Voice service also introduced an outbound path outside
 provider filtering, requiring its own request gate. The rename/add audit is what
 makes those changes visible even when they produce no conflict markers.
+
+The subsequent merge to `501b15af26` extracts retry scheduling into `model-retry.ts`,
+used by both session steps and buffered generation. Preserve the fork's 61-second
+provider delay cap there, and keep the final cap after session retry plugins can
+override the delay. Keeping only the session cap would leave buffered generation
+with upstream's 15-minute maximum.
