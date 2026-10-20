@@ -7,6 +7,7 @@ import { Integration } from "@opencode/core/integration"
 import { Voice } from "@opencode/core/voice"
 import { Effect, Layer } from "effect"
 import { HttpClient, type HttpClientRequest, HttpClientResponse } from "effect/http"
+import { TestClock } from "effect/testing"
 import { testEffect } from "./lib/effect"
 
 const it = testEffect(Layer.empty)
@@ -18,16 +19,25 @@ const credential = (id: string, method: "key" | "oauth") => ({
   method,
 })
 
-const keys: Record<string, string> = { active: "sk-active", stored: "sk-stored", XAI_API_KEY: "xai-env-key" }
+const keys: Record<string, string> = {
+  active: "sk-active",
+  stored: "sk-stored",
+  XAI_API_KEY: "xai-env-key",
+  GEMINI_API_KEY: "gemini-env-key",
+}
 
 it.effect("uses available keys, rejects ChatGPT sign-in, and checks voice URL policy before requesting", () =>
   Effect.gen(function* () {
+    yield* TestClock.setTime(1760000000_000)
     const auths: string[] = []
     const call = (model: string, connections: Integration.Info["connections"], security?: Info["security"]) =>
       Effect.flatMap(Voice.Service, (voice) =>
         voice.session({
           model,
-          transport: model.startsWith("grok-") ? { type: "websocket" } : { type: "webrtc", sdp: "v=0" },
+          transport:
+            model.startsWith("grok-") || model.startsWith("gemini-")
+              ? { type: "websocket" }
+              : { type: "webrtc", sdp: "v=0" },
         }),
       ).pipe(
         Effect.provide(
@@ -74,12 +84,14 @@ it.effect("uses available keys, rejects ChatGPT sign-in, and checks voice URL po
                       HttpClient.HttpClient,
                       HttpClient.make((req: HttpClientRequest.HttpClientRequest) =>
                         Effect.sync(() => {
-                          auths.push(req.headers.authorization ?? "")
+                          auths.push(req.headers.authorization ?? req.headers["x-goog-api-key"] ?? "")
                           return HttpClientResponse.fromWeb(
                             req,
-                            model.startsWith("grok-")
-                              ? Response.json({ value: "ek_xai", expires_at: 1760000999 })
-                              : Response.json({ transport: { sdp: "v=0\r\no=answer\r\n" } }),
+                            model.startsWith("gemini-")
+                              ? Response.json({ name: "auth_tokens/ek_gemini" })
+                              : model.startsWith("grok-")
+                                ? Response.json({ value: "ek_xai", expires_at: 1760000999 })
+                                : Response.json({ transport: { sdp: "v=0\r\no=answer\r\n" } }),
                           )
                         }),
                       ),
@@ -95,19 +107,26 @@ it.effect("uses available keys, rejects ChatGPT sign-in, and checks voice URL po
     yield* call("gpt-live-1", [credential("active", "key"), credential("stored", "key")])
     yield* call("gpt-live-1", [credential("chatgpt", "oauth"), credential("stored", "key")])
     const grok = yield* call("grok-voice-3.0", [{ type: "env", name: "XAI_API_KEY" }])
-    expect(auths).toEqual(["Bearer sk-active", "Bearer sk-stored", "Bearer xai-env-key"])
+    const gemini = yield* call("gemini-3.8-live", [{ type: "env", name: "GEMINI_API_KEY" }])
+    expect(auths).toEqual(["Bearer sk-active", "Bearer sk-stored", "Bearer xai-env-key", "gemini-env-key"])
     expect(grok).toEqual({
       type: "websocket",
       url: "wss://api.x.ai/v1/realtime?model=grok-voice-3.0",
       token: "ek_xai",
       expiresAt: 1760000999,
     })
+    expect(gemini).toEqual({
+      type: "websocket",
+      url: "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained",
+      token: "auth_tokens/ek_gemini",
+      expiresAt: 1760000060,
+    })
 
     const signInOnly = yield* call("gpt-live-1", [credential("chatgpt", "oauth")]).pipe(Effect.flip)
     expect(signInOnly._tag).toBe("Voice.UnavailableError")
     expect(signInOnly.message).toContain("OpenAI API key")
 
-    for (const model of ["gpt-live-1", "gpt-realtime-2.1", "grok-voice-3.0"]) {
+    for (const model of ["gpt-live-1", "gpt-realtime-2.1", "grok-voice-3.0", "gemini-3.8-live"]) {
       const denied = yield* call(model, [credential("active", "key")], {
         mode: "internal-only",
         audit_log_enabled: false,
@@ -115,13 +134,22 @@ it.effect("uses available keys, rejects ChatGPT sign-in, and checks voice URL po
       expect(denied._tag).toBe("Voice.UnavailableError")
       expect(denied.message).toContain("Fetch blocked")
     }
-    expect(auths).toEqual(["Bearer sk-active", "Bearer sk-stored", "Bearer xai-env-key"])
+    expect(auths).toEqual(["Bearer sk-active", "Bearer sk-stored", "Bearer xai-env-key", "gemini-env-key"])
 
-    yield* call("gpt-live-1", [credential("active", "key")], {
-      mode: "strict",
-      external_domains: ["api.openai.com"],
-      audit_log_enabled: false,
-    })
-    expect(auths).toHaveLength(4)
+    for (const [model, domain] of [
+      ["gpt-live-1", "api.openai.com"],
+      ["gemini-3.8-live", "generativelanguage.googleapis.com"],
+    ] as const) {
+      yield* call(model, [credential("active", "key")], {
+        mode: "strict",
+        external_domains: [domain],
+        audit_log_enabled: false,
+      })
+    }
+    expect(auths.slice(4)).toEqual(["Bearer sk-active", "sk-active"])
+
+    const missingGoogle = yield* call("gemini-3.8-live", []).pipe(Effect.flip)
+    expect(missingGoogle).toMatchObject({ _tag: "Voice.UnavailableError", service: "google" })
+    expect(missingGoogle.message).toContain("GEMINI_API_KEY")
   }),
 )

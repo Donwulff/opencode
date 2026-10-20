@@ -2369,6 +2369,7 @@ export type ConfigEntry =
         provenance?: { enabled?: boolean; path?: string; preview_chars?: number }
         experimental?: {
           portable_shell_scanner?: boolean
+          todo?: boolean
           subagent_depth?: number
           policies?: Array<{
             action: "provider.use" | "tool.use" | "integration.use"
