@@ -52,6 +52,10 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
    lockfile resolution/hoisting even when no dependency change was intended;
    inspect install-only changes rather than staging them automatically.
 
+   `opencode-local` uses Bun from the caller's `PATH` and validates it before
+   installing dependencies. It must not prepend `.scripts/runtime`: that ignored
+   directory may contain an older Bun left behind after an upstream version bump.
+
    Changes to workspace manifests, lockfiles, patches, or package additions can
    otherwise produce cascades of misleading missing-module/implicit-any errors.
    Inspect the dependency's actual resolution: historical `@opencode-ai/*` names

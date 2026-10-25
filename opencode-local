@@ -212,11 +212,21 @@ fi
 # bumps a workspace dependency (e.g. a vendored tarball) leaves node_modules stale,
 # and the resulting unresolved module detonates into dozens of misleading
 # "implicitly has an 'any' type" errors in files that are themselves fine.
-if [ -x "$root/.scripts/runtime/bun" ]; then
-  export PATH="$root/.scripts/runtime:$PATH"
-fi
-
 if [ "$build" -eq 1 ]; then
+  # Use Bun from the caller's PATH; the cached local runtime may predate a merge.
+  # Check before installing so an old Bun cannot rewrite the merged lockfile.
+  # JavaScript template literals must reach Bun without shell expansion.
+  # shellcheck disable=SC2016
+  bun --eval '
+    const expected = (await Bun.file("package.json").json()).packageManager?.replace(/^bun@/, "")
+    if (!expected) throw new Error("packageManager field not found in root package.json")
+    if (!Bun.semver.satisfies(Bun.version, `^${expected}`)) {
+      console.error(`This build requires bun@^${expected}, but ${process.execPath} is bun@${Bun.version}. Update Bun before building.`)
+      process.exit(1)
+    }
+    console.log(`Using Bun ${Bun.version} (${process.execPath})`)
+  '
+
   echo "Installing dependencies..."
   bun install
 
