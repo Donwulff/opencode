@@ -1,5 +1,5 @@
 import { expect } from "bun:test"
-import { AIError, ProviderInternalError, RateLimitError } from "@opencode/ai"
+import { AIError, ProviderInternalError, RateLimitError } from "@opencode/ai/effect"
 import { ModelRetry } from "@opencode/core/model-retry"
 import { Effect } from "effect"
 import { it } from "./lib/effect"

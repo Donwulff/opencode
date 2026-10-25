@@ -1,7 +1,7 @@
 export * as CommandGuard from "./command-guard.js"
 
 import path from "path"
-import { ToolFailure } from "@opencode/ai"
+import { ToolFailure } from "@opencode/ai/effect"
 import type { Session } from "@opencode/schema/session"
 import { Effect, Option } from "effect"
 import { SessionStore } from "../session/store.js"

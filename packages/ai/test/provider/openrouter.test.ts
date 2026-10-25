@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { Effect } from "effect"
-import { CacheHint, LanguageModel, LLM, Message } from "../../src/index.js"
+import { CacheHint, LanguageModel, LLM, Message } from "../../src/effect.js"
 import { LLMClient } from "../../src/route.js"
 import { compileRequest } from "../../src/route/client.js"
 import * as OpenRouter from "../../src/providers/openrouter.js"
@@ -492,6 +492,7 @@ describe("OpenRouter", () => {
           model: OpenRouter.configure({ apiKey: "test-key" }).model("anthropic/claude-sonnet-4.6"),
           cache: "none",
           messages: [
+            Message.assistant(""),
             Message.assistant([
               {
                 type: "reasoning",

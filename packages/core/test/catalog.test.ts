@@ -1,5 +1,5 @@
 import { describe, expect } from "bun:test"
-import { LanguageModel } from "@opencode/ai"
+import { LanguageModel } from "@opencode/ai/effect"
 import { OpenAIChat } from "@opencode/ai/protocols"
 import { Effect, Fiber, Layer, Ref, Stream } from "effect"
 import { Integration } from "@opencode/core/integration"
@@ -704,7 +704,7 @@ describe("Provider and Model", () => {
     }),
   )
 
-  it.effect("small model returns undefined without a matching family", () =>
+  it.effect("small model stays on its provider even when only another provider has a matching family", () =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
       const models = yield* Model.Service
@@ -713,6 +713,12 @@ describe("Provider and Model", () => {
         editor.update(providerID, () => {})
         editor.models.update(providerID, Model.ID.make("large"), (model) => {
           model.family = Model.Family.make("gpt")
+          model.capabilities.input = ["text"]
+          model.capabilities.output = ["text"]
+        })
+        editor.update(Provider.ID.opencode, () => {})
+        editor.models.update(Provider.ID.opencode, Model.ID.make("foreign-small"), (model) => {
+          model.family = Model.Family.make("gpt-luna")
           model.capabilities.input = ["text"]
           model.capabilities.output = ["text"]
         })

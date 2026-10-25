@@ -1,12 +1,13 @@
 export * as WebFetchTool from "./webfetch.js"
 
 import type { Context } from "@opencode/plugin/effect/plugin"
-import { ToolFailure } from "@opencode/ai"
+import { ToolFailure } from "@opencode/ai/effect"
 import { Duration, Effect, Option, Schema } from "effect"
 import { Config } from "../../config.js"
 import { Security } from "../../util/security.js"
 import { HttpClient, type HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Parser } from "htmlparser2"
+import { Mime } from "../../mime.js"
 import { Permission } from "../../permission.js"
 import { convertHTMLToMarkdown, MAX_MARKDOWN_BYTES } from "../html-markdown.js"
 import { collectBoundedResponseBody } from "../http-body.js"
@@ -86,15 +87,6 @@ const collectBody = (response: HttpClientResponse.HttpClientResponse) =>
 const mimeFrom = (contentType: string) => contentType.split(";", 1)[0]?.trim().toLowerCase() ?? ""
 const isImageAttachment = (mime: string) =>
   mime.startsWith("image/") && mime !== "image/svg+xml" && mime !== "image/vnd.fastbidsheet"
-const isTextualMime = (mime: string) =>
-  !mime ||
-  mime.startsWith("text/") ||
-  mime === "application/json" ||
-  mime.endsWith("+json") ||
-  mime === "application/xml" ||
-  mime.endsWith("+xml") ||
-  mime === "application/javascript" ||
-  mime === "application/x-javascript"
 const convert = (content: string, contentType: string, format: Format) => {
   if (!contentType.includes("text/html")) return content
   if (format === "markdown") return convertHTMLToMarkdown(content)
@@ -143,7 +135,7 @@ export const Plugin = {
                 const mime = mimeFrom(contentType)
                 if (isImageAttachment(mime))
                   return yield* Effect.fail(new Error(`Unsupported fetched image content type: ${mime}`))
-                if (!isTextualMime(mime))
+                if (!Mime.isTextual(mime))
                   return yield* Effect.fail(new Error(`Unsupported fetched file content type: ${mime}`))
                 return { body: yield* collectBody(response), contentType }
               }).pipe(

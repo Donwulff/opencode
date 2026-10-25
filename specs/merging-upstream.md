@@ -48,6 +48,10 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
    bun install
    ```
 
+   Use the Bun version pinned in root `package.json`. An older Bun can rewrite
+   lockfile resolution/hoisting even when no dependency change was intended;
+   inspect install-only changes rather than staging them automatically.
+
    Changes to workspace manifests, lockfiles, patches, or package additions can
    otherwise produce cascades of misleading missing-module/implicit-any errors.
    Inspect the dependency's actual resolution: historical `@opencode-ai/*` names
@@ -88,7 +92,9 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
      test/tool-webfetch.test.ts test/plugin/provider-restrict.test.ts \
      test/plugin/provider-autodiscover.test.ts test/provenance.test.ts \
      test/config/normalization.test.ts test/config/config.test.ts test/config/reload.test.ts \
-     test/session-projector.test.ts test/session-runner-retry.test.ts test/model-retry.test.ts)
+     test/session-projector.test.ts test/session-runner-retry.test.ts test/model-retry.test.ts \
+     test/session-title.test.ts test/session-compaction.test.ts \
+     test/plugin/provider-opencode.test.ts test/usage-limits.test.ts)
    ```
 
    Review marker matches: some fixtures intentionally contain markers. Run changed
@@ -98,6 +104,10 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
    root rather than deleting unrelated files. Network fixtures require permission
    to bind loopback ports. Read `.opencode/skills/unit-tests/SKILL.md` before changing
    tests. Tests must run from package directories.
+
+   Local checks use `bun check`; CI/publishing also use the official TypeScript
+   compiler. Run `bun run typecheck:tsc` in an affected package when checking that
+   path, and treat it as authoritative if the compilers disagree.
 
 7. Review the resolved diff, stage only intended files, verify no unmerged entries
    remain, and finish with a conventional merge message:
@@ -122,9 +132,9 @@ Paths in this table are relative to `packages/core/src` unless qualified.
 | URL policy and auditing        | `util/security.ts`, `util/network.ts`, `util/audit.ts`; check callers, not only definitions                                                                                                                                   |
 | Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content                                          |
 | Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                                                             |
-| Search                         | All five `plugin/websearch/*` providers; TinyFish must check before initialize as well as search                                                                                                                              |
+| Search                         | All five `plugin/websearch/*` providers plus Console-hosted search in `plugin/provider/opencode.ts`; TinyFish must check before initialize as well as search                                                                 |
 | Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output                                                                                                                                                              |
-| Voice                          | `voice.ts` gates OpenAI, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                                                                       |
+| Voice                          | `voice.ts` gates OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                        |
 | Provider restriction/discovery | `plugin/provider/restrict.ts`, `plugin/provider/autodiscover.ts`, and registrations in `plugin/internal.ts`; restriction remains guarded against plugin removal                                                               |
 | Catalog                        | `models-dev.ts` guard and registration in `config.ts`; bundled snapshot now exists and can remain usable with network refresh disabled                                                                                        |
 | Shell                          | `shell.ts` must call `shell/sandbox.ts` before Environment spawn; tool/plugin/shell keeps command guard and post-approval audit                                                                                               |
@@ -153,3 +163,15 @@ used by both session steps and buffered generation. Preserve the fork's 61-secon
 provider delay cap there, and keep the final cap after session retry plugins can
 override the delay. Keeping only the session cap would leave buffered generation
 with upstream's 15-minute maximum.
+
+The merge to `450e7b9241` changes the AI package's Effect entry point to
+`@opencode/ai/effect`. Update fork-only callers too: Git can leave their old imports
+untouched. Public prompt types are now plain Schema structs; keep `command` in
+prompt preparation, stored inbox/message shapes, and projector delivery without
+restoring retired class wrappers. Regenerate conflicted client types from source.
+
+That merge also adds Console-hosted search and a hosted GPT-Live fallback. Gate
+the actual destination URL, including the hosted fallback, and test that denial
+leaves the HTTP transport untouched. Console account/config/usage requests remain
+outside these gates. Re-check background title and compaction model selection
+and document its limits in the [privacy review](../SECURITY-ANALYSIS.md#model-routing-and-privacy-review-2026-10-25).
