@@ -69,7 +69,10 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
    ```
 
    Do not hand-edit generated client files or use the retired
-   `packages/sdk/js/src/v2/gen` workflow. Review and stage generator output.
+   `packages/sdk/js/src/v2/gen` workflow. A conflict in generated types is resolved
+   by fixing their source contracts first, then running the generator and staging
+   its output. Do not combine the generated conflict blocks manually. Git keeps
+   the path marked unmerged until the regenerated file is staged.
 
 5. Audit additions and renames **before committing**, even when Git reported only
    a few conflicts:
@@ -96,7 +99,8 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
      test/tool-webfetch.test.ts test/plugin/provider-restrict.test.ts \
      test/plugin/provider-autodiscover.test.ts test/provenance.test.ts \
      test/config/normalization.test.ts test/config/config.test.ts test/config/reload.test.ts \
-     test/session-projector.test.ts test/session-runner-retry.test.ts test/model-retry.test.ts \
+     test/session-prompt.test.ts test/session-projector.test.ts \
+     test/session-runner-retry.test.ts test/model-retry.test.ts \
      test/session-title.test.ts test/session-compaction.test.ts \
      test/plugin/provider-opencode.test.ts test/usage-limits.test.ts)
    ```
@@ -113,6 +117,11 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
    compiler. Run `bun run typecheck:tsc` in an affected package when checking that
    path, and treat it as authoritative if the compilers disagree.
 
+   When media admission/storage or its public routes change, also run Core's
+   prompt/projector tests and Server's `test/media.test.ts` and
+   `test/session-form.test.ts`. Verify command metadata survives both inline
+   attachments and stored media references.
+
 7. Review the resolved diff, stage only intended files, verify no unmerged entries
    remain, and finish with a conventional merge message:
 
@@ -123,7 +132,37 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
    git commit -m "chore: merge upstream/dev and preserve security hardening"
    ```
 
+   Upstream patch files can trigger whitespace warnings on their context lines.
+   Verify those files are byte-identical to the recorded upstream head before
+   attributing the warnings to upstream; keep the rest of the diff clean. Do not
+   strip patch context whitespace to silence the check, since that can break
+   dependency installation.
+
    Publishing is separate from local resolution. No Changesets are used.
+
+## Local helper recovery
+
+`opencode-local` snapshots its running script in memory so a merge that updates
+the launcher cannot change the commands an already running shell reads. It also
+checks for an existing `MERGE_HEAD` before stashing or starting another merge.
+That recovery branch waits for resolutions to be staged and then commits them;
+it does not run the generator, security tests, or repository checks for you.
+
+Keep the conflict prompt waiting while resolving and verifying the merge in a
+second terminal. Complete these checks before letting the helper commit, or
+finish the merge manually and use `./opencode-local --no-update --no-run` to
+install/build afterwards. `--no-build` skips both install and build. An interrupted
+run can leave its original stash or temporary skip-worktree state to recover;
+restarting the helper does not reconstruct that previous process's bookkeeping.
+Inspect leftover `opencode-local: pre-merge stash ...` entries before restoring or
+dropping them, including any untracked content. Stash-pop conflicts use
+`Updated upstream` / `Stashed changes` marker labels.
+
+For an unexpected Bun-version error, compare `command -v bun`, `bun --version`,
+and root `package.json`'s `packageManager`. An old executable earlier in `PATH`
+can select the wrong runtime without installing or downgrading anything. The
+launcher validates Bun before dependency installation; never fix a version error
+by prepending an older cached `.scripts/runtime` directory.
 
 ## Fork hooks to preserve
 
@@ -136,20 +175,20 @@ Paths in this table are relative to `packages/core/src` unless qualified.
 | URL policy and auditing        | `util/security.ts`, `util/network.ts`, `util/audit.ts`; check callers, not only definitions                                                                                                                                   |
 | Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content                                          |
 | Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                                                             |
-| Search                         | All five `plugin/websearch/*` providers plus Console-hosted search in `plugin/provider/opencode.ts`; TinyFish must check before initialize as well as search                                                                 |
+| Search                         | All five `plugin/websearch/*` providers plus Console-hosted search in `plugin/provider/opencode.ts`; TinyFish must check before initialize as well as search                                                                  |
 | Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output                                                                                                                                                              |
-| Voice                          | `voice.ts` gates OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                        |
+| Voice                          | `voice.ts` gates OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                       |
 | Provider restriction/discovery | `plugin/provider/restrict.ts`, `plugin/provider/autodiscover.ts`, and registrations in `plugin/internal.ts`; restriction remains guarded against plugin removal                                                               |
 | Catalog                        | `models-dev.ts` guard and registration in `config.ts`; bundled snapshot now exists and can remain usable with network refresh disabled                                                                                        |
 | Shell                          | `shell.ts` must call `shell/sandbox.ts` before Environment spawn; tool/plugin/shell keeps command guard and post-approval audit                                                                                               |
-| Command restrictions           | `tool/command-guard.ts`, tool plugins for shell/edit/write/patch/subagent; command survives Schema → admission → delivery → SessionStore                                                                                      |
+| Command restrictions           | `session/command.ts`, `session/prompt.ts`, Schema, inbox/projector and SessionStore preserve `command`; `tool/command-guard.ts` enforces it in shell/edit/write/patch/subagent tools                                          |
 | Provenance                     | `provenance.ts`, `plugin/internal.ts`, tool execute hooks and current session event names                                                                                                                                     |
 | Other fork behavior            | Provider `system_prompt` in `plugin/optimize.ts`, agent `plan_reminder` in config/plan plugins, debug/review/learn commands, shared retry delay cap in `model-retry.ts` plus the post-plugin cap in `session/runner/retry.ts` |
 
 The [security analysis](../SECURITY-ANALYSIS.md) documents coverage limits. Neither
 URL hooks nor shell namespacing cover every V2 network/process path.
 
-## October 2026 merge lesson
+## October 2026 merge lessons
 
 The `ebed9529f3` → `07bbd0fd16` merge conflicted in instruction loading, instruction
 path documentation, and TinyFish imports. Upstream instruction loading now caches
@@ -179,3 +218,20 @@ the actual destination URL, including the hosted fallback, and test that denial
 leaves the HTTP transport untouched. Console account/config/usage requests remain
 outside these gates. Re-check background title and compaction model selection
 and document its limits in the [privacy review](../SECURITY-ANALYSIS.md#model-routing-and-privacy-review-2026-10-25).
+
+The merge to `7359a48573` moves prompt preparation, revert commit, and admission
+into one Location-services acquisition in `session/session.ts`. Keep that owning
+scope rather than restoring the old inner `Instance.provide` in
+`session/prompt.ts`. `session/command.ts` now runs activation and command execution
+inside its session's Location scope as well. Preserve the fork's `command` field
+at command invocation, prompt-hook input, and inbox payload construction. A clean
+typecheck cannot detect a missing optional field: exercise `/review` and `/learn`
+through actual preparation/admission/delivery as well as the tool guards.
+
+That merge also extends media blob admission, storage and client reads. Stored
+and media-view schemas inherit the command field from the public prompt/message
+schemas; preserve those spreads and projector delivery. Regenerate the client for
+the new media API and check that both inline and stored-attachment paths retain
+the fork metadata. The new catalog build helper reads the committed snapshot or
+an explicit `OPENCODE_MODELS_SNAPSHOT` file; release snapshot fetching is separate
+from the runtime `ModelsDev` URL guard.

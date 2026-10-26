@@ -46,6 +46,11 @@ The command metadata survives prompt admission and inbox delivery through Schema
 edit, write, patch, and subagent tools. Patch resolution checks both source and
 move destination. `/learn` permits file edits only when the target basename is
 `AGENTS.md` and forbids subagents. Ordinary user input clears the command context.
+The October 26 merge to upstream `7359a48573` moves preparation and admission into
+one session Location scope and extends media-blob storage. The fork retains
+`command` at invocation, prompt-hook input, inbox admission, and delivery; stored
+and media-view schemas inherit it too. Regression checks cover `/review` and
+`/learn` admission/delivery and command metadata alongside stored attachments.
 
 The provider restriction plugin is in `PluginInternal.guarded`, so project plugin
 removal cannot disable that registration. Other plugin replacement/removal remains
@@ -74,6 +79,12 @@ Legacy normalization preserves `security`, `provenance`, provider overrides, and
 - `models_dev_enabled: false` disables guarded catalog network refreshes. V2 has a
   bundled `models-dev/snapshot.txt` and a cache, so this does **not** empty the model
   catalog or by itself disable cloud providers.
+
+Catalog snapshot fetching during release/build preparation is separate from
+runtime refresh policy. `core/script/models-snapshot.ts` can fetch and validate a
+catalog; normal local builds read the committed snapshot or an explicit
+`OPENCODE_MODELS_SNAPSHOT` file. Runtime managed settings do not govern build-time
+network access or determine the contents of an already bundled catalog.
 
 For restrictive deployments, supply managed policy, explicit provider selection,
 container egress controls, and sandbox configuration together. No single config
