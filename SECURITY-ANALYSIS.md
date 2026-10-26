@@ -80,6 +80,12 @@ Legacy normalization preserves `security`, `provenance`, provider overrides, and
   bundled `models-dev/snapshot.txt` and a cache, so this does **not** empty the model
   catalog or by itself disable cloud providers.
 
+Runtime catalog requests use the experimental v2 API; a custom mirror can fall
+back to its legacy `/api.json` after a 404. The policy guard runs before either
+request path. Regression tests verify that denied initial population and forced
+refresh send no HTTP request for the default source or a custom mirror. Cached
+and bundled catalogs remain usable, and legacy catalog files are still accepted.
+
 Catalog snapshot fetching during release/build preparation is separate from
 runtime refresh policy. `core/script/models-snapshot.ts` can fetch and validate a
 catalog; normal local builds read the committed snapshot or an explicit

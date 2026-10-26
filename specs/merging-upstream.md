@@ -102,7 +102,8 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
      test/session-prompt.test.ts test/session-projector.test.ts \
      test/session-runner-retry.test.ts test/model-retry.test.ts \
      test/session-title.test.ts test/session-compaction.test.ts \
-     test/plugin/provider-opencode.test.ts test/usage-limits.test.ts)
+     test/plugin/provider-opencode.test.ts test/usage-limits.test.ts \
+     test/models.test.ts test/plugin/models-dev.test.ts)
    ```
 
    Review marker matches: some fixtures intentionally contain markers. Run changed
@@ -121,6 +122,10 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
    prompt/projector tests and Server's `test/media.test.ts` and
    `test/session-form.test.ts`. Verify command metadata survives both inline
    attachments and stored media references.
+
+   When catalog loading changes, check both the default endpoint and custom
+   mirrors. Denied initial population and forced refresh must leave HTTP untouched;
+   an allowed mirror's legacy fallback and cached/bundled catalogs must still work.
 
 7. Review the resolved diff, stage only intended files, verify no unmerged entries
    remain, and finish with a conventional merge message:
@@ -235,3 +240,18 @@ the new media API and check that both inline and stored-attachment paths retain
 the fork metadata. The new catalog build helper reads the committed snapshot or
 an explicit `OPENCODE_MODELS_SNAPSHOT` file; release snapshot fetching is separate
 from the runtime `ModelsDev` URL guard.
+
+The merge to `7ad676b0c7` changes runtime catalog fetching to
+`/experimental/v2.0/api.json?type=chat,decision,image`. Custom mirrors fall back to
+`/api.json` only after a 404; legacy files are converted by `models-dev/v1.ts`.
+Keep `registerGuard` and the policy check at the start of `fetchApi`, before both
+the new request and its fallback. Do not restore the old normalization types or
+leave a second `fetchApi` definition when resolving the conflict. Cache keys are
+now versioned, and catalog API v2 is distinct from the OpenCode 2 runtime migration.
+
+That merge also moves client generation from `script/build.ts` to
+`script/generate.ts`; continue using the stable `bun run generate` command. Package
+publishing scripts become `script/pack.ts`, desktop scripts move from `scripts/`
+to `script/`, and release orchestration is in `.github/workflows/release.yml` and
+`.github/release/`. Audit local helpers for references to retired paths. The local
+CLI build remains `packages/cli/script/build.ts --single --skip-install`.
