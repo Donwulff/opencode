@@ -3283,6 +3283,7 @@ export type SessionPromptInput = {
   readonly files?:
     | ReadonlyArray<{
         readonly uri: string
+        readonly source?: { readonly type: "inline" } | { readonly type: "uri"; readonly uri: string }
         readonly name?: string
         readonly description?: string
         readonly mention?: { readonly start: number; readonly end: number; readonly text: string }
@@ -3315,6 +3316,7 @@ export type SessionCommandInput = {
   readonly files?:
     | ReadonlyArray<{
         readonly uri: string
+        readonly source?: { readonly type: "inline" } | { readonly type: "uri"; readonly uri: string }
         readonly name?: string
         readonly description?: string
         readonly mention?: { readonly start: number; readonly end: number; readonly text: string }

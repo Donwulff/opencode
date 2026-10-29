@@ -20669,6 +20669,9 @@
           "uri": {
             "type": "string"
           },
+          "source": {
+            "$ref": "#/components/schemas/Prompt.FileSource"
+          },
           "name": {
             "type": "string"
           },
