@@ -97,6 +97,7 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
      test/instruction-discovery.test.ts test/plugin/websearch.test.ts test/voice.test.ts \
      test/network-policy.test.ts test/audit.test.ts test/skill-discovery.test.ts \
      test/tool-webfetch.test.ts test/plugin/provider-restrict.test.ts \
+     test/tool-image-generate.test.ts \
      test/plugin/provider-autodiscover.test.ts test/provenance.test.ts \
      test/config/normalization.test.ts test/config/config.test.ts test/config/reload.test.ts \
      test/session-prompt.test.ts test/session-projector.test.ts \
@@ -181,12 +182,12 @@ Paths in this table are relative to `packages/core/src` unless qualified.
 | Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content                                          |
 | Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                                                             |
 | Search                         | All five `plugin/websearch/*` providers plus Console-hosted search in `plugin/provider/opencode.ts`; TinyFish must check before initialize as well as search                                                                  |
-| Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output                                                                                                                                                              |
+| Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output; `tool/plugin/image-generate.ts` checks reference URLs before download                                                                                        |
 | Voice                          | `voice.ts` gates OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                       |
 | Provider restriction/discovery | `plugin/provider/restrict.ts`, `plugin/provider/autodiscover.ts`, and registrations in `plugin/internal.ts`; restriction remains guarded against plugin removal                                                               |
 | Catalog                        | `models-dev.ts` guard and registration in `config.ts`; bundled snapshot now exists and can remain usable with network refresh disabled                                                                                        |
 | Shell                          | `shell.ts` must call `shell/sandbox.ts` before Environment spawn; tool/plugin/shell keeps command guard and post-approval audit                                                                                               |
-| Command restrictions           | `session/command.ts`, `session/prompt.ts`, Schema, inbox/projector and SessionStore preserve `command`; `tool/command-guard.ts` enforces it in shell/edit/write/patch/subagent tools                                          |
+| Command restrictions           | `session/command.ts`, `session/prompt.ts`, Schema, inbox/projector and SessionStore preserve `command`; `tool/command-guard.ts` enforces it in shell/edit/write/patch/subagent/image-generation tools                         |
 | Provenance                     | `provenance.ts`, `plugin/internal.ts`, tool execute hooks and current session event names                                                                                                                                     |
 | Other fork behavior            | Provider `system_prompt` in `plugin/optimize.ts`, agent `plan_reminder` in config/plan plugins, debug/review/learn commands, shared retry delay cap in `model-retry.ts` plus the post-plugin cap in `session/runner/retry.ts` |
 
@@ -255,3 +256,15 @@ publishing scripts become `script/pack.ts`, desktop scripts move from `scripts/`
 to `script/`, and release orchestration is in `.github/workflows/release.yml` and
 `.github/release/`. Audit local helpers for references to retired paths. The local
 CLI build remains `packages/cli/script/build.ts --single --skip-install`.
+
+The merge to `6007274795` renames GUI extensions to plugins and adds image
+generation, goals, and scheduling. Verify every renamed destination across all
+packages, then review new tools for fork hooks. Image reference downloads need
+the URL gate, and image generation must respect `/review` and `/learn` before
+starting paid work. Keep the webfetch redirect permission checks alongside the
+fork's initial URL gate and output sanitization; redirect URL policy remains a
+separate coverage gap.
+
+Console search now requires the Console config to select the provider. Security
+tests that replace that config must pass the provider ID explicitly so they
+exercise the URL gate rather than fail during default-provider selection.

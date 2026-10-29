@@ -15,6 +15,11 @@ export const make = Effect.fn("CommandGuard.make")(function* () {
     return message?.type === "user" ? message.command : undefined
   })
   return {
+    image: Effect.fn("CommandGuard.image")(function* (sessionID: Session.ID) {
+      const kind = yield* command(sessionID)
+      if (kind === "review" || kind === "learn")
+        return yield* new ToolFailure({ message: `The /${kind} command cannot generate images.` })
+    }),
     path: Effect.fn("CommandGuard.path")(function* (sessionID: Session.ID, filePath: string) {
       const kind = yield* command(sessionID)
       if (kind === "review")

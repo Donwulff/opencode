@@ -29,6 +29,7 @@ import { LocationServiceMap } from "@opencode/core/location-service-map"
 import { LocationActivity } from "@opencode/core/location-activity"
 import { ModelsDev } from "@opencode/core/models-dev"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
+import { Schedule } from "@opencode/core/schedule"
 import { PluginUpdate } from "@opencode/core/plugin/update"
 import { SdkPlugins } from "@opencode/core/plugin/sdk"
 import { WellKnown } from "@opencode/core/wellknown"
@@ -77,6 +78,7 @@ const applicationServiceNodes = [
   LocationServiceMap.node,
   LocationActivity.node,
   SessionRestart.node,
+  Schedule.node,
   Workspace.node,
   FileWatch.node,
 ] as const
@@ -89,7 +91,7 @@ export function createRoutes(
 ) {
   return makeRoutes(
     options.password
-      ? ServerAuth.Config.configLayer({ password: Option.some(options.password), username: options.username })
+      ? ServerAuth.Config.configLayer({ password: Option.some(options.password) })
       : ServerAuth.Config.layer,
     options,
     serviceURLs,

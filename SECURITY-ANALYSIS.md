@@ -27,6 +27,7 @@ Paths below are relative to `packages/core/src` unless stated otherwise.
 | Surface                 | Active enforcement                                                                                                              | Limits                                                                                                                                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `webfetch`              | `tool/plugin/webfetch.ts` calls `Security.assertUrl` before permission/fetch and sanitizes converted text                       | Initial URL only; redirects are not revalidated. Response size is bounded to 5 MiB.                                                                                                    |
+| Image reference downloads | `tool/plugin/image-generate.ts` checks input image URLs before permission and download | Initial URL only; redirects and image inference transport remain outside this gate. |
 | Built-in web search     | Exa, Parallel, Firecrawl, Tavily, TinyFish, and Console-hosted search check their endpoint before sending queries                | Search snippets are not sanitized. Console search rejects redirects; other providers and third-party plugins need separate review.                                                     |
 | TinyFish authentication | The URL check precedes credential use, MCP initialize, initialized notification, and search                                     | Preserve that order when merging handshake changes.                                                                                                                                    |
 | Remote instructions     | `config/plugin/instruction.ts` checks URLs and strips Unicode tag/zero-width characters before caching content                  | Config reload checks policy again. A denied URL loses its cached copy; an allowed URL with a failed fetch can retain the last good copy. Local instruction files remain trusted input. |
@@ -43,8 +44,10 @@ Paths below are relative to `packages/core/src` unless stated otherwise.
 
 The command metadata survives prompt admission and inbox delivery through Schema,
 `session/prompt.ts`, and `session/projector.ts`. The guard is called by the shell,
-edit, write, patch, and subagent tools. Patch resolution checks both source and
-move destination. `/learn` permits file edits only when the target basename is
+edit, write, patch, subagent, and image-generation tools. Image generation is
+blocked during both `/review` and `/learn`, before downloads or paid generation.
+Patch resolution checks both source and move destination. `/learn` permits file
+edits only when the target basename is
 `AGENTS.md` and forbids subagents. Ordinary user input clears the command context.
 The October 26 merge to upstream `7359a48573` moves preparation and admission into
 one session Location scope and extends media-blob storage. The fork retains
@@ -145,6 +148,11 @@ egress boundary. The voice and Console-search gates above check those specific
 setup/query paths; they do not retrofit every existing AI request. Console
 configuration polling and usage-limit reads are also direct HTTP paths outside
 these URL gates.
+
+The image tool's reference-download gate is separate from image inference. Its
+automatic model selection prefers the session provider, then falls back to another
+available image provider; an explicit model or configured image default can also
+select another provider. Input images and the image prompt go to that provider.
 
 V1 paths such as `share/share-next.ts`, `session/instruction.ts`, and
 `util/fetch.ts` no longer describe the active runtime. V2 also removed the legacy

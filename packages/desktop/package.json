@@ -1,7 +1,7 @@
 {
   "name": "@opencode/desktop",
   "private": true,
-  "version": "2.1.4",
+  "version": "2.2.1",
   "type": "module",
   "license": "MIT",
   "homepage": "https://opencode.ai",
@@ -33,7 +33,8 @@
     "@effect/platform-node": "catalog:",
     "@lydell/node-pty": "catalog:",
     "@opencode/app": "workspace:*",
-    "@opencode/gui-extensions": "workspace:*",
+    "@opencode/gui-plugins": "workspace:*",
+    "@opencode/plugin": "workspace:*",
     "@opencode/client": "workspace:*",
     "@opencode/schema": "workspace:*",
     "@opencode/ui": "workspace:*",
@@ -53,7 +54,7 @@
     "magic-string": "0.30.21",
     "solid-js": "catalog:",
     "typescript": "catalog:",
-    "vite": "8.2.2"
+    "vite": "8.2.4"
   },
   "optionalDependencies": {
     "@lydell/node-pty-darwin-arm64": "1.2.0-beta.12",

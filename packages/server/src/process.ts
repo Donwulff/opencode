@@ -3,6 +3,7 @@ export * as ServerProcess from "./process"
 import { NodeHttpServer } from "@effect/platform-node"
 import { Bus } from "@opencode/core/bus"
 import { SessionRestart } from "@opencode/core/session/execution/restart"
+import { Schedule } from "@opencode/core/schedule"
 import { InstallationEvent } from "@opencode/schema/installation-event"
 import { hasPtyConnectTicketURL } from "@opencode/protocol/groups/pty"
 import { hasPersistentPtyConnectTicketURL } from "@opencode/protocol/groups/persistent-pty"
@@ -66,11 +67,7 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
   }
   const urls = () => [...localURLs(), ...(remoteURLs?.() ?? [])]
   const application = yield* Ref.make(Option.none<App>())
-  const auth = ServerAuth.Config.of({
-    password: Option.some(password),
-    username: options.username ?? ServerAuth.DEFAULT_USERNAME,
-  })
-  const app = dispatch(auth, status, application, options.app?.version ?? "unknown", urls, Global.Path.tmp)
+  const app = dispatch(password, status, application, options.app?.version ?? "unknown", urls, Global.Path.tmp)
   // Request fibers may continue inbound trace context, but must not inherit the server startup parent.
   yield* bound.http
     .serve(
@@ -113,6 +110,8 @@ export const start = Effect.fn("ServerProcess.start")(function* <E, R>(
       yield* installRestartContinuity(Context.get(context, SessionRestart.Service)).pipe(
         Effect.provideService(Scope.Scope, applicationScope),
       )
+      // Schedules fire from one process only; the table holds all their state.
+      yield* Effect.forkIn(Context.get(context, Schedule.Service).run, applicationScope)
     }
     yield* Ref.set(application, Option.some(Context.get(context, HttpRouter.HttpRouter).asHttpEffect()))
     yield* status.ready
@@ -176,13 +175,14 @@ function addressInUse(error: unknown) {
 }
 
 function dispatch(
-  auth: ServerAuth.Info,
+  password: string,
   status: Status.Interface,
   application: Ref.Ref<Option.Option<App>>,
   version: string,
   urls: () => ReadonlyArray<string>,
   tmp: string,
 ): App {
+  const auth = ServerAuth.Config.of({ password: Option.some(password), username: "opencode" })
   return Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const url = new URL(request.url, "http://localhost")

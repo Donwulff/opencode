@@ -1,5 +1,6 @@
 import { activeQuestionRequest, questionPendingDocument } from "@opencode/session-ui/storybook"
 import { SessionPreview } from "./story-model"
+import { SettingsExperimental } from "@/settings/experimental/experimental"
 
 export default {
   title: "OpenCode/Session/Question switch",
@@ -12,13 +13,25 @@ export default {
     docs: {
       description: {
         component:
-          "A pending question dock with five questions of different heights. Step through them with ← and →, or the Replay buttons under Knobs → Timeline → Question. Its motion is off until Question dock motion is turned on there.",
+          "Compare the original question cards with the New question UI experiment. With the experiment enabled, step through questions with ← and →. Its motion is off until Question dock motion is turned on under Knobs → Timeline → Question.",
       },
     },
   },
 }
 
-// Several questions of different lengths and kinds in a row, to step through with ← and →.
+export const Experiments = {
+  render: () => (
+    <SessionPreview
+      title="Choose a Session layout"
+      description="opencode · question UI experiments"
+      document={questionPendingDocument}
+      request={{ type: "question", value: activeQuestionRequest }}
+      side={<SettingsExperimental />}
+    />
+  ),
+}
+
+// Several questions of different lengths and kinds in a row.
 export const QuestionSeries = {
   render: () => (
     <SessionPreview
@@ -81,6 +94,71 @@ export const QuestionSeries = {
                 { value: "diet", label: "Review diet" },
                 { value: "ladder", label: "Resume ladder" },
                 { value: "none", label: "None for now" },
+              ],
+            },
+          ],
+        },
+      }}
+    />
+  ),
+}
+
+// A pick-any question with more answers than the dock has room for, then a short one.
+export const LongList = {
+  render: () => (
+    <SessionPreview
+      title="Polish the docs site"
+      description="opencode · docs"
+      document={questionPendingDocument}
+      request={{
+        type: "question",
+        value: {
+          ...activeQuestionRequest,
+          fields: [
+            {
+              key: "details",
+              type: "multiselect",
+              title: "Details",
+              description: "Which should the builder add next? Pick any.",
+              options: [
+                {
+                  value: "typography",
+                  label: "All typography (Recommended)",
+                  description:
+                    "Hanging punctuation, tabular figures, typesetting fixes, one label style, accent selection",
+                },
+                { value: "links", label: "Heading links", description: "Hover shows #, click copies the section link" },
+                {
+                  value: "contents",
+                  label: "Sticky contents list",
+                  description: "Section list in the margin on wide screens, highlights where you are",
+                },
+                { value: "sidenotes", label: "Sidenotes", description: "Margin notes on desktop, inline on phone" },
+                { value: "glossary", label: "Glossary terms", description: "Dotted underline, definition on hover" },
+                { value: "fade", label: "Scroll fade", description: "Fade the edge of anything that scrolls sideways" },
+                { value: "code", label: "Highlighted code lines", description: "Tint the lines that matter" },
+                { value: "verdict", label: "Verdict line", description: "Answer or decision first, in the header" },
+                {
+                  value: "checked",
+                  label: "Checked / not checked",
+                  description: "Marker for verified vs unverified claims",
+                },
+                {
+                  value: "diagram",
+                  label: "Diagram interaction",
+                  description: "Hover highlights connections, click enlarges",
+                },
+                { value: "footer", label: "Footer", description: "Source path to copy, plus the date it was made" },
+              ],
+            },
+            {
+              key: "ship",
+              type: "string",
+              title: "Ship",
+              description: "Ship them in one pull request?",
+              options: [
+                { value: "one", label: "One pull request" },
+                { value: "split", label: "One per detail" },
               ],
             },
           ],
