@@ -1501,6 +1501,8 @@ export function make(options: ClientOptions) {
                 sessionID: input["sessionID"],
                 name: input["name"],
                 when: input["when"],
+                if: input["if"],
+                until: input["until"],
                 ends: input["ends"],
                 prompt: input["prompt"],
               },
