@@ -102,6 +102,7 @@ import { McpCodeModeDefaultsPlugin } from "./mcp-codemode-defaults.js"
 import { ProviderPlugins } from "./provider.js"
 import { RestrictProvidersPlugin } from "./provider/restrict.js"
 import { AutodiscoverPlugin } from "./provider/autodiscover.js"
+import { DynamicProviderPlugin } from "./provider/dynamic.js"
 import { Provenance } from "../provenance.js"
 import { OpencodePlugin } from "./provider/opencode.js"
 import { WebSearchPlugins } from "./websearch/index.js"
@@ -283,6 +284,8 @@ const post = [
   ConfigSkillPlugin.Plugin,
   AutodiscoverPlugin.Plugin,
   ConfigProviderPlugin.Plugin,
+  // Run the dynamic npm SDK loader after SDK, instance, and external plugins register their `sdk` hooks.
+  DynamicProviderPlugin,
   ConfigWebSearchPlugin.Plugin,
   ConfigPolicyPlugin.Plugin,
   RestrictProvidersPlugin.Plugin,
