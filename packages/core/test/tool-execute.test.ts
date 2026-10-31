@@ -1,14 +1,18 @@
-import { expect, test } from "bun:test"
+import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { CodeModeTool } from "@opencode/core/codemode/tool"
+import { Config } from "@opencode/core/config"
+import { Permission } from "@opencode/core/permission"
 import { Tool } from "@opencode/core/tool"
 import { execute } from "@opencode/core/tool/runtime"
 import { Agent } from "@opencode/schema/agent"
+import { Document } from "@opencode/schema/config"
 import { Session } from "@opencode/schema/session"
 import { SessionMessage } from "@opencode/schema/session-message"
 import type { Info } from "@opencode/schema/tool"
 import { Deferred, Effect, Fiber, Schema } from "effect"
 import { TestClock } from "effect/testing"
 import { it } from "./lib/effect"
+import { permissionService } from "./lib/permission"
 
 const context = {
   sessionID: Session.ID.make("ses_execute"),
@@ -18,8 +22,10 @@ const context = {
   progress: () => Effect.void,
 }
 
-const createCodeMode = (tools: ReadonlyMap<string, Info>) =>
-  CodeModeTool.create({ tools }, (_, tool, input, context) => execute(tool, input, context))
+const allowAll = permissionService({ assert: () => Effect.void })
+
+const createCodeMode = (tools: ReadonlyMap<string, Info>, permission = allowAll, config?: Config.Interface) =>
+  CodeModeTool.create({ tools }, (_, tool, input, context) => execute(tool, input, context), permission, config)
 
 test("execute describes invariant Code Mode behavior", () => {
   expect(createCodeMode(new Map()).description).toBe(
@@ -41,6 +47,122 @@ test("execute rejects filesystem fetches", async () => {
 
   expect(result.output.error).toBe(true)
   expect(result.output.output).toContain("fetch cannot be used for filesystem access.")
+})
+
+describe("fetch permissions", () => {
+  const hits: Array<string> = []
+  let server: ReturnType<typeof Bun.serve>
+  beforeAll(() => {
+    server = Bun.serve({
+      port: 0,
+      fetch: (request) => {
+        hits.push(`${request.method} ${new URL(request.url).pathname}`)
+        return new Response("ok")
+      },
+    })
+  })
+  afterAll(() => server.stop(true))
+
+  test("fetch enforces the latest URL policy before permissions and network access", async () => {
+    hits.length = 0
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const config = yield* Config.Test
+        const asked: Array<Permission.AssertInput> = []
+        const tool = createCodeMode(
+          new Map(),
+          permissionService({ assert: (input) => Effect.sync(() => void asked.push(input)) }),
+          config,
+        )
+        const url = `${server.url.origin}/policy`
+        const request = tool.execute({ code: `return await (await fetch("${url}")).text()` }, context)
+        const policy = (allow_local: boolean) => [
+          new Document({
+            type: "document",
+            info: { security: { mode: "strict", allow_local, audit_log_enabled: false } },
+          }),
+        ]
+
+        yield* config.setEntries(policy(false))
+        const denied = yield* request
+        expect(denied.output.error).toBe(true)
+        expect(denied.output.output).toContain("Fetch blocked")
+        expect(asked).toEqual([])
+        expect(hits).toEqual([])
+
+        yield* config.setEntries(policy(true))
+        expect((yield* request).output.output).toBe("ok")
+        expect(asked).toHaveLength(1)
+        expect(hits).toEqual(["GET /policy"])
+
+        yield* config.setEntries(policy(false))
+        expect((yield* request).output.error).toBe(true)
+        expect(asked).toHaveLength(1)
+        expect(hits).toEqual(["GET /policy"])
+      }).pipe(Effect.provide(Config.testLayer())),
+    )
+  })
+
+  test("fetch asks the webfetch permission for its URL as the execute call", async () => {
+    hits.length = 0
+    const asked: Array<Permission.AssertInput> = []
+    const url = `${server.url.origin}/allowed`
+    const result = await Effect.runPromise(
+      createCodeMode(
+        new Map(),
+        permissionService({ assert: (input) => Effect.sync(() => void asked.push(input)) }),
+      ).execute({ code: `return await (await fetch("${url}", { method: "POST" })).text()` }, context),
+    )
+
+    expect(result.output.output).toBe("ok")
+    expect(hits).toEqual(["POST /allowed"])
+    expect(asked).toEqual([
+      {
+        action: "webfetch",
+        resources: [url],
+        save: ["*"],
+        metadata: { method: "POST", url },
+        sessionID: context.sessionID,
+        agent: context.agent,
+        source: { type: "tool", messageID: context.messageID, id: context.id },
+      },
+    ])
+  })
+
+  test("a rejection with feedback reaches the program as the error message", async () => {
+    hits.length = 0
+    const url = `${server.url.origin}/corrected`
+    const corrected = permissionService({
+      assert: () => Effect.fail(new Permission.CorrectedError({ feedback: "use the docs site instead" })),
+    })
+    const result = await Effect.runPromise(
+      createCodeMode(new Map(), corrected).execute(
+        { code: `try { await fetch("${url}") } catch (e) { return e.message }` },
+        context,
+      ),
+    )
+
+    expect(result.output.output).toBe(`The user rejected fetching ${url}: use the docs site instead`)
+    expect(hits).toEqual([])
+  })
+
+  test("a URL denied for webfetch is never requested and rejects like a failed fetch", async () => {
+    hits.length = 0
+    const url = `${server.url.origin}/denied`
+    const denied = permissionService({
+      assert: (input) =>
+        Effect.fail(new Permission.BlockedError({ rules: [], permission: input.action, resources: input.resources })),
+    })
+    const result = await Effect.runPromise(
+      createCodeMode(new Map(), denied).execute(
+        { code: `const [denied] = await Promise.allSettled([fetch("${url}")]); return denied.status` },
+        context,
+      ),
+    )
+
+    expect(result.output.output).toBe("rejected")
+    expect(hits).toEqual([])
+  })
 })
 
 test("canonical execution distinguishes declared, model-only, and raw schema outputs", async () => {
@@ -179,10 +301,10 @@ test("executions share the prepared runtime of an inventory while keeping per-ca
     execute: (input, context) => Effect.succeed({ content: `${context.id}:${(input as { value: string }).value}` }),
   }
   const inventory = { tools: new Map([["echo", echo]]) }
-  const codeMode = CodeModeTool.create(inventory, (_, tool, input, context) => execute(tool, input, context))
+  const codeMode = CodeModeTool.create(inventory, (_, tool, input, context) => execute(tool, input, context), allowAll)
   const run = (id: string) => {
     const progress: Array<Tool.Metadata> = []
-    return CodeModeTool.create(inventory, (_, tool, input, context) => execute(tool, input, context))
+    return CodeModeTool.create(inventory, (_, tool, input, context) => execute(tool, input, context), allowAll)
       .execute(
         { code: `return await tools.echo({ value: "${id}" })` },
         { ...context, id: Tool.CallID.make(id), progress: (update) => Effect.sync(() => progress.push(update)) },

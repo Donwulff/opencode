@@ -2187,6 +2187,15 @@ describe("SessionRunnerLLM", () => {
       fakeIdentity,
       ["Initial context", "", '<context key="deploy-target">', "production", "</context>"].join("\n"),
     ])
+    // Each source stays keyed, so a provider can leave out what its own harness already supplies.
+    // `testLLM` strips the empty Code Mode notice from the text only.
+    expect(s.requests[0]?.system.at(-1)?.metadata?.experimental).toEqual({
+      instructions: [
+        expect.objectContaining({ key: "core/codemode" }),
+        { key: "test/context", text: "Initial context" },
+        { key: "api/deploy-target", text: '<context key="deploy-target">\nproduction\n</context>' },
+      ],
+    })
 
     // Non-string JSON pretty-prints; the change narrates as a System update.
     yield* contextEntries.put({ sessionID, key: "deploy-target", value: { region: "us-east-1" } })
@@ -5884,7 +5893,7 @@ describe("SessionRunnerLLM", () => {
     expect(s.requests).toHaveLength(2)
   })
 
-  scenario("caps an excessive provider retry-after delay at fifteen minutes", function* (s) {
+  scenario("caps an excessive provider retry-after delay at sixty-one seconds", function* (s) {
     yield* s.admit("Retry capped rate limit")
     yield* s.llm.push(Stream.fail(rateLimited(3_600_000)))
     yield* s.llm.push(TestLLM.text("Recovered", "retry-cap-success"))
@@ -5892,7 +5901,7 @@ describe("SessionRunnerLLM", () => {
     const scheduled = yield* subscribeRetries(s)
     const run = yield* s.resume.pipe(Effect.forkChild)
     yield* Queue.take(scheduled)
-    yield* TestClock.adjust("899999 millis")
+    yield* TestClock.adjust("60999 millis")
     expect(s.requests).toHaveLength(1)
     yield* TestClock.adjust("1 millis")
     yield* Fiber.join(run)
@@ -5942,6 +5951,26 @@ describe("SessionRunnerLLM", () => {
       expect(yield* recordedEventTypes(sessionID)).not.toContain("session.retry.scheduled.1")
     })
   }
+
+  scenario("compacts when the provider cuts an oversized prompt to its window and replies with nothing", function* (s) {
+    // Xiaomi MiMo answers an oversized prompt with HTTP 200, finish "length", no output, and a prompt count that fills
+    // the window instead of rejecting it.
+    s.currentModel = recoveryModel
+    yield* s.llm.push(
+      TestLLM.complete({ reason: { normalized: "length" }, usage: { inputTokens: 199_994, nonCachedInputTokens: 199_994, outputTokens: 0 } }),
+      TestLLM.text("## Objective\n- summary", "summary"),
+      TestLLM.text("Done", "done"),
+    )
+
+    yield* s.runPrompt("Large prompt")
+
+    expect(s.requests).toHaveLength(3)
+    expect(userTexts(s.requests[1]).at(-1)).toContain("Summarize only what the user and the assistant said and did")
+    expect((yield* s.messages).filter((message) => message.type === "compaction")).toMatchObject([
+      { status: "completed" },
+    ])
+    expect((yield* s.context).at(-1)).toMatchObject(Expected.assistant({ finish: "stop" }, [Expected.text("Done")]))
+  })
 
   for (const tools of ["hosted", "unfinished"] as const) {
     scenario(`caps output token limit continuations and resets for new input (${tools})`, function* (s) {
@@ -6144,7 +6173,7 @@ describe("SessionRunnerLLM", () => {
     ])
   })
 
-  scenario("lowers interrupted reasoning before continuing an incomplete stream", function* (s) {
+  scenario("drops interrupted reasoning before continuing an incomplete stream", function* (s) {
     yield* s.admit("Continue interrupted reasoning")
     yield* s.llm.push(
       TestLLM.failAfter(
@@ -6162,19 +6191,10 @@ describe("SessionRunnerLLM", () => {
     yield* TestClock.adjust("2400 millis")
     yield* Fiber.join(run)
 
-    expect(s.requests[1]?.messages.at(-2)).toMatchObject({
-      role: "assistant",
-      content: [{ type: "text", text: "Partial thought" }],
-    })
-    expect(s.requests[1]?.messages.at(-1)).toMatchObject({
-      role: "user",
-      content: [
-        {
-          type: "text",
-          text: INCOMPLETE_STREAM_CONTINUATION,
-        },
-      ],
-    })
+    expect(s.requests[1]?.messages.slice(-2)).toMatchObject([
+      { role: "user", content: [{ type: "text", text: "Continue interrupted reasoning" }] },
+      { role: "user", content: [{ type: "text", text: INCOMPLETE_STREAM_CONTINUATION }] },
+    ])
     expect(yield* s.context).toMatchObject([
       { type: "user" },
       Expected.assistant({ finish: "error" }, [Expected.reasoning("Partial thought")]),

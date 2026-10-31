@@ -1,6 +1,8 @@
 import { describe, expect } from "bun:test"
 import { Agent } from "@opencode/core/agent"
-import type { Permission } from "@opencode/core/permission"
+import { Config } from "@opencode/core/config"
+import { Document } from "@opencode/schema/config"
+import { Permission } from "@opencode/core/permission"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { Image } from "@opencode/core/image"
 import { PluginHooks } from "@opencode/core/plugin/hooks"
@@ -14,6 +16,7 @@ import { codeModeListings, executeTool, toolDefinitions } from "./lib/tool"
 import { Deferred, Effect, Exit, Fiber, Layer, Logger, Schema, SchemaGetter, SchemaIssue, Scope } from "effect"
 import { z } from "zod"
 import { testEffect } from "./lib/effect"
+import { permissionLayer } from "./lib/permission"
 
 const imageStore = Layer.mock(Image.Service, {
   normalize: (resource, content) => {
@@ -37,9 +40,12 @@ const imageStore = Layer.mock(Image.Service, {
     })
   },
 })
+const configLayer = Config.testLayer()
 const registryLayer = AppNodeBuilder.build(LayerNode.group([Tool.node, PluginHooks.node]), [
+  Config.node.replace(configLayer),
   Image.node.replace(imageStore),
-])
+  Permission.node.replace(permissionLayer()),
+]).pipe(Layer.provideMerge(configLayer))
 const it = testEffect(registryLayer)
 const identity = {
   agent: Agent.ID.make("build"),
@@ -74,6 +80,33 @@ const transform = (service: Tool.Interface, tools: Readonly<Record<string, Info>
   )
 
 describe("Tool", () => {
+  it.effect("passes Location URL policy to Code Mode fetch", () =>
+    Effect.gen(function* () {
+      const config = yield* Config.Test
+      const registry = yield* Tool.Service
+      yield* config.setEntries([
+        new Document({
+          type: "document",
+          info: { security: { mode: "strict", allow_local: false, audit_log_enabled: false } },
+        }),
+      ])
+      const result = yield* executeTool(registry, {
+        sessionID,
+        ...identity,
+        call: {
+          type: "tool-call",
+          id: "call-fetch-policy",
+          name: "execute",
+          input: { code: 'return await fetch("https://blocked.example.test/")' },
+        },
+      })
+      expect(result.status).toBe("completed")
+      expect(result.output?.error).toBe(true)
+      expect(result.output?.output).toContain("Fetch blocked")
+      yield* config.setEntries([])
+    }),
+  )
+
   it.effect("reads the current editor tools by effective name", () =>
     Effect.gen(function* () {
       const service = yield* Tool.Service
@@ -719,10 +752,7 @@ describe("Tool", () => {
       expect(snapshot.codeModeCatalog).toBeUndefined()
       expect((yield* snapshot.execute(call("mcp_lookup"))).output).toEqual({ text: "mcp_lookup" })
 
-      const hidden = yield* service.snapshot([
-        ...denyExecute,
-        { action: "mcp_lookup", resource: "*", effect: "deny" },
-      ])
+      const hidden = yield* service.snapshot([...denyExecute, { action: "mcp_lookup", resource: "*", effect: "deny" }])
       expect(hidden.definitions.map((tool) => tool.name)).toEqual(["bash"])
       expect(yield* hidden.execute(call("mcp_lookup")).pipe(Effect.flip)).toBeInstanceOf(Tool.Error)
     }),
@@ -1227,10 +1257,8 @@ describe("Tool", () => {
       expect(execution).toMatchObject({ content: [{ type: "text" }] })
       expect(execution.metadata?.toolCalls).toEqual([{ tool: "echo", status: "completed", input: { text: "request" } }])
       expect(executed).toEqual(["old:request"])
-      expect(progress).toEqual([
-        { toolCalls: [{ tool: "echo", status: "running", input: { text: "request" } }] },
-        { stage: "old" },
-      ])
+      // The inner tool's own progress would replace the call rows, so it is not published.
+      expect(progress).toEqual([{ toolCalls: [{ tool: "echo", status: "running", input: { text: "request" } }] }])
     }),
   )
 })

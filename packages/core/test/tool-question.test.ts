@@ -1,6 +1,7 @@
 import { describe, expect } from "bun:test"
 import { Cause, Effect, Exit, Fiber, Layer } from "effect"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
+import { Config } from "@opencode/core/config"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Form } from "@opencode/core/form"
 import { Permission } from "@opencode/core/permission"
@@ -69,6 +70,7 @@ const it = testEffect(
     Permission.node.replace(permission),
     Form.node.replace(form),
     Image.node.replace(imagePassthrough),
+    Config.node.replace(Config.testLayer()),
   ]),
 )
 

@@ -3,6 +3,7 @@ import { Duration, Effect, Fiber, Layer, Schema } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
+import { Config } from "@opencode/core/config"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { LayerNodePlatform } from "@opencode/util/effect/app-node-platform"
 import { Permission } from "@opencode/core/permission"
@@ -58,6 +59,7 @@ const toolLayer = (replacements: LayerNode.Replacements = []) =>
   AppNodeBuilder.build(LayerNode.group([Tool.node, webFetchToolNode]), [
     Permission.node.replace(permission),
     Image.node.replace(imagePassthrough),
+    Config.node.replace(Config.testLayer()),
     ...replacements,
   ])
 const it = testEffect(toolLayer([LayerNodePlatform.httpClient.replace(http)]))

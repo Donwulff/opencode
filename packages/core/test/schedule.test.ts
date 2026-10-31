@@ -1,6 +1,6 @@
 import { describe, expect } from "bun:test"
 import { FileSystem } from "@opencode/core/filesystem"
-import { DateTime, Effect, Fiber, Latch, Layer, LayerMap, Queue, Schema, Sink, Stream } from "effect"
+import { Clock, DateTime, Deferred, Effect, Fiber, Latch, Layer, LayerMap, Queue, Schema, Sink, Stream } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { ExitCode, makeHandle, ProcessId } from "effect/process/ChildProcessSpawner"
 import { TestClock } from "effect/testing"
@@ -80,7 +80,16 @@ const enabledEntries = [
     }),
   }),
 ]
+const disabledEntries = [
+  new Document({
+    type: "document",
+    info: new Info({
+      experimental: new ConfigExperimental.Info({ schedules: false }),
+    }),
+  }),
+]
 const enabled = Config.testLayer(enabledEntries)
+const disabled = Config.testLayer(disabledEntries)
 /** A location whose flag the test turns on, counting every config read. */
 const toggle = { on: false, reads: 0 }
 const toggled = Layer.succeed(
@@ -89,7 +98,7 @@ const toggled = Layer.succeed(
     entries: () =>
       Effect.sync(() => {
         toggle.reads++
-        return toggle.on ? enabledEntries : []
+        return toggle.on ? enabledEntries : disabledEntries
       }),
     changes: () => Stream.empty,
   }),
@@ -116,7 +125,7 @@ const testEnvironment = Layer.effect(
     yield* files.mkdir(toggleDirectory).pipe(Effect.orDie)
     const spawner = ChildProcessSpawner.make((command) =>
       Effect.gen(function* () {
-        const script = command._tag === "StandardCommand" ? (command.args.at(-1) ?? command.command) : "pipeline"
+        const script = command._tag === "StandardCommand" ? String(command.args.at(-1) ?? command.command) : "pipeline"
         shellState.runs.push(script)
         if (shellState.hangMs > 0) yield* Effect.sleep(shellState.hangMs)
         const outBytes = new TextEncoder().encode(shellState.stdout)
@@ -224,7 +233,7 @@ const locations = makeGlobalNode({
               ? enabled
               : ref.directory === toggleDirectory
                 ? toggled
-                : Layer.empty,
+                : disabled,
             configureAgent.pipe(
               Layer.provideMerge(
                 LayerNode.compile(
@@ -676,6 +685,8 @@ describe("Schedule", () => {
   it.effect("run sleeps until the next schedule is due", () =>
     Effect.gen(function* () {
       const schedules = yield* setup()
+      const fired = yield* Deferred.make<void>()
+      duringWake = Deferred.succeed(fired, undefined)
       const fiber = yield* Effect.forkChild(schedules.run)
       const schedule = yield* schedules.create({
         sessionID,
@@ -685,7 +696,7 @@ describe("Schedule", () => {
       yield* TestClock.adjust("9 seconds")
       expect(yield* pending).toEqual([])
       yield* TestClock.adjust("1 second")
-      yield* Effect.yieldNow
+      yield* Deferred.await(fired)
       expect(yield* pending).toEqual([messageID(schedule, 1)])
       yield* Fiber.interrupt(fiber)
     }),
@@ -1463,6 +1474,53 @@ describe("Schedule", () => {
         const { db } = yield* Database.Service
         expect(yield* SessionInbox.find(db, messageID(schedule, 1))).toMatchObject({
           payload: { text: expect.stringContaining("[Schedule paused after invalid check:") },
+        })
+      }),
+    )
+
+    it.effect("picks up a schedule created by another process sharing the DB while idle", () =>
+      Effect.gen(function* () {
+        const primary = yield* setup()
+        const { db } = yield* Database.Service
+        const runner = yield* Effect.forkChild(primary.run)
+        yield* Effect.repeat(Effect.yieldNow, { times: 5 })
+
+        // Insert directly into SQLite (bypassing primary.create so primary's in-memory doorbell is never opened)
+        // to simulate a short-lived `opencode serve` / `--standalone` writing a schedule and exiting.
+        const now = yield* Clock.currentTimeMillis
+        const externalID = Schedule.ID.create()
+        yield* db
+          .insert(ScheduleTable)
+          .values({
+            id: externalID,
+            session_id: sessionID,
+            name: "external",
+            check: null,
+            state: null,
+            checks: 0,
+            action: { type: "prompt", prompt: "Cross-process wake." },
+            when: { type: "in", in: "10 seconds" },
+            tz: "UTC",
+            status: "active",
+            next_due_at: now + 10_000,
+            ends_at: null,
+            remaining_runs: 1,
+            time_created: now,
+            time_updated: now,
+          })
+          .run()
+          .pipe(Effect.orDie)
+
+        // Bounded MAX_SLEEP (30s) wakes the idle loop, claims leadership, and fires the row.
+        yield* TestClock.adjust("30 seconds")
+        // Admission yields through SQL before marking the schedule done; wait for that durable state before interrupting.
+        const completed = yield* primary.get(externalID).pipe(Effect.repeat({ until: (info) => info.status === "done" }))
+        yield* Fiber.interrupt(runner)
+
+        expect(completed).toMatchObject({
+          status: "done",
+          runCount: 1,
+          lastOutcome: "fired",
         })
       }),
     )

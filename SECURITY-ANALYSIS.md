@@ -24,28 +24,32 @@ utilities must be verified in the deployment separately.
 
 Paths below are relative to `packages/core/src` unless stated otherwise.
 
-| Surface                 | Active enforcement                                                                                                              | Limits                                                                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `webfetch`              | `tool/plugin/webfetch.ts` calls `Security.assertUrl` before permission/fetch and sanitizes converted text                       | Initial URL only; redirects are not revalidated. Response size is bounded to 5 MiB.                                                                                                    |
-| Image reference downloads | `tool/plugin/image-generate.ts` checks input image URLs before permission and download | Initial URL only; redirects and image inference transport remain outside this gate. |
-| Built-in web search     | Exa, Parallel, Firecrawl, Tavily, TinyFish, and Console-hosted search check their endpoint before sending queries                | Search snippets are not sanitized. Console search rejects redirects; other providers and third-party plugins need separate review.                                                     |
-| TinyFish authentication | The URL check precedes credential use, MCP initialize, initialized notification, and search                                     | Preserve that order when merging handshake changes.                                                                                                                                    |
-| Remote instructions     | `config/plugin/instruction.ts` checks URLs and strips Unicode tag/zero-width characters before caching content                  | Config reload checks policy again. A denied URL loses its cached copy; an allowed URL with a failed fetch can retain the last good copy. Local instruction files remain trusted input. |
-| Remote skill discovery  | `config/plugin/skill.ts` passes effective security settings to `skill/discovery.ts`; the catalog and file downloads are checked | Skill paths are also checked for traversal and cross-origin references. Redirects remain a gap.                                                                                        |
-| Provider discovery      | `plugin/provider/autodiscover.ts` checks the model-list endpoint before requesting it                                           | Discovery protection is distinct from model inference transport.                                                                                                                       |
-| Provider availability   | `plugin/provider/restrict.ts` disables unconfigured providers when requested and checks provider `settings.baseURL`             | Providers without that setting, model-specific endpoint overrides, and arbitrary transport calls are not comprehensively covered. This is a registry filter, not a network firewall.   |
-| Model catalog refresh   | Config registers the `models-dev.ts` guard; it honors URL policy and `models_dev_enabled`                                       | The guard is process-global, installed by Location config; last registration wins. Startup before registration and multiple Locations are not a strong isolation boundary.             |
-| Voice session setup     | `voice.ts` wraps the request executor with `Security.assertUrl` for the actual setup URL                                        | Covers OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup. Subsequent client media/WebSocket traffic is outside the server's URL checker.                                        |
-| Shell network namespace | `shell.ts` calls `ShellSandbox.command` before spawning                                                                         | Linux only, opt-in, and limited to callers of `Shell.Service`. See below.                                                                                                              |
-| `/review` and `/learn`  | `tool/command-guard.ts` reads the latest delivered user message's command from `SessionStore`                                   | Guards are command-specific and blocklist-based, not a general read-only sandbox.                                                                                                      |
-| Managed security config | `config.ts` loads managed settings after project and inline settings; consumers use `Config.latest`                             | Managed configuration must actually be present and enabled. Permissions have their own ordering rules.                                                                                 |
-| Audit logging           | URL gates record allowed/blocked decisions; the shell tool records approved commands                                            | Not a complete record of all HTTP, tools, or subprocesses.                                                                                                                             |
-| Provenance              | `Provenance.Plugin` is registered in `plugin/internal.ts`; records tool outcomes and selected session events                    | Opt-in. See [provenance-poc.md](specs/provenance-poc.md) for current event names and missing evidence.                                                                                 |
+| Surface                   | Active enforcement                                                                                                              | Limits                                                                                                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `webfetch`                | `tool/plugin/webfetch.ts` calls `Security.assertUrl` before permission/fetch and sanitizes converted text                       | Initial URL only; redirects are not revalidated. Response size is bounded to 5 MiB.                                                                                                    |
+| Image reference downloads | `tool/plugin/image-generate.ts` checks input image URLs before permission and download                                          | Initial URL only; redirects and image inference transport remain outside this gate.                                                                                                    |
+| Code Mode HTTP requests   | `codemode/fetch.ts` checks the latest Location URL policy before permissions and transport                                      | Initial URL only; redirects are not revalidated. Arbitrary HTTP methods are supported.                                                                                                 |
+| Artifact tools            | `tool/plugin/artifact.ts` blocks create/update/delete during `/review` and `/learn`                                             | Requires `experimental.artifacts`; provider plugins can publish remotely and remain executable trust inputs.                                                                           |
+| Built-in web search       | Exa, Parallel, Firecrawl, Tavily, TinyFish, and Console-hosted search check their endpoint before sending queries               | Search snippets are not sanitized. Console search rejects redirects; other providers and third-party plugins need separate review.                                                     |
+| TinyFish authentication   | The URL check precedes credential use, MCP initialize, initialized notification, and search                                     | Preserve that order when merging handshake changes.                                                                                                                                    |
+| Remote instructions       | `config/plugin/instruction.ts` checks URLs and strips Unicode tag/zero-width characters before caching content                  | Config reload checks policy again. A denied URL loses its cached copy; an allowed URL with a failed fetch can retain the last good copy. Local instruction files remain trusted input. |
+| Remote skill discovery    | `config/plugin/skill.ts` passes effective security settings to `skill/discovery.ts`; the catalog and file downloads are checked | Skill paths are also checked for traversal and cross-origin references. Redirects remain a gap.                                                                                        |
+| Provider discovery        | `plugin/provider/autodiscover.ts` checks the model-list endpoint before requesting it                                           | Discovery protection is distinct from model inference transport.                                                                                                                       |
+| Provider availability     | `plugin/provider/restrict.ts` disables unconfigured providers when requested and checks provider `settings.baseURL`             | Providers without that setting, model-specific endpoint overrides, and arbitrary transport calls are not comprehensively covered. This is a registry filter, not a network firewall.   |
+| Model catalog refresh     | Config registers the `models-dev.ts` guard; it honors URL policy and `models_dev_enabled`                                       | The guard is process-global, installed by Location config; last registration wins. Startup before registration and multiple Locations are not a strong isolation boundary.             |
+| Voice session setup       | `voice.ts` wraps the request executor with `Security.assertUrl` for the actual setup URL                                        | Covers OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup. Subsequent client media/WebSocket traffic is outside the server's URL checker.                                    |
+| Shell network namespace   | `shell.ts` calls `ShellSandbox.command` before spawning                                                                         | Linux only, opt-in, and limited to callers of `Shell.Service`. See below.                                                                                                              |
+| `/review` and `/learn`    | `tool/command-guard.ts` reads the latest delivered user message's command from `SessionStore`                                   | Guards are command-specific and blocklist-based, not a general read-only sandbox.                                                                                                      |
+| Managed security config   | `config.ts` loads managed settings after project and inline settings; consumers use `Config.latest`                             | Managed configuration must actually be present and enabled. Permissions have their own ordering rules.                                                                                 |
+| Audit logging             | URL gates record allowed/blocked decisions; the shell tool records approved commands                                            | Not a complete record of all HTTP, tools, or subprocesses.                                                                                                                             |
+| Provenance                | `Provenance.Plugin` is registered in `plugin/internal.ts`; records tool outcomes and selected session events                    | Opt-in. See [provenance-poc.md](specs/provenance-poc.md) for current event names and missing evidence.                                                                                 |
 
 The command metadata survives prompt admission and inbox delivery through Schema,
 `session/prompt.ts`, and `session/projector.ts`. The guard is called by the shell,
-edit, write, patch, subagent, and image-generation tools. Image generation is
-blocked during both `/review` and `/learn`, before downloads or paid generation.
+edit, write, patch, subagent, image-generation, and artifact tools. Image generation
+and artifact mutations are blocked during both `/review` and `/learn`, before
+downloads, paid generation, or artifact-provider operations. Artifact reads remain
+available.
 Patch resolution checks both source and move destination. `/learn` permits file
 edits only when the target basename is
 `AGENTS.md` and forbids subagents. Ordinary user input clears the command context.
@@ -154,6 +158,13 @@ automatic model selection prefers the session provider, then falls back to anoth
 available image provider; an explicit model or configured image default can also
 select another provider. Input images and the image prompt go to that provider.
 
+The Claude Agent provider starts the installed `claude` executable through the
+Claude Agent SDK. Its native tools are disabled; offered tools are dispatched
+back through OpenCode's tool execution path. The provider process and its inference,
+account checks, and local transcript storage do not pass through `Shell.Service`
+or the fork URL checker. Provider registry restrictions still apply to its catalog;
+they do not constrain the child process's network traffic.
+
 V1 paths such as `share/share-next.ts`, `session/instruction.ts`, and
 `util/fetch.ts` no longer describe the active runtime. V2 also removed the legacy
 enterprise sharing package/routes. Do not use old share-disable environment
@@ -220,6 +231,10 @@ Other findings relevant to confidentiality:
   providers, remote MCP servers, policies, and web-search selection. The new
   integration document allowlists those config keys and excludes local MCP
   commands, plugins, and credential overrides. It is still a remote trust input.
+  Local user/project config can override Console-supplied provider settings,
+  including destinations. The fork provider filter sees the resulting provider
+  `settings.baseURL`; model-specific endpoints and child processes retain the
+  limits described above.
   Usage-limit requests send credentials and workspace identity, not conversation
   bodies. These account/config requests bypass the fork URL policy.
 - GPT-Live can fall back to OpenCode's hosted endpoint when an OpenAI key is

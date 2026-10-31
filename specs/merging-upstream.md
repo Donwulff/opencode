@@ -98,6 +98,7 @@ Client may use Schema/Protocol but not Core/Server; SDK composes the layers.
      test/network-policy.test.ts test/audit.test.ts test/skill-discovery.test.ts \
      test/tool-webfetch.test.ts test/plugin/provider-restrict.test.ts \
      test/tool-image-generate.test.ts \
+     test/tool-execute.test.ts test/artifact.test.ts \
      test/plugin/provider-autodiscover.test.ts test/provenance.test.ts \
      test/config/normalization.test.ts test/config/config.test.ts test/config/reload.test.ts \
      test/session-prompt.test.ts test/session-projector.test.ts \
@@ -182,12 +183,12 @@ Paths in this table are relative to `packages/core/src` unless qualified.
 | Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content                                          |
 | Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                                                             |
 | Search                         | All five `plugin/websearch/*` providers plus Console-hosted search in `plugin/provider/opencode.ts`; TinyFish must check before initialize as well as search                                                                  |
-| Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output; `tool/plugin/image-generate.ts` checks reference URLs before download                                                                                        |
+| Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output; `tool/plugin/image-generate.ts` checks reference URLs before download; `codemode/fetch.ts` checks the latest Location policy before permission/transport    |
 | Voice                          | `voice.ts` gates OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                       |
 | Provider restriction/discovery | `plugin/provider/restrict.ts`, `plugin/provider/autodiscover.ts`, and registrations in `plugin/internal.ts`; restriction remains guarded against plugin removal                                                               |
 | Catalog                        | `models-dev.ts` guard and registration in `config.ts`; bundled snapshot now exists and can remain usable with network refresh disabled                                                                                        |
 | Shell                          | `shell.ts` must call `shell/sandbox.ts` before Environment spawn; tool/plugin/shell keeps command guard and post-approval audit                                                                                               |
-| Command restrictions           | `session/command.ts`, `session/prompt.ts`, Schema, inbox/projector and SessionStore preserve `command`; `tool/command-guard.ts` enforces it in shell/edit/write/patch/subagent/image-generation tools                         |
+| Command restrictions           | `session/command.ts`, `session/prompt.ts`, Schema, inbox/projector and SessionStore preserve `command`; `tool/command-guard.ts` enforces it in shell/edit/write/patch/subagent/image-generation/artifact tools                |
 | Provenance                     | `provenance.ts`, `plugin/internal.ts`, tool execute hooks and current session event names                                                                                                                                     |
 | Other fork behavior            | Provider `system_prompt` in `plugin/optimize.ts`, agent `plan_reminder` in config/plan plugins, debug/review/learn commands, shared retry delay cap in `model-retry.ts` plus the post-plugin cap in `session/runner/retry.ts` |
 
@@ -268,3 +269,16 @@ separate coverage gap.
 Console search now requires the Console config to select the provider. Security
 tests that replace that config must pass the provider ID explicitly so they
 exercise the URL gate rather than fail during default-provider selection.
+
+The merge to `a5518690fc` adds `SharedCache` and experimental artifacts, renames the
+Code Mode web extension to `codemode/fetch.ts`, and adds the Claude Agent provider.
+Keep both `SessionStore` and `SharedCache` in the plugin test fixture; the former
+feeds the fork command guards and the latter supports upstream provider refresh.
+Artifact create/update/delete must respect `/review` and `/learn`; reads remain
+available. Code Mode fetch must receive the registry's Location config and check
+its latest URL policy before permissions or transport. Redirect policy remains a
+separate gap. The Claude Agent provider routes offered tools back through OpenCode,
+but its child process's network and transcript storage remain outside these gates.
+Upstream now permits local config to override Console-supplied providers; keep the
+fork restriction transform after those overrides so it checks the effective provider
+settings.
