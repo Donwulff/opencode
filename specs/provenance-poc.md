@@ -96,3 +96,11 @@ Previews and error strings can contain secrets or adversarial instructions. Thes
 are ordinary writable JSONL files, not tamper-proof evidence. For stricter
 environments, add access controls, retention, redaction, encryption-at-rest, and
 signed export workflows. Treat the contents as untrusted data during analysis.
+
+## Offline aggregation
+
+The [offline reader](../script/provenance-audit/README.md) consumes these existing
+streams, the audit file and selected SQLite tools without starting OpenCode or
+adding logging hooks. [Source and correlation guidance](provenance-analysis.md)
+distinguishes allowances, outcomes and absent transmission evidence. Generated
+reports and event details stay in its ignored `local/` directory.

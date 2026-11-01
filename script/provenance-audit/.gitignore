@@ -1,0 +1,10 @@
+# Local input/output material is never part of the reusable reader.
+/local/
+__pycache__/
+*.py[cod]
+*.jsonl
+*.db
+*.db-*
+*.sqlite*
+/summary.json
+/summary.md
