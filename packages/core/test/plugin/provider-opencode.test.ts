@@ -17,6 +17,7 @@ import { ConfigProviderPlugin } from "@opencode/core/config/plugin/provider"
 import { ConfigWebSearchPlugin } from "@opencode/core/config/plugin/websearch"
 import { Credential } from "@opencode/core/credential"
 import { Integration } from "@opencode/core/integration"
+import { InstructionDiscovery } from "@opencode/core/instruction-discovery"
 import { Model } from "@opencode/core/model"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { Plugin } from "@opencode/core/plugin"
@@ -25,7 +26,9 @@ import { PluginHost } from "@opencode/core/plugin/host"
 import { OpenAIPlugin } from "@opencode/core/plugin/provider/openai"
 import { OpencodePlugin } from "@opencode/core/plugin/provider/opencode"
 import { Provider } from "@opencode/core/provider"
+import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
+import { Skill } from "@opencode/core/skill"
 import { WebSearch } from "@opencode/core/websearch"
 import { withEnv } from "../fixture/env"
 import { drain } from "../lib/clock"
@@ -1319,6 +1322,96 @@ describe("OpencodePlugin", () => {
       ({ gate, server }) =>
         Effect.sync(() => gate.resolve()).pipe(Effect.andThen(Effect.promise(() => server.stop(true)))),
     ),
+  )
+
+  it.effect("checks the latest URL policy for Console skills and sanitizes inline instructions", () =>
+    Effect.gen(function* () {
+      const credentials = yield* Credential.Service
+      const config = yield* Config.Test
+      const discovery = yield* InstructionDiscovery.Service
+      const skills = yield* Skill.Service
+      const requests: string[] = []
+      const state = { version: 1 }
+      const policy = (allowed: boolean) =>
+        config.setEntries([
+          new Document({
+            type: "document",
+            info: new Info({
+              security: {
+                mode: "strict",
+                external_domains: allowed ? ["opencode.ai"] : [],
+                audit_log_enabled: false,
+              },
+            }),
+          }),
+        ])
+      yield* policy(true)
+      yield* credentials.create({
+        integrationID: Integration.ID.make("opencode"),
+        value: Credential.Key.make({ type: "key", key: "secret" }),
+      })
+      yield* addPlugin().pipe(
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            requests.push(request.url)
+            expect(request.headers.authorization).toBe("Bearer secret")
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  request.url.endsWith("/api/v2/config")
+                    ? {
+                        library: {
+                          instructions: [{ id: "guide", content: "follow\u200B this\u{E0001} guide" }],
+                          skills: [{ slug: "guide", version: String(state.version) }],
+                        },
+                      }
+                    : {
+                        slug: "guide",
+                        files: [
+                          {
+                            path: "SKILL.md",
+                            content: "---\nname: guide\ndescription: Console guide\n---\nUse the guide.",
+                          },
+                          { path: "reference.md", content: "Reference text" },
+                        ],
+                      },
+                ),
+              ),
+            )
+          }),
+        ),
+      )
+      yield* drain
+      expect(yield* discovery.list()).toEqual([
+        new InstructionDiscovery.File({ path: "OpenCode Console instruction guide", content: "follow this guide" }),
+      ])
+      expect((yield* skills.get(Skill.ID.make("guide")))?.path).toBe(AbsolutePath.make("skill://guide/SKILL.md"))
+      expect(yield* skills.files(Skill.ID.make("guide"))).toEqual(new Map([["reference.md", "Reference text"]]))
+      expect(requests).toEqual([
+        "https://opencode.ai/console/api/v2/config",
+        "https://opencode.ai/console/api/v2/library/skills/guide",
+      ])
+
+      yield* policy(false)
+      state.version++
+      yield* TestClock.adjust("1 minute")
+      yield* drain
+      expect(yield* skills.get(Skill.ID.make("guide"))).toBeUndefined()
+      expect(yield* skills.files(Skill.ID.make("guide"))).toBeUndefined()
+      expect(requests.slice(2)).toEqual(["https://opencode.ai/console/api/v2/config"])
+
+      yield* policy(true)
+      state.version++
+      yield* TestClock.adjust("1 minute")
+      yield* drain
+      expect((yield* skills.get(Skill.ID.make("guide")))?.path).toBe(AbsolutePath.make("skill://guide/SKILL.md"))
+      expect(requests.slice(3)).toEqual([
+        "https://opencode.ai/console/api/v2/config",
+        "https://opencode.ai/console/api/v2/library/skills/guide",
+      ])
+    }),
   )
 
   it.live("derives hosted search identity and checks the actual Console URL before sending queries", () =>

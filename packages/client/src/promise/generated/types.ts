@@ -25,6 +25,8 @@ export type ProviderCompaction = { type: "summary" } | { type: "native" }
 
 export type ProviderCacheTTL = `${number}${"ms" | "s" | "m" | "h" | "d"}`
 
+export type ProviderCacheWarming = boolean | { interval?: "auto" | (string & {}); duration?: string }
+
 export type ProviderTransport = "http" | "websocket"
 
 export type ProviderEncoding = "zstd" | "gzip" | "none"
@@ -406,7 +408,7 @@ export type LocationPublicInfo = {
 
 export type ModelRef = { id: string; providerID: ProviderID; variant?: string }
 
-export type ProviderCache = { ttl?: ProviderCacheTTL }
+export type ProviderCache = { ttl?: ProviderCacheTTL; warming?: ProviderCacheWarming }
 
 export type ModelVariantSettings = { compaction?: ProviderCompaction; encoding?: ProviderEncoding } & {
   [x: string]: any
@@ -2465,7 +2467,7 @@ export type ConfigEntry =
         websearch?: false | { provider: "random" | WebSearchID }
         plugins?: Array<string | { package: string; options?: { [x: string]: JsonValue } }>
         worktree?: ConfigWorktree
-        warming?: boolean | { prompt?: string; interval?: string; duration?: string }
+        warming?: boolean | { prompt?: string; interval?: "auto" | (string & {}); duration?: string }
         providers?: {
           [x: string]: {
             system_prompt?: string

@@ -34,6 +34,7 @@ Paths below are relative to `packages/core/src` unless stated otherwise.
 | TinyFish authentication   | The URL check precedes credential use, MCP initialize, initialized notification, and search                                     | Preserve that order when merging handshake changes.                                                                                                                                    |
 | Remote instructions       | `config/plugin/instruction.ts` checks URLs and strips Unicode tag/zero-width characters before caching content                  | Config reload checks policy again. A denied URL loses its cached copy; an allowed URL with a failed fetch can retain the last good copy. Local instruction files remain trusted input. |
 | Remote skill discovery    | `config/plugin/skill.ts` passes effective security settings to `skill/discovery.ts`; the catalog and file downloads are checked | Skill paths are also checked for traversal and cross-origin references. Redirects remain a gap.                                                                                        |
+| Console Library           | `plugin/provider/opencode.ts` checks the latest URL policy before downloading skill bundles and sanitizes inline instructions | Skill downloads reject redirects. Instructions arrive in the Console config response, whose request remains outside the URL gate.                                                    |
 | Provider discovery        | `plugin/provider/autodiscover.ts` checks the model-list endpoint before requesting it                                           | Discovery protection is distinct from model inference transport.                                                                                                                       |
 | Provider availability     | `plugin/provider/restrict.ts` disables unconfigured providers when requested and checks provider `settings.baseURL`             | Providers without that setting, model-specific endpoint overrides, and arbitrary transport calls are not comprehensively covered. This is a registry filter, not a network firewall.   |
 | Model catalog refresh     | Config registers the `models-dev.ts` guard; it honors URL policy and `models_dev_enabled`                                       | The guard is process-global, installed by Location config; last registration wins. Startup before registration and multiple Locations are not a strong isolation boundary.             |
@@ -228,8 +229,10 @@ Other findings relevant to confidentiality:
   explicitly lists models whose request data may be used to improve the model.
   Do not infer uniform retention terms from the application name.
 - A connected Console integration polls organization config and supplies
-  providers, remote MCP servers, policies, and web-search selection. The new
-  integration document allowlists those config keys and excludes local MCP
+  providers, remote MCP servers, policies, web-search selection, and Library
+  instructions and skills. Skill bundles use the latest Location URL policy
+  before download; inline instructions receive the remote-instruction text
+  sanitizer. The integration document allowlists config keys and excludes local MCP
   commands, plugins, and credential overrides. It is still a remote trust input.
   Local user/project config can override Console-supplied provider settings,
   including destinations. The fork provider filter sees the resulting provider

@@ -182,6 +182,7 @@ Paths in this table are relative to `packages/core/src` unless qualified.
 | URL policy and auditing        | `util/security.ts`, `util/network.ts`, `util/audit.ts`; check callers, not only definitions                                                                                                                                   |
 | Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content                                          |
 | Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                                                             |
+| Console Library                | `plugin/provider/opencode.ts` checks skill bundle URLs against the latest Location config before download, rejects redirects, and sanitizes inline instructions                                                              |
 | Search                         | All five `plugin/websearch/*` providers plus Console-hosted search in `plugin/provider/opencode.ts`; TinyFish must check before initialize as well as search                                                                  |
 | Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output; `tool/plugin/image-generate.ts` checks reference URLs before download; `codemode/fetch.ts` checks the latest Location policy before permission/transport    |
 | Voice                          | `voice.ts` gates OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                       |
@@ -282,3 +283,16 @@ but its child process's network and transcript storage remain outside these gate
 Upstream now permits local config to override Console-supplied providers; keep the
 fork restriction transform after those overrides so it checks the effective provider
 settings.
+
+## November 2026 merge lessons
+
+The merge to `97a71f0cc6` replaces the local Bun and Node SQLite adapters with the
+Effect packages. Their statement preparation already runs inside the typed-error
+boundary; retain that behavior rather than restoring the removed adapter to keep
+the fork's preparation-error fix. Check both runtimes and interrupted transactions.
+
+Console Library adds skill bundle downloads and inline remote instructions.
+Check the latest Location URL policy before each skill download and sanitize the
+inline instruction content. Keep upstream's redirect rejection and in-memory
+`skill://` files, including permission checks. Console config/account requests
+remain outside the URL gate; sanitizing inline content does not gate that request.
