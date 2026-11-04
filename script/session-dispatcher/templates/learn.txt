@@ -1,0 +1,18 @@
+Learning-ID: $task_id
+Completed task: $parent_id
+Worktree: $worktree
+Expected task commit: $base
+Allowed existing instruction files: $paths
+
+The completed task and its original session are authoritative. This disposable fork shares
+the same filesystem. The dispatcher reserves it until this learning attempt is accounted for.
+Apply the existing learn PROMPT below; do not invoke a slash command or delegate.
+This is ordinary queued delivery without a command marker: the slash-command CommandGuard
+does not run. Fork-specific permissions deny shell, delegation, network tools and edits
+outside the allowed instruction files. Use only the dedicated edit tool for changes.
+Do not stage or commit. The coordinator records an optional separate learning commit.
+Zero reusable lessons and zero edits is a valid result. Report what changed and stop.
+
+BEGIN EXISTING LEARN PROMPT (snapshot $prompt_hash)
+$assignment
+END EXISTING LEARN PROMPT

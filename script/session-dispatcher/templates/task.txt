@@ -1,0 +1,12 @@
+Task-ID: $task_id
+Worktree: $worktree
+Expected base: $base
+Allowed file paths: $paths
+
+$assignment
+
+Work only on this assignment in this worktree. Stop if the initial HEAD or clean status differs.
+Create exactly one normal commit; do not amend, merge, reset, rebase, install, deploy or delegate.
+Preserve all other paths. If the task is already committed, report it rather than repeat it.
+Include the exact commit trailer: OpenCode-Task: $task_id
+Report the commit and stop.
