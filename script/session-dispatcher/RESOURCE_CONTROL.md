@@ -8,8 +8,9 @@ on active task ledgers. Direct task submission remains manually resource-gated.
 
 The remaining sections retain the broader design and historical operating
 observations from 2026-11-02. Tool/container leases, recurring calendars, task
-selection, safe execution continuation/model handoff and automatic integration
-remain unimplemented. Current operator availability controls admissions; Codex
+selection and automatic integration remain unimplemented. The separate
+[checkpointed continuation](README.md#checkpointed-task-continuation) now supports
+an explicitly approved stopped-task handoff, not a standing automatic retry policy. Current operator availability controls admissions; Codex
 review remains a separate bounded command. Do not resubmit existing assignments.
 
 ## Starting policy
@@ -46,8 +47,9 @@ The operator reports that Big Pickle's cap/POD task has been handed to Qwen in
 the same persistent OpenCode session. Current session model and existing effects
 must be reconciled; do not create a second assignment because the provider
 changed. The manual CLI's model-binding drift check remains intact: it does not
-silently authorize a mid-assignment takeover. Any future handoff support needs
-explicit operator approval and resource-accounting reconciliation.
+silently authorize a mid-assignment takeover. Checkpointed handoff requires an
+explicit approved checkpoint and reconciles resource ownership; general automatic
+fallback policies remain unimplemented.
 
 Here a slot means an admitted OpenCode execution, including time spent using
 tools. It does not mean a continuously decoding inference stream. Hold a slot

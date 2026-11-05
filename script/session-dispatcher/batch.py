@@ -34,7 +34,7 @@ class Batch:
             self.d.db.execute("""CREATE TABLE IF NOT EXISTS queued (
                 task_id TEXT PRIMARY KEY, spec TEXT NOT NULL, request_hash TEXT NOT NULL,
                 state TEXT NOT NULL, issue TEXT, created TEXT NOT NULL, updated TEXT NOT NULL)""")
-            self.d.db.execute("PRAGMA user_version=3")
+            self.d.db.execute("PRAGMA user_version=" + str(max(3, self.d.db.execute("PRAGMA user_version").fetchone()[0])))
 
     @contextmanager
     def lock(self):
@@ -94,7 +94,7 @@ class Batch:
                     "task_pool": task_pool, "learn_pool": learn_pool,
                     "template_hash": digest(Path(__file__).with_name("templates").joinpath("task.txt").read_text())}
             # Future dependent bases are not guessed or silently reapproved.
-            for queued in self.d.db.execute("SELECT spec FROM queued WHERE state IN ('pending','active','blocked')"):
+            for queued in self.d.db.execute("SELECT spec FROM queued WHERE state IN ('pending','active','blocked','continuing')"):
                 other = json.loads(queued[0])["registration"]
                 require(all(registration[key] != other[key] for key in ("session_id", "worktree"))
                         and (registration["common"], registration["branch"]) != (other["common"], other["branch"]),
@@ -110,7 +110,7 @@ class Batch:
         if not pool["until_at"] or timestamp(pool["until_at"]) <= at:
             return "outside_window"
 
-    def availability(self, name, at):
+    def availability(self, name, at, *, _owner=None):
         reason = self.gate(name, at)
         if reason:
             return reason
@@ -120,7 +120,9 @@ class Batch:
         for sid in client.json("GET", "/api/session/active")["data"]:
             if client.json("GET", f"/api/session/{sid}")["data"]["model"]["providerID"] == pool["provider"]:
                 busy.add(sid)
-        for row in self.d.db.execute("SELECT session_id,registry FROM task WHERE state NOT IN ('verified','accounted')"):
+        for row in self.d.db.execute("SELECT id,session_id,registry FROM task WHERE state NOT IN ('verified','accounted')"):
+            if row["id"] == _owner:
+                continue  # Only the checked, idle failed attempt can reuse its own inference reservation.
             binding = json.loads(row["registry"])
             if binding["connection"] == pool["connection"] and binding["model"]["providerID"] == pool["provider"]:
                 busy.add(row["session_id"])
@@ -144,7 +146,11 @@ class Batch:
     def pause_limits(self, task_id, spec):
         unit = self.life.unit(task_id)
         for owner, name in ((task_id, spec["task_pool"]), (unit["child_id"], spec["learn_pool"])):
-            categories = {row[0] for row in self.d.db.execute("SELECT category FROM feedback WHERE task_id=?", (owner,))}
+            if owner is None:
+                continue
+            anchor = json.loads(self.d.task(owner)["registry"])["cursor"]
+            categories = {row[0] for row in self.d.db.execute("""SELECT f.category FROM feedback f JOIN observed o
+                ON f.task_id=o.task_id AND f.event_id=o.event_id WHERE f.task_id=? AND o.seq>?""", (owner, anchor))}
             state = "quota" if "provider_quota" in categories else "limited" if "provider_rate_limit" in categories else None
             if state:
                 self.d.db.execute("UPDATE pool SET state=? WHERE name=?", (state, name))
@@ -153,6 +159,11 @@ class Batch:
         at = at or datetime.now(timezone.utc)
         require(at.tzinfo is not None, "Queue clock needs an explicit UTC offset")
         with self.lock():
+            if self.d.db.execute("SELECT 1 FROM queued WHERE state='continuing'").fetchone():
+                from recovery import Recovery
+                recovery = Recovery(self.d, batch=self)
+                for row in self.d.db.execute("SELECT task_id FROM queued WHERE state='continuing' ORDER BY created,task_id").fetchall():
+                    recovery.advance_locked(row[0], at=at)
             # Recover observation only. A claimed assignment with no durable task intent stays held.
             for row in self.d.db.execute("SELECT * FROM queued WHERE state='active' ORDER BY created,task_id").fetchall():
                 task_id, spec = row["task_id"], json.loads(row["spec"])
@@ -197,12 +208,17 @@ class Batch:
                     self.save(task_id, "blocked", str(error))
                     return {**self.status(), "phase": "blocked"}
             result = self.status()
-            pending = [row for row in result["tasks"] if row["state"] == "pending"]
+            pending = [row for row in result["tasks"] if row["state"] in ("pending", "continuing")]
             active = [row for row in result["tasks"] if row["state"] == "active"]
             open_work = False
-            for row in self.d.db.execute("SELECT task_id,spec FROM queued WHERE state='active'"):
+            for row in self.d.db.execute("SELECT task_id,spec,state FROM queued WHERE state IN ('active','continuing')"):
                 spec = json.loads(row["spec"])
-                pool = spec["task_pool"] if self.life.unit(row["task_id"])["stage"] == "task" else spec["learn_pool"]
+                if row["state"] == "continuing":
+                    intent = self.d.db.execute("SELECT plan FROM attempt WHERE task_id=? ORDER BY number DESC LIMIT 1", (row["task_id"],)).fetchone()
+                    pool = json.loads(intent[0])["pool"]
+                    reasons[row["task_id"]] = "continuation_waiting"
+                else:
+                    pool = spec["task_pool"] if self.life.unit(row["task_id"])["stage"] == "task" else spec["learn_pool"]
                 if self.gate(pool, at) is None:
                     open_work = True
             return {**result, "phase": "running" if open_work else "paused" if active or pending else "complete", "waiting": reasons}

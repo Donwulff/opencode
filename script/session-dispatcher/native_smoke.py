@@ -20,13 +20,17 @@ import time
 from dispatch import Client, Dispatcher, encoded
 from batch import Batch
 from lifecycle import Lifecycle
+from recovery import Recovery
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--learning', action='store_true', help='Also exercise real forks, model selection and restricted learning')
     parser.add_argument('--batch', action='store_true', help='Exercise the approved queue plus native learning')
+    parser.add_argument('--recovery', action='store_true', help='Interrupt only this disposable task, then continue on another fixture model')
     args = parser.parse_args()
+    if args.recovery:
+        args.batch = True
     if args.batch:
         args.learning = True
     bun = shutil.which('bun')
@@ -51,6 +55,7 @@ def main():
         git('add', 'README.md', 'AGENTS.md')
         git('commit', '-m', 'fixture base')
         calls = []
+        paused, release = threading.Event(), threading.Event()
         actions = [
             ('read', {'path': str(repo / 'README.md')}),
             ('edit', {'path': str(repo / 'README.md'), 'oldString': 'pending.', 'newString': 'verified.'}),
@@ -66,6 +71,9 @@ def main():
                 ('edit', {'path': str(repo / 'AGENTS.md'), 'oldString': 'Preserve the fixture.',
                           'newString': 'Preserve the fixture. Use exact receipt IDs.'}),
             ]
+
+        if args.recovery:
+            actions.insert(4, None)  # Continuation reports the existing commit without repeating it.
 
         class Provider(BaseHTTPRequestHandler):
             def log_message(self, *args):
@@ -87,6 +95,11 @@ def main():
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/event-stream')
                 self.end_headers()
+                if args.recovery and primary and index == 3:
+                    self.wfile.flush()
+                    paused.set()
+                    release.wait(20)
+                    return  # Its original inference request was deliberately interrupted.
                 for value in (
                     {'id': f'fixture_{index}', 'object': 'chat.completion.chunk', 'created': 1, 'model': 'fixture',
                      'choices': [{'index': 0, 'delta': delta, 'finish_reason': None}]},
@@ -144,6 +157,26 @@ def main():
                     first = dispatcher.submit('native-doc', 'fixture', 'Change README task status from pending to verified.', ['README.md'], learning=policy)
                 repeated = dispatcher.submit('native-doc', 'fixture', 'Change README task status from pending to verified.', ['README.md'], learning=policy)
                 assert first['message_id'] == repeated['message_id']
+                recovery_result = None
+                if args.recovery:
+                    assert paused.wait(45), 'Fixture did not reach its post-commit interruption point'
+                    original_commit = git('rev-parse', 'HEAD')
+                    assert client.json('POST', f"/api/session/{session['id']}/interrupt")['interrupted']
+                    release.set()
+                    deadline = time.monotonic() + 10
+                    while dispatcher.reconcile('native-doc')['terminal'] != 'interrupted' and time.monotonic() < deadline:
+                        time.sleep(0.05)
+                    batch.tick()  # Account for the stopped attempt, without starting learning.
+                    recovery = Recovery(dispatcher)
+                    target = {'providerID': 'fixture', 'id': 'learner'}
+                    plan = recovery.plan('native-doc', target)
+                    recovery.prepare('native-doc', target, plan['approval_hash'], effects_checked=True)
+                    with batch.lock():
+                        recovery.advance_locked('native-doc')
+                    assert dispatcher.task('native-doc')['message_id'] != first['message_id'], encoded({'batch': batch.status(), 'actual': client.json('GET', f"/api/session/{session['id']}")['data']['model'], 'target': target})
+                    assert dispatcher.task('native-doc')['session_id'] == session['id']
+                    assert git('rev-parse', 'HEAD') == original_commit
+                    recovery_result = {'same_session': True, 'preserved_commit': True, 'new_message_id': True}
                 deadline = time.monotonic() + 45
                 while True:
                     status = dispatcher.reconcile('native-doc')
@@ -156,7 +189,7 @@ def main():
                 result = dispatcher.result('native-doc', patch=True)
                 assert 'Task status: verified.' in result['patch']
                 admissions = dispatcher.db.execute("SELECT COUNT(*) FROM observed WHERE type='session.inbox.enqueued'").fetchone()[0]
-                assert admissions == 1 and len(calls) == 4, (admissions, calls)
+                assert admissions == (2 if args.recovery else 1) and len(calls) == (5 if args.recovery else 4), (admissions, calls)
                 learning_result = None
                 if args.learning:
                     life = Lifecycle(dispatcher)
@@ -186,15 +219,16 @@ def main():
                                 if event.get('type') == 'session.tool.failed']
                     assert any(item['category'] == 'tool_unavailable' for item in learning_result['feedback']), encoded({'fixture_failures': failures})
                     assert not json.loads(dispatcher.task(unit['child_id'])['payload']).get('command')
-                    assert len(calls) == 8, calls
+                    assert len(calls) == (9 if args.recovery else 8), calls
                 if batch:
                     assert batch.tick()['phase'] == 'complete'
                 print(json.dumps({'native_smoke': 'passed', 'batch': bool(batch), 'queued_admissions': admissions, 'provider_steps': len(calls),
                                   'state': verified['state'], 'retained_event_cursor': verified['cursor'],
-                                  'git_scope_verified': True, 'fixture_only': True, 'learning': None if not args.learning else {
+                                  'git_scope_verified': True, 'fixture_only': True, 'recovery': recovery_result, 'learning': None if not args.learning else {
                                       'state': unit['stage'], 'outcome': unit['detail']['learning'], 'fork_history_preserved': True,
                                       'fork_only_model_override': True, 'shell_filtered_by_permissions': True, 'separate_commit': True}}, indent=2))
         finally:
+            release.set()
             if dispatcher:
                 dispatcher.close()
             if host and host.poll() is None:

@@ -171,6 +171,23 @@ def allowed_paths(paths):
     return result
 
 
+def task_history(worktree, base, head, paths, task_id):
+    """Verify each preserved linear task commit, including changes later reverted."""
+    commits = git(worktree, "rev-list", "--reverse", base + ".." + head).decode().splitlines()
+    previous, changed = base, set()
+    for commit in commits:
+        require(git(worktree, "show", "-s", "--format=%P", commit).decode().split() == [previous],
+                "Task history is not a linear descendant of its approved base")
+        names = git(worktree, "diff", "--name-only", "--no-renames", "-z", previous, commit).decode().split("\0")[:-1]
+        require(set(names) <= set(paths), "Preserved commit changed paths outside the assignment")
+        require(f"OpenCode-Task: {task_id}" in git(worktree, "show", "-s", "--format=%B", commit).decode().splitlines(),
+                "Preserved commit lacks the exact task trailer")
+        changed.update(names)
+        previous = commit
+    require(previous == head, "Task HEAD does not descend from its approved base")
+    return commits, sorted(changed)
+
+
 class Dispatcher:
     def __init__(self, database, client_factory=Client):
         self.path = Path(database).absolute()
@@ -187,7 +204,7 @@ class Dispatcher:
             self.db.close()
             raise DispatchError("Not a dispatcher ledger; refusing to modify this database")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3):
+        if version not in (0, 1, 2, 3, 4):
             self.db.close()
             raise DispatchError("Unsupported dispatcher ledger version")
         self.db.execute("PRAGMA application_id=1329808464")
@@ -254,9 +271,19 @@ class Dispatcher:
 
     def status(self, task_id):
         task = self.task(task_id)
-        return {key: (json.loads(task[key]) if task[key] and key == "verification" else task[key])
-                for key in ["id", "message_id", "registry_name", "worktree", "state", "cursor", "enqueued",
-                            "delivered", "terminal", "hazard", "issue", "verification", "created", "updated"]}
+        result = {key: (json.loads(task[key]) if task[key] and key == "verification" else task[key])
+                  for key in ["id", "message_id", "registry_name", "worktree", "state", "cursor", "enqueued",
+                              "delivered", "terminal", "hazard", "issue", "verification", "created", "updated"]}
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='attempt'").fetchone():
+            result["attempts"] = []
+            for row in self.db.execute("SELECT * FROM attempt WHERE task_id=? ORDER BY number", (task_id,)):
+                plan, previous = json.loads(row["plan"]), json.loads(row["previous"])["task"]
+                result["attempts"].append({"number": row["number"], "state": row["state"],
+                    "previous_message_id": previous["message_id"], "message_id": plan["message_id"],
+                    "previous_model": json.loads(previous["registry"])["model"], "model": plan["model"],
+                    "previous_terminal": previous["terminal"], "approval_hash": plan["approval_hash"],
+                    "effects_checked": plan["effects_checked"]})
+        return result
 
     def approve(self, name, session_id, worktree, connection, *, _unit=None):
         require(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", name), "Invalid registry name")
@@ -475,15 +502,23 @@ class Dispatcher:
         local = identity(registration["worktree"])
         require(all(local[key] == registration[key] for key in ("worktree", "common", "git_dir", "branch")), "Worktree identity drift")
         require(not local["status"] and local["head"] == commit, "Verify requires a clean worktree at the supplied commit")
-        parents = git(local["worktree"], "show", "-s", "--format=%P", commit).decode().split()
-        require(parents == [registration["head"]], "Expected one normal commit directly after the approved base")
-        paths = git(local["worktree"], "diff", "--name-only", "--no-renames", "-z", registration["head"], commit).decode().split("\0")[:-1]
-        require(paths and set(paths) <= set(json.loads(task["allowed"])), "Commit changed paths outside the assignment")
-        message = git(local["worktree"], "show", "-s", "--format=%B", commit).decode()
-        require(f"OpenCode-Task: {task_id}" in message.splitlines(), "Commit lacks the exact task trailer")
+        recovered = self.db.execute("SELECT 1 FROM sqlite_master WHERE name='attempt'").fetchone() and self.db.execute(
+            "SELECT 1 FROM attempt WHERE task_id=? AND state='observing'", (task_id,)).fetchone()
+        if recovered:
+            commits, _ = task_history(local["worktree"], registration["head"], commit, json.loads(task["allowed"]), task_id)
+            paths = git(local["worktree"], "diff", "--name-only", "--no-renames", "-z", registration["head"], commit).decode().split("\0")[:-1]
+            require(commits and paths, "Recovered task has no actual committed delivery")
+        else:
+            parents = git(local["worktree"], "show", "-s", "--format=%P", commit).decode().split()
+            require(parents == [registration["head"]], "Expected one normal commit directly after the approved base")
+            paths = git(local["worktree"], "diff", "--name-only", "--no-renames", "-z", registration["head"], commit).decode().split("\0")[:-1]
+            require(paths and set(paths) <= set(json.loads(task["allowed"])), "Commit changed paths outside the assignment")
+            message = git(local["worktree"], "show", "-s", "--format=%B", commit).decode()
+            require(f"OpenCode-Task: {task_id}" in message.splitlines(), "Commit lacks the exact task trailer")
+            commits = [commit]
         proof = {"kind": "git_scope", "base": registration["head"], "commit": commit,
                  "tree": git(local["worktree"], "rev-parse", commit + "^{tree}").decode().strip(),
-                 "paths": paths, "verified_at": now(), "human_review_required": True,
+                 "paths": paths, "commits": commits, "verified_at": now(), "human_review_required": True,
                  "non_git_effects": "not established by Git verification"}
         state = "verified" if task["state"] in ("completed", "verified") else "uncertain"
         self.update(task_id, state=state, verification=encoded(proof))

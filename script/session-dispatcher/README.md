@@ -14,8 +14,9 @@ discovers, starts, replaces, or interrupts a managed service or live session.
 The opt-in bounded queue below drains approved assignments through the same
 ledger and lifecycle, with provider capacity, availability and quota gates.
 The broader [resource admission design](RESOURCE_CONTROL.md) remains partly
-unimplemented: no task selection, tool/container leases, execution retry or
-model handoff. Direct `dispatch.py submit` remains manually resource-gated.
+unimplemented: no task selection, tool/container leases or automatic retries.
+Explicit checkpointed continuation and model handoff are described below.
+Direct `dispatch.py submit` remains manually resource-gated.
 
 ## Launch a dedicated service with retained events
 
@@ -266,8 +267,8 @@ use `limited`. Raw error bodies are not copied. Neither cooldown expiry nor a
 healthy endpoint re-enables a pool. Explicit `pool ... --state available` is
 required after checking availability. No inference is spent probing quota.
 Observation can reconnect from its cursor, but failed/interrupted execution and
-uncertain admission are never resent. Model handoff, including free-provider to
-local-model continuation, is not implemented; existing drift checks stay intact.
+uncertain admission are never resent. The explicit continuation path below can
+approve a stopped task's model handoff; ordinary drift checks remain intact.
 
 Run exits 0 when all enrolled units are ready, 1 on review/uncertainty, and 2 on
 its time bound or unavailable capacity/windows. Stopping the observer never
@@ -281,13 +282,61 @@ a subsequent assignment there needs reviewed updated context/base approval.
 Learning keeps its existing bounded wait/explicit-skip policy. Availability
 windows are bounded deadlines, not a recurring calendar or GPU-utilization probe.
 
+## Checkpointed task continuation
+
+`recovery.py` extends the same ledger to version 4 with preserved attempt
+snapshots. It applies only to enrolled, stopped **task** executions, before
+learning. It neither adopts live investigations nor restarts learning forks.
+Update all cooperating clients before enabling it; the live ledger is unchanged.
+
+The target model must already be configured on the same existing service. Set
+`DISPATCH_MODEL` to its model-reference JSON. Selecting a different provider is
+an explicit handoff, not an implicit fallback or an inference health probe.
+
+```sh
+python3 recovery.py --db "$DISPATCH_STATE/ledger.sqlite3" plan docs-003 \
+  --model "$DISPATCH_MODEL"
+# Review the checkpoint and copy approval_hash into DISPATCH_APPROVAL.
+python3 recovery.py --db "$DISPATCH_STATE/ledger.sqlite3" prepare docs-003 \
+  --model "$DISPATCH_MODEL" --approve "$DISPATCH_APPROVAL"
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" run --seconds 10800
+python3 recovery.py --db "$DISPATCH_STATE/ledger.sqlite3" status docs-003
+```
+
+Planning refreshes local observation but makes no API mutations. Preparation
+reserves a new stable message/attempt ID without sending it; repeat preparation
+with the same approval hash is idempotent. The runner waits for the target pool's
+availability/capacity, rechecks the exact checkpoint, selects the approved model
+once if needed, and sends one **continuation**, retaining the same task/session,
+worktree, branch and original base. Existing partial edits, staging, untracked
+scoped files and task commits are preserved. Each retained commit must be linear,
+within scope and carry the original task trailer. An already complete commit
+is verified without recreating it. The original learning policy remains pinned.
+
+If tools executed or partial work exists, preparation requires
+`--effects-checked`: an explicit acknowledgement that the particular checkpoint's
+external/background/tool effects have been inspected and settled. Git and a
+terminal tool event cannot establish those effects generically. No command text
+is replayed or used to guess that a shell command was harmless. Unfinished tools,
+missing terminal events, foreign input, history gaps and out-of-scope changes
+remain blocked even with that flag. There is no standing automatic retry policy.
+
+Every prior receipt, binding and failure remains in the private attempt snapshots;
+status/review expose attempt references. Old quota events remain attributed to
+the original provider rather than pausing the replacement. An omitted variant
+means the native default; the exact returned model binding is then pinned.
+Lost admission receipts recover by observation, without another POST. Interrupted
+model changes or unconfirmed admission without evidence remain held for review.
+No container is created and no server/core configuration is changed.
+
 ## Disposable checks
 
 ```sh
-python3 -m unittest -v test_dispatch test_lifecycle test_batch
+python3 -m unittest -v test_dispatch test_lifecycle test_batch test_recovery
 python3 native_smoke.py
 python3 native_smoke.py --learning
 python3 native_smoke.py --batch
+python3 native_smoke.py --recovery
 ```
 
 The stdlib suite uses disposable Git repositories and a loopback HTTP contract
@@ -310,3 +359,10 @@ Queue checkpoint (2026-11-05, source base `12c8d420a238`): 65 stdlib fixture
 tests passed; `native_smoke.py --batch` passed with eight fake-provider steps,
 retained task cursor 31, Git verification, a real learning fork and its separate
 commit. No live quota exhaustion, task handoff or automatic merge was exercised.
+
+Continuation checkpoint (2026-11-05, source base `7f6b02523c`): 65 existing
+checks and 25 continuation checks passed. The native `--recovery` fixture
+interrupted its own post-commit execution, continued the same session on another
+fixture model without recreating the commit, and completed separate learning:
+nine fake-provider steps, two task admissions, retained task cursor 36. Actual
+free-provider quota exhaustion and live-investigation handoff were not exercised.

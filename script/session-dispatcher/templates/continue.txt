@@ -1,0 +1,26 @@
+Continue Task-ID: $task_id
+Attempt: $attempt
+Worktree: $worktree
+Original approved base: $base
+Reconciled current HEAD: $head
+Allowed file paths: $paths
+Preserved checkpoint hash: $checkpoint
+
+The preceding execution stopped. This is a continuation of the same bounded
+assignment, not a fresh assignment or permission to repeat its effects.
+Keep the existing session, worktree, private container/build paths and evidence.
+The coordinator has checked the present checkpoint; its scoped partial edits,
+staging and commits are intentional. The earlier fresh-start clean-HEAD rule
+does not require discarding that work. Stop if other unexpected changes appear.
+
+Original assignment:
+$assignment
+
+Inspect existing work first. If an existing commit already completes the task,
+verify/report it and stop; do not recreate it. Otherwise finish only the remaining
+work. Preserve every prior commit and artifact. Additional commits must be normal
+linear commits, stay within the original scope, and include the exact trailer:
+OpenCode-Task: $task_id
+Never amend, reset, rebase, squash, merge, install or deploy. Do not repeat an
+operation with uncertain effects, expand the task or create replacement containers.
+Report the actual commits and evidence, any remaining gaps, and stop.
