@@ -187,7 +187,7 @@ class Dispatcher:
             self.db.close()
             raise DispatchError("Not a dispatcher ledger; refusing to modify this database")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2):
+        if version not in (0, 1, 2, 3):
             self.db.close()
             raise DispatchError("Unsupported dispatcher ledger version")
         self.db.execute("PRAGMA application_id=1329808464")
@@ -225,7 +225,7 @@ class Dispatcher:
             self.db.execute("""CREATE TABLE IF NOT EXISTS feedback (
                 task_id TEXT NOT NULL, event_id TEXT NOT NULL, category TEXT NOT NULL,
                 template_hash TEXT NOT NULL, PRIMARY KEY(task_id,event_id,category))""")
-            self.db.execute("PRAGMA user_version=2")
+            self.db.execute("PRAGMA user_version=" + str(max(version, 2)))
         self.db.execute("INSERT OR IGNORE INTO meta VALUES ('namespace', ?)", (str(uuid.uuid4()),))
         self.client_factory = client_factory
 
@@ -400,6 +400,18 @@ class Dispatcher:
                         fields["hazard"] = "Execution failed/interrupted; effects may already exist"
             elif kind in ("session.moved", "session.model.selected", "session.agent.selected"):
                 fields["hazard"] = "Session placement/model/agent changed during assignment"
+            # Native structured provider failures, not strings in tool output. A 429
+            # does not establish exhaustion of the daily/free quota.
+            if kind == "session.step.failed":
+                error = data.get("error", {})
+                category = ("provider_quota" if error.get("type") in (
+                                "provider.free-limit", "provider.go-limit", "provider.quota", "provider.budget-limit",
+                                "provider.model-budget-limit", "provider.chatgpt-limit")
+                            else "provider_rate_limit" if error.get("type") == "provider.rate-limit"
+                                or (str(error.get("type", "")).startswith("provider.") and error.get("status") == 429) else None)
+                if category:
+                    self.db.execute("INSERT OR IGNORE INTO feedback VALUES (?,?,?,?)",
+                        (task_id, event_id, category, json.loads(task["payload"])["metadata"].get("template_hash", "legacy")))
             if kind in ("session.tool.failed", "session.step.failed"):
                 error = encoded(data.get("error", {})).lower()
                 categories = [code for code, words in (

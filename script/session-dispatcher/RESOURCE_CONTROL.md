@@ -1,16 +1,16 @@
 # Resource admission for the manual dispatcher
 
-Implementation note (2026-11-04): [the learning lifecycle](LIFECYCLE.md) implements
-only a cooperative GPU/provider admission gate for future enrolled learning forks
-(maximum three), not the general scheduler proposed below. The dated operating
-observations in this design are historical; current operator availability controls
-new admissions. Codex now has an explicit bounded review command, not a task scheduler.
+Implementation note (2026-11-05): [the bounded queue](README.md#bounded-unattended-queue)
+now implements explicitly approved pending assignments, provider pools, finite
+availability windows, capacity accounting and structured quota/rate-limit pauses.
+It reuses [the learning lifecycle](LIFECYCLE.md). It is fixture/native-tested, not enabled
+on active task ledgers. Direct task submission remains manually resource-gated.
 
-The remaining sections are the original design, based on reported working
-limits and throughput/KV-cache clarification on 2026-11-02. General resource
-pools, task queues and automatic dispatch remain unimplemented; the learning
-gate above is the bounded exception. The [task CLI](README.md) remains explicit.
-Do not resubmit the assignments already handed to the investigation agents.
+The remaining sections retain the broader design and historical operating
+observations from 2026-11-02. Tool/container leases, recurring calendars, task
+selection, safe execution continuation/model handoff and automatic integration
+remain unimplemented. Current operator availability controls admissions; Codex
+review remains a separate bounded command. Do not resubmit existing assignments.
 
 ## Starting policy
 

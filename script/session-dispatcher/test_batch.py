@@ -1,0 +1,236 @@
+"""Disposable Git and loopback API fixtures; no live sessions, models, or containers."""
+from datetime import datetime, timedelta, timezone
+import fcntl
+import json
+from pathlib import Path
+import os
+import subprocess
+import sys
+import unittest
+
+from dispatch import Dispatcher, DispatchError, encoded
+from batch import Batch
+import test_lifecycle
+
+
+class BatchTests(unittest.TestCase):
+    git = test_lifecycle.LifecycleTests.git
+    approve = test_lifecycle.LifecycleTests.approve
+    commit = test_lifecycle.LifecycleTests.commit
+    tearDown = test_lifecycle.LifecycleTests.tearDown
+
+    def setUp(self):
+        test_lifecycle.LifecycleTests.setUp(self)
+        self.batch = Batch(self.dispatcher)
+        self.at = datetime.now(timezone.utc)
+        self.until = (self.at + timedelta(hours=1)).isoformat()
+        self.configure()
+
+    def configure(self, state='available', capacity=1, external=0):
+        return self.batch.configure('gpu', self.api.connection, 'fixture', capacity, state, self.until, external)
+
+    def enqueue(self, task='doc-1', worker='worker'):
+        return self.batch.enqueue(task, worker, 'Change pending to verified.', ['README.md'], self.policy)
+
+    def second(self):
+        repo = self.root / 'second'
+        self.git('worktree', 'add', '-b', 'second', str(repo))
+        self.api.session(repo, 'ses_second')
+        self.approve('second', 'ses_second', repo)
+        self.enqueue('doc-2', 'second')
+
+    def task_done(self):
+        self.enqueue()
+        self.batch.tick(self.at)
+        self.commit()
+        self.api.finish()
+        result = self.batch.tick(self.at)
+        self.assertEqual(self.life.unit('doc-1')['stage'], 'learning', result)
+
+    def test_durable_queue_idempotency_and_model_free_admission(self):
+        self.enqueue()
+        self.enqueue()
+        self.assertEqual(self.api.posts, [])
+        self.batch.tick(self.at)
+        self.dispatcher.close()
+        self.dispatcher = Dispatcher(self.ledger, lambda _: test_lifecycle.ForkClient(self.api))
+        self.batch = Batch(self.dispatcher)
+        self.batch.tick(self.at)
+        self.assertEqual(len(self.api.posts), 1)
+        self.assertEqual(self.dispatcher.db.execute('pragma user_version').fetchone()[0], 3)
+        with self.assertRaisesRegex(DispatchError, 'another queued'):
+            self.batch.enqueue('doc-1', 'worker', 'Different task', ['README.md'], self.policy)
+
+    def test_capacity_then_learning_then_refill(self):
+        self.enqueue()
+        self.second()
+        self.batch.tick(self.at)
+        self.assertEqual(len(self.api.posts), 1)
+        self.commit()
+        self.api.finish()
+        self.batch.tick(self.at)  # Verification and priority admission for learning.
+        unit = self.life.unit('doc-1')
+        self.assertEqual(unit['stage'], 'learning', unit)
+        self.api.finish(unit['fork_id'])
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['tasks'][0]['state'], 'ready', result)
+        self.assertEqual(self.life.unit('doc-1')['detail']['learning'], 'completed_no_changes')
+        self.assertEqual(self.dispatcher.task('doc-2')['state'], 'admitted')
+        self.assertEqual(len(self.api.posts), 3)  # Two tasks and one learning prompt, once each.
+
+    def test_outside_window_and_external_occupancy(self):
+        self.enqueue()
+        result = self.batch.tick(self.at + timedelta(hours=2))
+        self.assertEqual(result['waiting']['doc-1'], 'outside_window')
+        self.configure(external=1)
+        self.assertEqual(self.batch.tick(self.at)['waiting']['doc-1'], 'capacity')
+        self.assertEqual(self.api.posts, [])
+        self.configure(state='quota')
+        self.assertEqual(self.batch.tick(self.at)['waiting']['doc-1'], 'quota')
+
+    def test_external_live_sessions_count(self):
+        sid = self.api.session(self.repo, 'ses_external')
+        self.api.sessions[sid]['active'] = True
+        self.enqueue()
+        self.assertEqual(self.batch.tick(self.at)['waiting']['doc-1'], 'capacity')
+        self.assertEqual(self.api.posts, [])
+
+    def test_window_closes_without_cancelling_active_execution(self):
+        self.enqueue()
+        self.batch.tick(self.at)
+        self.api.sessions['ses_fixture']['active'] = True
+        result = self.batch.tick(self.at + timedelta(hours=2))
+        self.assertEqual(result['phase'], 'paused')
+        self.assertEqual(result['tasks'][0]['state'], 'active')
+        self.assertTrue(self.api.sessions['ses_fixture']['active'])
+        self.assertEqual(len(self.api.posts), 1)
+
+    def test_duplicate_worktree_pending_assignment_refused(self):
+        self.enqueue()
+        with self.assertRaisesRegex(DispatchError, 'reserves'):
+            self.enqueue('doc-2')
+
+    def test_worktree_drift_refused_before_post(self):
+        self.enqueue()
+        (self.repo / 'README.md').write_text('Concurrent work.\n')
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
+        self.assertEqual(self.api.posts, [])
+
+    def test_queued_template_or_registry_changes_require_review(self):
+        self.enqueue()
+        Path(self.policy['prompt']).write_text('Changed learn prompt.\n')
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
+        self.assertEqual(self.api.posts, [])
+
+    def test_interrupted_admission_intent_is_never_retried(self):
+        self.enqueue()
+        self.batch.save('doc-1', 'active')
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['phase'], 'blocked')
+        self.assertIn('Admission intent', result['tasks'][0]['issue'])
+        self.batch.tick(self.at)
+        self.assertEqual(self.api.posts, [])
+
+    def test_lost_receipt_and_observer_reconnect_never_resend(self):
+        self.enqueue()
+        self.api.lose_receipt = True
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
+        self.api.cut_after = 0
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
+        self.api.cut_after = None
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'running')
+        self.assertEqual(len(self.api.posts), 1)
+        self.assertEqual(self.dispatcher.task('doc-1')['state'], 'admitted')
+
+    def failed(self, error):
+        self.enqueue()
+        self.second()
+        self.batch.tick(self.at)
+        self.api.finish(terminal=None)
+        self.api.append('ses_fixture', 'session.step.failed', error=error)
+        self.api.append('ses_fixture', 'session.execution.failed')
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['phase'], 'blocked')
+        self.batch.tick(self.at)
+        self.assertEqual(len(self.api.posts), 1)
+        return result
+
+    def test_provider_quota_pauses_pool_without_disclosing_error_body(self):
+        result = self.failed({'type': 'provider.free-limit', 'message': 'private error', 'retryAfterMs': 1000})
+        self.assertEqual(self.batch.pool('gpu')['state'], 'quota')
+        self.assertNotIn('private error', encoded(result))
+
+    def test_rate_limit_is_not_classified_as_daily_quota(self):
+        self.failed({'type': 'provider.rate-limit', 'status': 429, 'message': 'rate limited'})
+        self.assertEqual(self.batch.pool('gpu')['state'], 'limited')
+
+    def test_tool_http_error_does_not_mark_inference_pool_exhausted(self):
+        self.failed({'type': 'tool.execution', 'status': 429, 'message': 'remote tool rate limited'})
+        self.assertEqual(self.batch.pool('gpu')['state'], 'available')
+
+    def test_backend_failure_holds_uncertain_effects(self):
+        self.failed({'type': 'provider.api', 'status': 503, 'message': 'backend unavailable'})
+        self.assertEqual(self.life.unit('doc-1')['stage'], 'needs_review')
+        self.assertEqual(self.batch.pool('gpu')['state'], 'available')
+
+    def test_learning_uses_independent_model_and_respects_its_pool(self):
+        self.api.sessions['ses_fixture']['info']['model']['providerID'] = 'primary'
+        self.approve()
+        self.batch.configure('primary', self.api.connection, 'primary', 1, 'available', self.until)
+        self.enqueue()
+        self.batch.tick(self.at)
+        self.commit()
+        self.api.finish()
+        self.configure(state='paused')
+        self.batch.tick(self.at)
+        self.assertEqual(self.api.forks, 0)
+        self.configure()
+        self.batch.tick(self.at)
+        fork = self.life.unit('doc-1')['fork_id']
+        self.assertEqual(self.api.sessions[fork]['info']['model'], self.policy['model'])
+        self.assertEqual(self.api.sessions['ses_fixture']['info']['model']['providerID'], 'primary')
+
+    def test_queue_and_existing_lifecycle_share_lock(self):
+        self.enqueue()
+        with self.ledger.open('rb') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            with self.assertRaisesRegex(DispatchError, 'writer holds'):
+                self.batch.tick(self.at)
+        self.assertEqual(self.api.posts, [])
+
+    def test_no_learning_changes_finishes_without_repeating_or_merging(self):
+        self.task_done()
+        self.batch.tick(self.at)
+        unit = self.life.unit('doc-1')
+        self.api.finish(unit['fork_id'])
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'complete')
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'complete')
+        self.assertEqual(self.api.forks, 1)
+        self.assertEqual(len(self.api.posts), 2)
+        self.assertEqual(self.batch.status()['integration'], 'human_review_required')
+
+    def run_cli(self):
+        return subprocess.run([sys.executable, str(Path(__file__).with_name('batch.py')), '--db', str(self.ledger),
+                               'run', '--seconds', '0'], capture_output=True, text=True,
+                              env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+
+    def test_cli_exits_cleanly_without_work_or_when_pool_is_unavailable(self):
+        self.assertEqual(self.run_cli().returncode, 0)
+        self.configure(state='paused')
+        self.enqueue()
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['phase'], 'paused')
+        self.assertEqual(self.api.posts, [])
+
+    def test_cli_stops_on_blocked_admission_without_a_retry(self):
+        self.enqueue()
+        self.batch.save('doc-1', 'active')
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['phase'], 'blocked')
+        self.assertEqual(self.api.posts, [])
+
+
+if __name__ == '__main__':
+    unittest.main()

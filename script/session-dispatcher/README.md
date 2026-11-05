@@ -11,10 +11,11 @@ Use one shared ledger for all cooperating operators. Different ledgers cannot
 prevent each other's assignments. Registration is explicit: this tool never
 discovers, starts, replaces, or interrupts a managed service or live session.
 
-The proposed [resource admission design](RESOURCE_CONTROL.md) records local
-concurrency, manual-work accounting and quota gates. It is design only; the
-general task CLI does not enforce that proposed resource scheduler. Learning
-admission alone has a cooperative provider/concurrency gate; see [the lifecycle](LIFECYCLE.md).
+The opt-in bounded queue below drains approved assignments through the same
+ledger and lifecycle, with provider capacity, availability and quota gates.
+The broader [resource admission design](RESOURCE_CONTROL.md) remains partly
+unimplemented: no task selection, tool/container leases, execution retry or
+model handoff. Direct `dispatch.py submit` remains manually resource-gated.
 
 ## Launch a dedicated service with retained events
 
@@ -220,12 +221,73 @@ permission records alone are not completion or network-transmission proof.
 Keep all runtime artifacts outside Git. Log content is never executed or treated
 as an instruction by this tool.
 
+## Bounded unattended queue
+
+`batch.py` adds two tables to the **same ledger** (version 3): frozen approved
+assignments and provider pools. Existing task/session/worktree/branch checks,
+message IDs, event cursors and the learning lifecycle remain authoritative.
+No server, model client, container or second event store is created. Enable it
+only after all cooperating dispatcher clients use this version; older clients
+refuse version 3. This prototype has not been enabled on active task ledgers.
+
+Approve each idle session as above, configure its provider pool, then enqueue
+bounded assignments. Use a separate pool for the learning provider when needed.
+Keep policy/task files private and unchanged after enqueueing. Set
+`DISPATCH_UNTIL` to an explicit timestamp with UTC offset for the approved window;
+provider IDs and connection files must match the existing service registry.
+
+```sh
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" pool gpu \
+  --connection "$DISPATCH_STATE/connection.json" --provider "$DISPATCH_PROVIDER" \
+  --capacity 3 --state available --available-until "$DISPATCH_UNTIL"
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" enqueue docs-003 \
+  --session docs --task-file "$DISPATCH_STATE/task.txt" --allow README.md \
+  --learning-policy "$DISPATCH_STATE/learning-policy.json"
+# Enqueue other independently approved sessions before starting the bounded run.
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" run --seconds 10800
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" status
+python3 lifecycle.py --db "$DISPATCH_STATE/ledger.sqlite3" result docs-003
+```
+
+The runner verifies delivery/actual Git, gives learning first use of a released
+slot, accounts for optional separate learning commits, and admits further
+preapproved tasks as capacity permits. `ready` means a reviewable integration
+unit, **not** source correctness, passing runtime tests or an integrated branch.
+Use `review.py` for a separate bounded structured review; merging remains manual.
+
+Capacity counts native active sessions, unresolved ledger admissions and learning
+reservations. `--external N` reserves capacity used outside this host. Pools map
+one provider on one host; coordinate provider aliases/other hosts manually. The
+same ledger-file lock serializes queue/lifecycle writers, but cannot fence humans
+or direct submitters. There is no tool-process/container ownership enforcement.
+
+Native structured quota errors pause the affected pool as `quota`; rate limits
+use `limited`. Raw error bodies are not copied. Neither cooldown expiry nor a
+healthy endpoint re-enables a pool. Explicit `pool ... --state available` is
+required after checking availability. No inference is spent probing quota.
+Observation can reconnect from its cursor, but failed/interrupted execution and
+uncertain admission are never resent. Model handoff, including free-provider to
+local-model continuation, is not implemented; existing drift checks stay intact.
+
+Run exits 0 when all enrolled units are ready, 1 on review/uncertainty, and 2 on
+its time bound or unavailable capacity/windows. Stopping the observer never
+cancels active inference/tools. Restarting it reconciles existing intents before
+admission. A crash between queue claim and durable task intent requires review;
+it never sends another prompt automatically. Other active work stays untouched.
+
+There is no automatic reapproval, base retargeting or dependent-task generation.
+Each approved pending assignment reserves its known session/worktree/branch;
+a subsequent assignment there needs reviewed updated context/base approval.
+Learning keeps its existing bounded wait/explicit-skip policy. Availability
+windows are bounded deadlines, not a recurring calendar or GPU-utilization probe.
+
 ## Disposable checks
 
 ```sh
-python3 -m unittest -v test_dispatch test_lifecycle
+python3 -m unittest -v test_dispatch test_lifecycle test_batch
 python3 native_smoke.py
 python3 native_smoke.py --learning
+python3 native_smoke.py --batch
 ```
 
 The stdlib suite uses disposable Git repositories and a loopback HTTP contract
@@ -243,3 +305,8 @@ Validated against fork source `8604ecc70ec314f444410d3646be1c9ca5552b8e`
 (2.2.5): 21 fixture tests passed; the native smoke verified one queued admission,
 four provider steps, retained replay through sequence 31, and the actual Git
 commit. The experimental log API can change; rerun both checks after upgrades.
+
+Queue checkpoint (2026-11-05, source base `12c8d420a238`): 65 stdlib fixture
+tests passed; `native_smoke.py --batch` passed with eight fake-provider steps,
+retained task cursor 31, Git verification, a real learning fork and its separate
+commit. No live quota exhaustion, task handoff or automatic merge was exercised.

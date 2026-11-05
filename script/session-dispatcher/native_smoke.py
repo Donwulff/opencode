@@ -5,6 +5,7 @@ Requires an already installed Bun and this checkout's existing dependencies.
 Makes no requests to a real inference service or active OpenCode server.
 """
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from datetime import datetime, timedelta, timezone
 import argparse
 import json
 import os
@@ -17,13 +18,17 @@ import threading
 import time
 
 from dispatch import Client, Dispatcher, encoded
+from batch import Batch
 from lifecycle import Lifecycle
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--learning', action='store_true', help='Also exercise real forks, model selection and restricted learning')
+    parser.add_argument('--batch', action='store_true', help='Exercise the approved queue plus native learning')
     args = parser.parse_args()
+    if args.batch:
+        args.learning = True
     bun = shutil.which('bun')
     if not bun:
         raise RuntimeError('Bun must already be installed; nothing will be installed')
@@ -126,7 +131,17 @@ def main():
                 learn_prompt = root / 'learn.md'
                 learn_prompt.write_text('Use only edit to preserve reusable lessons in AGENTS.md. No commands. Do not commit.\n')
                 policy = {'prompt': str(learn_prompt), 'model': {'providerID': 'fixture', 'id': 'learner'}, 'allow': ['AGENTS.md']} if args.learning else None
-                first = dispatcher.submit('native-doc', 'fixture', 'Change README task status from pending to verified.', ['README.md'], learning=policy)
+                batch = None
+                if args.batch:
+                    batch = Batch(dispatcher)
+                    batch.configure('fixture', state / 'connection.json', 'fixture', 1, 'available',
+                                    (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat())
+                    for _ in range(2):
+                        batch.enqueue('native-doc', 'fixture', 'Change README task status from pending to verified.', ['README.md'], policy)
+                    batch.tick()
+                    first = dispatcher.status('native-doc')
+                else:
+                    first = dispatcher.submit('native-doc', 'fixture', 'Change README task status from pending to verified.', ['README.md'], learning=policy)
                 repeated = dispatcher.submit('native-doc', 'fixture', 'Change README task status from pending to verified.', ['README.md'], learning=policy)
                 assert first['message_id'] == repeated['message_id']
                 deadline = time.monotonic() + 45
@@ -149,7 +164,11 @@ def main():
                     original_model = client.json('GET', f"/api/session/{session['id']}")['data']['model']
                     deadline = time.monotonic() + 45
                     while True:
-                        unit = life.advance('native-doc', True)
+                        if batch:
+                            batch.tick()
+                            unit = life.unit('native-doc')
+                        else:
+                            unit = life.advance('native-doc', True)
                         if unit['stage'] in ('ready', 'needs_review') or time.monotonic() > deadline:
                             break
                         time.sleep(0.05)
@@ -168,7 +187,9 @@ def main():
                     assert any(item['category'] == 'tool_unavailable' for item in learning_result['feedback']), encoded({'fixture_failures': failures})
                     assert not json.loads(dispatcher.task(unit['child_id'])['payload']).get('command')
                     assert len(calls) == 8, calls
-                print(json.dumps({'native_smoke': 'passed', 'queued_admissions': admissions, 'provider_steps': len(calls),
+                if batch:
+                    assert batch.tick()['phase'] == 'complete'
+                print(json.dumps({'native_smoke': 'passed', 'batch': bool(batch), 'queued_admissions': admissions, 'provider_steps': len(calls),
                                   'state': verified['state'], 'retained_event_cursor': verified['cursor'],
                                   'git_scope_verified': True, 'fixture_only': True, 'learning': None if not args.learning else {
                                       'state': unit['stage'], 'outcome': unit['detail']['learning'], 'fork_history_preserved': True,
