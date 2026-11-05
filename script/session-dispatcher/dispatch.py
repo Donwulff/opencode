@@ -132,6 +132,29 @@ class Client:
                 "Current event tail is not retained; launch with events.persist=true")
         return marker
 
+    def viewed_suffix(self, session_id, cursor):
+        """Validate read acknowledgements without changing the frozen task proof."""
+        tail, marker, views = cursor, None, []
+        for event in self.events(session_id, cursor):
+            require(marker is None, "Events followed the replay watermark")
+            if event.get("type") == "log.synced":
+                require(event.get("aggregateID") == session_id, "Wrong session watermark")
+                marker = event.get("seq")
+                continue
+            durable, data = event.get("durable", {}), event.get("data", {})
+            require(durable.get("aggregateID") == session_id and data.get("sessionID") == session_id,
+                    "Wrong session in post-verification replay")
+            seq, event_id = durable.get("seq"), event.get("id")
+            require(type(seq) is int and seq == tail + 1 and isinstance(event_id, str)
+                    and event_id.startswith("evt_") and event_id not in {view["id"] for view in views},
+                    "Post-verification event gap or conflicting replay")
+            require(event.get("type") == "session.viewed", "Original session advanced after verification")
+            views.append({"id": event_id, "seq": seq, "hash": digest(event)})
+            tail = seq
+        require(type(marker) is int and marker == tail,
+                "Post-verification replay is incomplete; retained events are required")
+        return {"cursor": cursor, "tail": tail, "views": views}
+
 
 def git(path, *args):
     env = {**os.environ, "GIT_OPTIONAL_LOCKS": "0", "GIT_TERMINAL_PROMPT": "0"}
@@ -204,7 +227,7 @@ class Dispatcher:
             self.db.close()
             raise DispatchError("Not a dispatcher ledger; refusing to modify this database")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4):
+        if version not in (0, 1, 2, 3, 4, 5):
             self.db.close()
             raise DispatchError("Unsupported dispatcher ledger version")
         self.db.execute("PRAGMA application_id=1329808464")
@@ -322,6 +345,11 @@ class Dispatcher:
                               (local["worktree"], encoded([local["common"], local["branch"]]))).fetchone()
         require(not row or (owner == row["task_id"] and row["fork_id"] == session_id
                             and row["stage"] == "learning"), "A task/learning unit reserves this worktree/branch")
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='integration'").fetchone():
+            row = self.db.execute("""SELECT task_id FROM integration WHERE stage NOT IN ('merged','deferred')
+                AND (worktree=? OR branch_key=? OR (target=? AND stage IN ('approved','merging','uncertain')))""",
+                (local["worktree"], encoded([local["common"], local["branch"]]), local["worktree"])).fetchone()
+            require(not row or owner == row["task_id"], "An integration reserves this worktree/branch")
 
     def submit(self, task_id, name, text, paths, *, learning=None, _unit=None, _prompt=None, _template_hash=None):
         require(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", task_id), "Invalid task ID")

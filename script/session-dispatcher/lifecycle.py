@@ -66,7 +66,7 @@ class Lifecycle:
         client = self.d.client_factory(registration["connection"])
         local = self.d.check_binding(registration, client)
         require(client.idle(task["session_id"]), "Original task session is no longer idle")
-        require(client.tail(task["session_id"]) == task["cursor"], "Original session advanced after verification")
+        client.viewed_suffix(task["session_id"], task["cursor"])
         require(not local["status"], "Worktree is dirty")
         return client, local
 
@@ -181,8 +181,8 @@ class Lifecycle:
                         (child_id, event["id"], "non_edit_writer_succeeded", json.loads(child["payload"])["metadata"]["template_hash"]))
             # Check the original without requiring clean status: only scoped learning edits may remain.
             self.d.check_binding(registration, client)
-            require(client.idle(task["session_id"]) and client.tail(task["session_id"]) == task["cursor"],
-                    "Original session changed while learning")
+            require(client.idle(task["session_id"]), "Original session changed while learning")
+            client.viewed_suffix(task["session_id"], task["cursor"])
             local = self.d.check_binding(json.loads(child["registry"]), client)
             require(local["head"] == unit["detail"]["task_commit"], "Learning agent changed HEAD")
             require(not git(task["worktree"], "diff", "--cached", "--name-only"), "Learning agent staged changes")
@@ -232,12 +232,13 @@ class Lifecycle:
         unit = self.unit(task_id)
         require(unit["stage"] == "ready", "Integration unit is not ready; task proof remains available through status")
         task = self.d.task(task_id)
-        _, local = self.clean(task)
+        client, local = self.clean(task)
         require(local["head"] == unit["detail"]["final_commit"], "Integration unit HEAD drift")
         feedback = [dict(row) for row in self.d.db.execute("SELECT * FROM feedback WHERE task_id IN (?,?)", (task_id, unit["child_id"]))]
         return {"task": self.d.status(task_id), "learning": unit,
                 "learning_task": self.d.status(unit["child_id"]) if unit["child_id"] else None, "feedback": feedback,
-                "human_integration_approval_required": True}
+                "human_integration_approval_required": True,
+                "post_verification_views": client.viewed_suffix(task["session_id"], task["cursor"])}
 
 
 def main():

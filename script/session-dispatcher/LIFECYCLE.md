@@ -1,8 +1,9 @@
 # Reserved task → learning → integration unit
 
 Opt-in extension of [the existing dispatcher](README.md), in the **same private
-ledger**. It selects no tasks, merges no branches, changes no original session's
-model/permissions, and performs no investigation or package installation.
+ledger**. The learning lifecycle selects no tasks, merges no branches, changes
+no original session's model/permissions, and performs no investigation or package
+installation.
 
 ## Use for future assignments
 
@@ -76,8 +77,11 @@ allowed-path and clean-worktree checks. Native successful completion alone is
 insufficient. Verification does not release an enrolled unit's worktree. The
 fork inherits projected conversation and current instructions; **it shares the
 filesystem**. Original continuation, changed branch/model, dirty index, unexpected
-files, extra commits or changed history stop the lifecycle. Cooperating watchers
-serialize lifecycle mutations through a ledger-file lock. This does not lock
+files, extra commits or changed history stop the lifecycle. After verification,
+only contiguous durable `session.viewed` acknowledgements may follow the frozen
+cursor. They are reported separately and do not change the task proof or review
+input. Any other event or missing replay/watermark still stops it. Cooperating
+watchers serialize lifecycle mutations through a ledger-file lock. This does not lock
 humans or independent filesystem writers out of the checkout.
 
 Learning runs the existing prompt automatically, including its own decision
@@ -156,6 +160,84 @@ a 600-second timeout. It reuses existing CLI authentication. No nested Codex
 session or direct inference client is created by the OpenCode watcher. Model
 calls consume quota only when the operator explicitly uses `--run` outside
 Codex; provider-internal bounded retries are not an exactly-once billing claim.
+
+## Approved integration gate
+
+This optional extension uses the same ledger, task receipts, learning lifecycle
+and review runner. Enroll a **future eligible task** after submission (before its
+worktree is reassigned). The target must be a separate clean worktree/branch in
+the same repository, with no active or pending registered assignment. No live
+session is adopted, switched or interrupted. Enrolling opts this ledger into
+schema 5; ordinary dispatch/recovery preserve that version. Existing completed
+units whose worktree has since advanced cannot be retroactively enrolled.
+
+```sh
+python3 integrate.py --db "$DISPATCH_STATE/ledger.sqlite3" enroll docs-002 \
+  --target /absolute/path/to/integration-worktree --model gpt-6.1-sol \
+  --evidence "$DISPATCH_STATE/validation-summary.txt"
+# Save the returned integration ID as UNIT. Learning still uses its existing policy.
+python3 integrate.py --db "$DISPATCH_STATE/ledger.sqlite3" advance "$UNIT"
+python3 integrate.py --db "$DISPATCH_STATE/ledger.sqlite3" status "$UNIT"
+# From an ordinary operator shell; one explicit paid review, never nested in Codex:
+python3 integrate.py --db "$DISPATCH_STATE/ledger.sqlite3" watch "$UNIT" \
+  --run-review --seconds 3600
+# After reviewing the unit and confirmed structured assessment:
+python3 integrate.py --db "$DISPATCH_STATE/ledger.sqlite3" approve "$UNIT"
+python3 integrate.py --db "$DISPATCH_STATE/ledger.sqlite3" advance "$UNIT"
+```
+
+Without `--gpu-available`, no learning is admitted; its existing bounded wait/skip
+policy applies. Without `--run-review`, no model review starts. Watch accepts
+explicit IDs and stops at approval, substantive review holds, conflicts, uncertain
+effects, or its time bound. Its bound stops further cycles, not a review/merge
+already admitted (those have their own timeouts). No automatic task selection,
+continuation, integration approval, branch synchronization or container management
+is introduced. Use the existing queue for separately approved future assignments.
+
+`waiting_task` advances the existing lifecycle; `await_review` freezes source and
+target identities/HEADs, the full unit, evidence and merge-tree preflight. Review
+includes target changes since the task base and the proposed target diff, alongside
+separate task/learning diffs. Reviews are keyed by the stable integration ID;
+`review.py --db LEDGER "$UNIT" --result` retrieves the saved attempts. A deliberate
+deferral/re-enrollment after target advancement retains the old review and requires
+a new target-specific review; no observer silently retargets or restarts review.
+`await_approval` requires a confirmed routine result
+with zero issues/escalations. Review effort remains medium unless known risks
+require high/xhigh; all deterministic checks remain mandatory. To request the
+existing one explicit higher-effort escalation, use `review UNIT --escalate
+--risk CRITERION`. It reviews the same frozen evidence; changed evidence needs a
+new plan and explicit review, never a silent retry. Substantive issues cannot be
+waived with `approve`. A successful higher-effort review requires every risk to
+be acknowledged using repeated `approve --accept-risk CRITERION` options.
+
+Approval binds the exact snapshot and confirmed review attempt. `approved`
+rechecks identity, HEAD, status, session activity, unit and review before Git.
+`merged` records actual parents, tree and source reachability; original task and
+learning commits remain separate. A conflict is detected by `git merge-tree`
+before any target index/ref/worktree change (Git objects may be created). Custom
+merge drivers require manual review; actual merge hooks remain enabled.
+
+Source reservations last until `merged` or explicit `defer UNIT --reason TEXT`.
+The target is additionally held once approved. `merging` is persisted **before**
+Git/hooks; an interrupted, failed or unobserved merge becomes `uncertain`, even
+if a commit actually exists. No retry, reset, abort or reservation override is
+provided: inspect actual Git/hook effects manually. An explicit `defer` can revoke
+approval only before `merging` intent, retaining the approval record; it cannot
+release an uncertain merge. Source/target drift invalidates the plan and stops
+it; resolve it explicitly rather than editing the ledger to bypass checks.
+Cooperative leases do not fence humans, other hosts/ledgers or filesystem writers.
+Test summaries remain supplied evidence, not independently rerun test results.
+
+Fixture tests cover real history-preserving merges, separate learning, duplicate
+enrollment, reconnect, target/source drift, preflight conflicts, explicit risk
+approval, target/session collisions and lost merge outcomes before/after commit.
+Paid Codex review remains unrun from a Codex session; the existing nested guard
+is intentional. Live sessions/ledgers are not test fixtures or automatically
+migrated. Run `python3 -m unittest test_dispatch test_lifecycle test_batch
+test_recovery test_integrate` from this directory. The extension checkpoint passed
+117 distinct fixture tests (full suite, then the final integration rerun) and
+the native learning smoke: one queued task, eight fake-provider steps, retained
+cursor 31 and a separate learning commit. No paid review was performed.
 
 ## Prompt feedback and remaining guard boundary
 

@@ -299,6 +299,57 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(review.plan(self.dispatcher, 'doc-1', 'gpt-6.1-sol', ['failed_tests'], 'failed')['effort'], 'high')
         self.assertEqual(review.plan(self.dispatcher, 'doc-1', 'gpt-6.1-sol', ['memory_safety'], 'unclear')['effort'], 'xhigh')
 
+    def test_view_acknowledgements_do_not_change_task_proof_or_review(self):
+        planned = self.ready_review()
+        task = self.dispatcher.task('doc-1')
+        event = self.api.append('ses_fixture', 'session.viewed', idle=1)
+        result = self.life.result('doc-1')
+        self.assertEqual(result['post_verification_views']['views'][0]['id'], event['id'])
+        self.assertEqual(self.dispatcher.task('doc-1'), task)
+        self.assertEqual(review.plan(self.dispatcher, 'doc-1', 'gpt-6.1-sol', [],
+            'Fixture tests passed; no runtime claims.'), planned)
+
+    def test_views_during_learning_are_accounted_without_reopening_task(self):
+        unit = self.learning()
+        self.api.append('ses_fixture', 'session.viewed', idle=1)
+        self.api.finish(unit['fork_id'])
+        self.assertEqual(self.life.advance('doc-1')['stage'], 'ready')
+
+    def test_non_view_suffix_still_holds_a_completed_unit(self):
+        self.ready_review()
+        for kind in ('session.execution.started', 'session.inbox.enqueued', 'session.model.selected', 'session.metadata.updated'):
+            with self.subTest(kind=kind):
+                self.api.append('ses_fixture', kind)
+                with self.assertRaisesRegex(DispatchError, 'advanced'):
+                    self.life.result('doc-1')
+                self.api.sessions['ses_fixture']['events'].pop()
+
+    def test_view_suffix_requires_contiguous_events_and_watermark(self):
+        self.ready_review()
+        first = self.api.append('ses_fixture', 'session.viewed', idle=1)
+        self.api.append('ses_fixture', 'session.viewed', idle=1)
+        self.api.sessions['ses_fixture']['events'].remove(first)
+        with self.assertRaisesRegex(DispatchError, 'gap'):
+            self.life.result('doc-1')
+        self.api.sessions['ses_fixture']['events'].insert(first['durable']['seq'], first)
+        self.api.retain = False
+        with self.assertRaisesRegex(DispatchError, 'incomplete'):
+            self.life.result('doc-1')
+
+    def test_native_paths_remain_visible_without_equating_file_type_with_ambiguity(self):
+        self.policy['wait_seconds'] = 0
+        self.dispatcher.submit('native', 'worker', 'A fixture header.', ['example.h'], learning=self.policy)
+        (self.repo / 'example.h').write_text('/* fixture */\n')
+        self.git('add', 'example.h')
+        self.git('commit', '-m', 'fixture source\n\nOpenCode-Task: native')
+        self.api.finish()
+        self.assertEqual(self.life.advance('native')['stage'], 'ready')
+        planned = review.plan(self.dispatcher, 'native', 'gpt-6.1-sol', [], 'Fixture only.')
+        self.assertIn('example.h', planned['prompt'])
+        self.assertEqual(planned['effort'], 'medium')
+        self.assertEqual(review.plan(self.dispatcher, 'native', 'gpt-6.1-sol',
+            ['source_ambiguity'], 'Fixture only.')['effort'], 'xhigh')
+
     def test_review_refuses_nested_codex(self):
         result = self.ready_review()
         with patch.dict(os.environ, {'CODEX_THREAD_ID': 'parent'}):

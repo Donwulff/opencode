@@ -62,7 +62,7 @@ class Recovery:
                 task_id TEXT NOT NULL REFERENCES task(id), number INTEGER NOT NULL,
                 previous TEXT NOT NULL, plan TEXT NOT NULL, state TEXT NOT NULL,
                 created TEXT NOT NULL, updated TEXT NOT NULL, PRIMARY KEY(task_id,number))""")
-            self.d.db.execute("PRAGMA user_version=4")
+            self.d.db.execute(f"PRAGMA user_version={max(4, self.d.db.execute('PRAGMA user_version').fetchone()[0])}")
 
     def plan(self, task_id, model):
         with self.batch.lock():

@@ -2,9 +2,12 @@
 
 A Python standard-library CLI for one explicitly assigned task at a time per
 approved persistent session, physical worktree, and Git branch. It uses the
-customized V2 API and native durable session log. It has no autonomous task selector, merge command, plugin, or OpenCode-core changes.
+customized V2 API and native durable session log. It has no autonomous task selector,
+plugin, or OpenCode-core changes.
 An opt-in [post-task lifecycle](LIFECYCLE.md) now accounts for learning forks and
 reviewable integration units; `review.py` can invoke one bounded Codex CLI review.
+The [opt-in integration gate](LIFECYCLE.md#approved-integration-gate) freezes the
+target too, retains reservations, and merges only after explicit approval.
 
 `dispatch.py` owns a **separate private SQLite ledger**, not OpenCode's database.
 Use one shared ledger for all cooperating operators. Different ledgers cannot

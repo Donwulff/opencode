@@ -24,9 +24,11 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["assessm
                          "escalation": {"type": "array", "items": {"type": "string", "enum": list(RISKS)}}}}
 
 
-def plan(dispatcher, task_id, model, risks, evidence):
+def plan(dispatcher, task_id, model, risks, evidence, *, integration=None):
     require(model and all(risk in RISKS for risk in risks), "Explicit model and known risk flags required")
     unit = Lifecycle(dispatcher).result(task_id)
+    # Read acknowledgements are revalidated, but never change the review's immutable input.
+    unit.pop("post_verification_views", None)
     proof = unit["task"]["verification"]
     commits = [("task", proof["base"], proof["commit"])]
     learning_commit = unit["learning"]["detail"].get("learning_commit")
@@ -43,14 +45,18 @@ def plan(dispatcher, task_id, model, risks, evidence):
     effort = "xhigh" if any(RISKS[risk] == "xhigh" for risk in risks) else "high" if risks else "medium"
     template = Path(__file__).with_name("templates").joinpath("review.txt").read_text()
     assignment = encoded({"unit": unit, "risk_flags": risks, "source_paths": source_paths,
-                          "operator_evidence": evidence, "patches": patches})
+                          "operator_evidence": evidence, "patches": patches, "integration": integration})
     require(len(assignment.encode()) <= 1024 * 1024, "Review input too large; narrow the review rather than truncate evidence")
     prompt = Template(template).substitute(assignment=assignment)
     return {"model": model, "effort": effort, "risk_flags": risks, "template_hash": digest(template),
+            "unit_hash": digest(unit), "evidence_hash": digest(evidence), "integration_hash": digest(integration),
             "input_hash": digest(prompt), "prompt": prompt, "human_integration_approval_required": True}
 
 
 def run(dispatcher, task_id, review, timeout=600, runner=subprocess.run, escalate=False):
+    # The historical column name is task_id. An integration gate uses its stable
+    # integration ID here, so a deliberately replanned target has a separate review
+    # scope while retaining both results. Each scope still permits at most one escalation.
     require(not os.environ.get("CODEX_THREAD_ID") and not os.environ.get("CODEX_SESSION_ID"),
             "Refusing nested Codex execution; run from an ordinary operator shell")
     executable = shutil.which("codex")
@@ -96,7 +102,7 @@ def run(dispatcher, task_id, review, timeout=600, runner=subprocess.run, escalat
                     "Invalid structured review result")
             if result["assessment"] == "blocked":
                 state = "blocked"
-            elif result["escalation"] or result["assessment"] == "needs_escalation":
+            elif result["issues"] or result["escalation"] or result["assessment"] == "needs_escalation":
                 state = "needs_escalation"
             else:
                 state = "reviewed_with_risks" if review["risk_flags"] else "reviewed"
