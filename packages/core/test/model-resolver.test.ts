@@ -13,6 +13,7 @@ import { Variant } from "@opencode/core/variant"
 import { ModelResolver } from "@opencode/core/model-resolver"
 import { AISDK } from "@opencode/core/aisdk"
 import { Npm } from "@opencode/util/npm"
+import { withEnv } from "./fixture/env"
 import { it } from "./lib/effect"
 
 interface ModelOptions {
@@ -54,27 +55,6 @@ function model(packageName: string | undefined, options: ModelOptions = {}) {
     modelID: info.modelID,
   })
   return Info.make(info)
-}
-
-function withEnv<A, E, R>(variables: Record<string, string | undefined>, effect: () => Effect.Effect<A, E, R>) {
-  return Effect.acquireUseRelease(
-    Effect.sync(() => {
-      const previous = Object.fromEntries(Object.keys(variables).map((key) => [key, process.env[key]]))
-      Object.entries(variables).forEach(([key, value]) => {
-        if (value === undefined) delete process.env[key]
-        else process.env[key] = value
-      })
-      return previous
-    }),
-    effect,
-    (previous) =>
-      Effect.sync(() => {
-        Object.entries(previous).forEach(([key, value]) => {
-          if (value === undefined) delete process.env[key]
-          else process.env[key] = value
-        })
-      }),
-  )
 }
 
 function withConfigEnv<A, E, R>(env: Record<string, string>, effect: () => Effect.Effect<A, E, R>) {
@@ -491,7 +471,7 @@ describe("ModelResolver", () => {
           body: {},
         }),
       )
-      const request = ai.request({ model: resolved, prompt: "Hello", generation: { maxTokens: 10 } })
+      const request = ai.request({ model: resolved, prompt: "Hello", maxTokens: 10 })
       const prepared = yield* compileRequest(request)
       const headers = yield* resolved.route.auth.apply({
         request,
@@ -1408,10 +1388,10 @@ describe("ModelResolver", () => {
         include: ["reasoning.encrypted_content"],
       })
       expect(bedrock.route.id).toBe("bedrock-converse")
-      expect(bedrock.route.defaults.generation).toEqual({ topP: 0.8 })
+      expect(bedrock.route.defaults.topP).toBe(0.8)
       expect(bedrock.route.defaults.http?.body).toEqual({ serviceTier: { type: "priority" } })
       expect(mantle.route.id).toBe("bedrock-mantle-chat")
-      expect(mantle.route.defaults.generation).toEqual({ topP: 0.6 })
+      expect(mantle.route.defaults.topP).toBe(0.6)
       expect(workers.route.endpoint.baseURL).toBe("https://api.cloudflare.com/client/v4/accounts/account/ai/v1")
     }),
   )

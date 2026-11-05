@@ -1,12 +1,13 @@
 export * as WebSearchFirecrawl from "./firecrawl.js"
 
 import { define } from "@opencode/plugin/effect/plugin"
+import { Effect, Option, Schema, Scope } from "effect"
 import { Config } from "../../config.js"
 import { Security } from "../../util/security.js"
-import { Effect, Option, Schema, Scope } from "effect"
 import { HttpClient } from "effect/http"
 import { App } from "../../app.js"
 import { WebSearchMcp } from "./mcp.js"
+import { WebSearchProvider } from "./provider.js"
 
 export const endpoint = "https://mcp.firecrawl.dev/v2/mcp"
 
@@ -40,49 +41,35 @@ export const Plugin = define<HttpClient.HttpClient | Scope.Scope>({
   effect: Effect.fn("WebSearchFirecrawl.Plugin")(function* (ctx) {
     const http = yield* HttpClient.HttpClient
     const config = Option.getOrUndefined(yield* Effect.serviceOption(Config.Service))
-    yield* ctx.integration.transform((editor) => {
-      editor.update("firecrawl", (integration) => (integration.name = "Firecrawl"))
-      editor.method.update({
-        integrationID: "firecrawl",
-        method: { type: "key" },
-      })
-      editor.method.update({
-        integrationID: "firecrawl",
-        method: { type: "env", names: ["FIRECRAWL_API_KEY"] },
-      })
-    })
-    yield* ctx.websearch.transform((editor) => {
-      editor.add({
-        id: "firecrawl",
-        name: "Firecrawl",
-        execute: (input) =>
-          Effect.gen(function* () {
-            yield* Security.assertUrl(config, endpoint, "websearch")
-            const connection = yield* ctx.integration.connection.active("firecrawl")
-            const credential = connection ? yield* ctx.integration.connection.resolve(connection) : undefined
-            const result = yield* WebSearchMcp.call(
-              http,
-              endpoint,
-              "firecrawl_search",
-              { input: McpInput, output: McpOutput },
-              { query: input.query, limit: 8 },
-              {
-                "User-Agent": App.useragent(ctx.app),
-                ...(credential?.type === "key" ? { Authorization: `Bearer ${credential.key}` } : {}),
-              },
-            )
-            const content = result?.content.find((item) => item.text)
-            const response = content ? Option.getOrUndefined(decodeSearchResponse(content.text)) : undefined
-            return (
-              response?.data.web.map((item) => ({
-                url: item.url,
-                ...(item.title ? { title: item.title } : {}),
-                ...(item.description ? { content: item.description } : {}),
-                time: {},
-              })) ?? []
-            )
-          }),
-      })
+    yield* WebSearchProvider.register(ctx, {
+      id: "firecrawl",
+      name: "Firecrawl",
+      env: "FIRECRAWL_API_KEY",
+      execute: (input, credential) =>
+        Effect.gen(function* () {
+          yield* Security.assertUrl(config, endpoint, "websearch")
+          const result = yield* WebSearchMcp.call(
+            http,
+            endpoint,
+            "firecrawl_search",
+            { input: McpInput, output: McpOutput },
+            { query: input.query, limit: 8 },
+            {
+              "User-Agent": App.useragent(ctx.app),
+              ...(credential?.type === "key" ? { Authorization: `Bearer ${credential.key}` } : {}),
+            },
+          )
+          const content = result?.content.find((item) => item.text)
+          const response = content ? Option.getOrUndefined(decodeSearchResponse(content.text)) : undefined
+          return (
+            response?.data.web.map((item) => ({
+              url: item.url,
+              ...(item.title ? { title: item.title } : {}),
+              ...(item.description ? { content: item.description } : {}),
+              time: {},
+            })) ?? []
+          )
+        }),
     })
   }),
 })

@@ -3,6 +3,8 @@ import path from "path"
 import { describe, expect } from "bun:test"
 import { Effect, Exit, Layer, Tracer } from "effect"
 import { FileMutation } from "@opencode/core/file-mutation"
+import { Database } from "@opencode/core/database/database"
+import { FileWrite } from "@opencode/core/file-write"
 import { Formatter } from "@opencode/core/formatter"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -10,8 +12,12 @@ import { Environment } from "@opencode/core/environment/index"
 import { Location } from "@opencode/core/location"
 import { FileAccess } from "@opencode/core/file-access"
 import { Permission } from "@opencode/core/permission"
+import { Project } from "@opencode/core/project"
+import { ProjectTable } from "@opencode/core/project/sql"
 import { AbsolutePath } from "@opencode/core/schema"
 import { Session } from "@opencode/core/session"
+import { SessionMessage } from "@opencode/core/session/message"
+import { SessionMessageTable, SessionTable } from "@opencode/core/session/sql"
 import { Tool } from "@opencode/core/tool"
 import { WriteTool } from "@opencode/core/tool/plugin/write"
 import { transformEnvironmentFiles } from "./fixture/environment"
@@ -25,7 +31,7 @@ import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions } from "
 const writeToolNode = makeLocationNode({
   name: "test/write-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(WriteTool.Plugin)),
-  deps: [Tool.node, FileAccess.node, FileMutation.node, Environment.node, Formatter.node, Permission.node],
+  deps: [Tool.node, FileWrite.node],
 })
 
 const sessionID = Session.ID.make("ses_write_tool_test")
@@ -81,21 +87,24 @@ const withTool = <A, E, R>(
     return yield* body(registry)
   }).pipe(
     Effect.provide(
-      AppNodeBuilder.build(LayerNode.group([Tool.node, FileAccess.node, FileMutation.node, writeToolNode]), [
-        Environment.node.replace(
-          transformEnvironmentFiles((files) => ({
-            read: (target, options) =>
-              Effect.sync(() => fixture.reads.push({ target, length: options?.length })).pipe(
-                Effect.andThen(files.read(target, options)),
-              ),
-            write: (target, content) =>
-              Effect.sync(() => fixture.writes.push(target)).pipe(Effect.andThen(files.write(target, content))),
-          })),
-        ),
-        Location.node.replace(activeLocation),
-        Formatter.node.replace(fixture.formatter),
-        Permission.node.replace(fixture.permission),
-      ]),
+      AppNodeBuilder.build(
+        LayerNode.group([Database.node, Tool.node, FileAccess.node, FileMutation.node, writeToolNode]),
+        [
+          Environment.node.replace(
+            transformEnvironmentFiles((files) => ({
+              read: (target, options) =>
+                Effect.sync(() => fixture.reads.push({ target, length: options?.length })).pipe(
+                  Effect.andThen(files.read(target, options)),
+                ),
+              write: (target, content) =>
+                Effect.sync(() => fixture.writes.push(target)).pipe(Effect.andThen(files.write(target, content))),
+            })),
+          ),
+          Location.node.replace(activeLocation),
+          Formatter.node.replace(fixture.formatter),
+          Permission.node.replace(fixture.permission),
+        ],
+      ),
     ),
   )
 }
@@ -109,6 +118,69 @@ const call = (input: typeof WriteTool.Input.Type, id = "call-write") => ({
 const it = testEffect(Layer.empty)
 
 describe("WriteTool", () => {
+  for (const command of ["review", "learn"]) {
+    it.live(`enforces /${command} before approval or writes and clears it on ordinary input`, () =>
+      withTempDir((tmp) => {
+        const fixture = makeWriteFixture()
+        return withTool(tmp.path, fixture, (registry) =>
+          Effect.gen(function* () {
+            const database = yield* Database.Service
+            yield* database.db
+              .insert(ProjectTable)
+              .values({ id: Project.ID.global, worktree: AbsolutePath.make(tmp.path), sandboxes: [] })
+              .onConflictDoNothing()
+              .run()
+            yield* database.db
+              .insert(SessionTable)
+              .values({
+                id: sessionID,
+                project_id: Project.ID.global,
+                slug: "test",
+                directory: tmp.path,
+                version: "test",
+              })
+              .run()
+            yield* database.db
+              .insert(SessionMessageTable)
+              .values({
+                id: SessionMessage.ID.create(),
+                session_id: sessionID,
+                type: "user",
+                seq: 0,
+                data: { text: "Inspect the files", command, time: { created: 0 } },
+              })
+              .run()
+
+            expect((yield* executeTool(registry, call({ path: "blocked.txt", content: "blocked" }))).status).toBe(
+              "error",
+            )
+            expect(fixture.assertions).toEqual([])
+            expect(fixture.writes).toEqual([])
+            expect(yield* Effect.promise(() => fs.readdir(tmp.path))).not.toContain("blocked.txt")
+            expect((yield* executeTool(registry, call({ path: "AGENTS.md", content: "instructions" }))).status).toBe(
+              command === "learn" ? "completed" : "error",
+            )
+
+            yield* database.db
+              .insert(SessionMessageTable)
+              .values({
+                id: SessionMessage.ID.create(),
+                session_id: sessionID,
+                type: "user",
+                seq: 1,
+                data: { text: "Make the change", time: { created: 1 } },
+              })
+              .run()
+            expect((yield* executeTool(registry, call({ path: "allowed.txt", content: "allowed" }))).status).toBe(
+              "completed",
+            )
+            expect(yield* Effect.promise(() => fs.readFile(path.join(tmp.path, "allowed.txt"), "utf8"))).toBe("allowed")
+          }),
+        )
+      }),
+    )
+  }
+
   it.live("registers and creates a relative file through FileMutation once", () =>
     withTempDir((tmp) => {
       const fixture = makeWriteFixture()

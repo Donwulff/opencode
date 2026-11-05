@@ -1,11 +1,12 @@
 export * as WebSearchTavily from "./tavily.js"
 
 import { define } from "@opencode/plugin/effect/plugin"
+import { Duration, Effect, Option, Schema, Scope } from "effect"
 import { Config } from "../../config.js"
 import { Security } from "../../util/security.js"
-import { Duration, Effect, Option, Schema, Scope } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { App } from "../../app.js"
+import { WebSearchProvider } from "./provider.js"
 
 export const endpoint = "https://api.tavily.com/search"
 
@@ -31,60 +32,46 @@ export const Plugin = define<HttpClient.HttpClient | Scope.Scope>({
   effect: Effect.fn("WebSearchTavily.Plugin")(function* (ctx) {
     const http = yield* HttpClient.HttpClient
     const config = Option.getOrUndefined(yield* Effect.serviceOption(Config.Service))
-    yield* ctx.integration.transform((editor) => {
-      editor.update("tavily", (integration) => (integration.name = "Tavily"))
-      editor.method.update({
-        integrationID: "tavily",
-        method: { type: "key" },
-      })
-      editor.method.update({
-        integrationID: "tavily",
-        method: { type: "env", names: ["TAVILY_API_KEY"] },
-      })
-    })
-    yield* ctx.websearch.transform((editor) => {
-      editor.add({
-        id: "tavily",
-        name: "Tavily",
-        execute: (input) =>
-          Effect.gen(function* () {
-            yield* Security.assertUrl(config, endpoint, "websearch")
-            const connection = yield* ctx.integration.connection.active("tavily")
-            const credential = connection ? yield* ctx.integration.connection.resolve(connection) : undefined
-            const request = yield* HttpClientRequest.post(endpoint).pipe(
-              HttpClientRequest.acceptJson,
-              HttpClientRequest.setHeaders({
-                "User-Agent": App.useragent(ctx.app),
-                "X-Client-Name": "opencode2",
-                ...(credential?.type === "key"
-                  ? { Authorization: `Bearer ${credential.key}` }
-                  : { "X-Tavily-Access-Mode": "keyless" }),
-              }),
-              HttpClientRequest.schemaBodyJson(SearchRequest)({
-                query: input.query,
-                search_depth: "basic",
-                chunks_per_source: 3,
-                max_results: 8,
+    yield* WebSearchProvider.register(ctx, {
+      id: "tavily",
+      name: "Tavily",
+      env: "TAVILY_API_KEY",
+      execute: (input, credential) =>
+        Effect.gen(function* () {
+          yield* Security.assertUrl(config, endpoint, "websearch")
+          const request = yield* HttpClientRequest.post(endpoint).pipe(
+            HttpClientRequest.acceptJson,
+            HttpClientRequest.setHeaders({
+              "User-Agent": App.useragent(ctx.app),
+              "X-Client-Name": "opencode2",
+              ...(credential?.type === "key"
+                ? { Authorization: `Bearer ${credential.key}` }
+                : { "X-Tavily-Access-Mode": "keyless" }),
+            }),
+            HttpClientRequest.schemaBodyJson(SearchRequest)({
+              query: input.query,
+              search_depth: "basic",
+              chunks_per_source: 3,
+              max_results: 8,
+            }),
+          )
+          const response = yield* HttpClient.withScope(HttpClient.filterStatusOk(http))
+            .execute(request)
+            .pipe(
+              Effect.flatMap(HttpClientResponse.schemaBodyJson(SearchResponse)),
+              Effect.scoped,
+              Effect.timeoutOrElse({
+                duration: Duration.seconds(25),
+                orElse: () => Effect.fail(new Error("Tavily web search request timed out")),
               }),
             )
-            const response = yield* HttpClient.withScope(HttpClient.filterStatusOk(http))
-              .execute(request)
-              .pipe(
-                Effect.flatMap(HttpClientResponse.schemaBodyJson(SearchResponse)),
-                Effect.scoped,
-                Effect.timeoutOrElse({
-                  duration: Duration.seconds(25),
-                  orElse: () => Effect.fail(new Error("Tavily web search request timed out")),
-                }),
-              )
-            return response.results.map((item) => ({
-              url: item.url,
-              title: item.title,
-              ...(item.content ? { content: item.content } : {}),
-              time: {},
-            }))
-          }),
-      })
+          return response.results.map((item) => ({
+            url: item.url,
+            title: item.title,
+            ...(item.content ? { content: item.content } : {}),
+            time: {},
+          }))
+        }),
     })
   }),
 })

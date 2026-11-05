@@ -1,3 +1,4 @@
+import { CommandGuard } from "../command-guard.js"
 export * as ImageGenerateTool from "./image-generate.js"
 
 import path from "path"
@@ -8,6 +9,8 @@ import { Identifier } from "@opencode/schema/identifier"
 import { Global } from "@opencode/util/global"
 import { Duration, Effect, Schema, Scope, Stream } from "effect"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { toolFailure } from "../runtime.js"
+import { Security } from "../../util/security.js"
 import { Config } from "../../config.js"
 import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
 import { Environment } from "../../environment/index.js"
@@ -21,8 +24,6 @@ import { Permission } from "../../permission.js"
 import { Session } from "../../session.js"
 import { SessionMessage } from "../../session/message.js"
 import { SessionSchema } from "../../session/schema.js"
-import { Security } from "../../util/security.js"
-import { CommandGuard } from "../command-guard.js"
 import { collectBoundedResponseBody } from "../http-body.js"
 
 export const name = "experimental_image_generate"
@@ -158,49 +159,53 @@ export const Plugin = {
     const readImage = Effect.fn("ImageGenerateTool.readImage")(function* (
       source: string,
       context: FileAccess.Invocation,
-      fetchAllowed: (url: string) => ReturnType<typeof permission.assert>,
     ) {
-      const bytes = yield* readBytes(source, context, fetchAllowed)
+      const bytes = /^https?:\/\//i.test(source)
+        ? yield* Effect.gen(function* () {
+            yield* Security.assertUrl(config, source, name)
+            // Downloads follow the same rule as the webfetch tool, so denying web access also covers image URLs.
+            yield* permission.assert({
+              action: "webfetch",
+              resources: [source],
+              save: ["*"],
+              metadata: { url: source },
+              ...Permission.invocation(context),
+            })
+            return yield* Effect.gen(function* () {
+              const response = yield* http
+                .execute(HttpClientRequest.get(source))
+                .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk))
+              return yield* collectBoundedResponseBody(
+                response,
+                MAX_INPUT_BYTES,
+                () => new ToolFailure({ message: `${source} is larger than 20 MiB.` }),
+              )
+            }).pipe(
+              Effect.timeoutOrElse({
+                duration: DOWNLOAD_TIMEOUT,
+                orElse: () => Effect.fail(new ToolFailure({ message: `Timed out downloading ${source}.` })),
+              }),
+              Effect.mapError(toolFailure(`Unable to download ${source}`)),
+            )
+          })
+        : yield* Effect.gen(function* () {
+            const target = yield* access.authorizeRead(source, context)
+            const info = yield* environment.files
+              .stat(target.absolute)
+              .pipe(
+                Effect.catchTag(
+                  "Environment.NotFound",
+                  () => new ToolFailure({ message: `File not found: ${source}` }),
+                ),
+              )
+            if (info.size > MAX_INPUT_BYTES)
+              return yield* new ToolFailure({ message: `${source} is larger than 20 MiB.` })
+            return (yield* environment.files.read(target.absolute)).bytes
+          })
       const mime = Mime.detect(bytes)
       if (!INPUT_TYPES.includes(mime))
         return yield* new ToolFailure({ message: `${source} is not a PNG, JPEG, WebP or GIF image.` })
       return { data: Buffer.from(bytes).toString("base64"), mime, name: path.basename(source) }
-    })
-
-    const readBytes = Effect.fn("ImageGenerateTool.readBytes")(function* (
-      source: string,
-      context: FileAccess.Invocation,
-      fetchAllowed: (url: string) => ReturnType<typeof permission.assert>,
-    ) {
-      if (/^https?:\/\//i.test(source)) {
-        // Downloads follow the same rule as the webfetch tool, so denying web access also covers image URLs.
-        yield* Security.assertUrl(config, source, name)
-        yield* fetchAllowed(source)
-        return yield* Effect.gen(function* () {
-          const response = yield* http
-            .execute(HttpClientRequest.get(source))
-            .pipe(Effect.flatMap(HttpClientResponse.filterStatusOk))
-          return yield* collectBoundedResponseBody(
-            response,
-            MAX_INPUT_BYTES,
-            () => new ToolFailure({ message: `${source} is larger than 20 MiB.` }),
-          )
-        }).pipe(
-          Effect.timeoutOrElse({
-            duration: DOWNLOAD_TIMEOUT,
-            orElse: () => Effect.fail(new ToolFailure({ message: `Timed out downloading ${source}.` })),
-          }),
-          Effect.mapError((error) =>
-            error instanceof ToolFailure ? error : new ToolFailure({ message: `Unable to download ${source}`, error }),
-          ),
-        )
-      }
-      const target = yield* access.authorizeRead(source, context)
-      const info = yield* environment.files
-        .stat(target.absolute)
-        .pipe(Effect.catchTag("Environment.NotFound", () => new ToolFailure({ message: `File not found: ${source}` })))
-      if (info.size > MAX_INPUT_BYTES) return yield* new ToolFailure({ message: `${source} is larger than 20 MiB.` })
-      return (yield* environment.files.read(target.absolute)).bytes
     })
 
     const notifyWhenDone = Effect.fn("ImageGenerateTool.notifyWhenDone")(
@@ -262,7 +267,6 @@ export const Plugin = {
           execute: (input, context) =>
             Effect.gen(function* () {
               yield* guard.image(context.sessionID)
-              const source = { type: "tool" as const, messageID: context.messageID, id: context.id }
               const resolved = yield* resolveModel(input.model, context.sessionID, input.images !== undefined)
               const model = resolved.model
               const variant = resolved.variant
@@ -278,9 +282,7 @@ export const Plugin = {
                 resources: [ref],
                 save: ["*"],
                 metadata: { ...input, model: ref },
-                sessionID: context.sessionID,
-                agent: context.agent,
-                source,
+                ...Permission.invocation(context),
               })
               if (target) {
                 yield* access.authorizeExternal([target], context)
@@ -288,25 +290,11 @@ export const Plugin = {
                   action: "edit",
                   resources: [target.resource],
                   save: ["*"],
-                  sessionID: context.sessionID,
-                  agent: context.agent,
-                  source,
+                  ...Permission.invocation(context),
                 })
               }
               const images = input.images
-                ? yield* Effect.forEach(input.images, (image) =>
-                    readImage(image, context, (url) =>
-                      permission.assert({
-                        action: "webfetch",
-                        resources: [url],
-                        save: ["*"],
-                        metadata: { url },
-                        sessionID: context.sessionID,
-                        agent: context.agent,
-                        source,
-                      }),
-                    ),
-                  )
+                ? yield* Effect.forEach(input.images, (image) => readImage(image, context))
                 : undefined
 
               // Everything that needs the user or can fail fast happened above; the paid call runs as a background job.
@@ -343,9 +331,7 @@ export const Plugin = {
                   const request = {
                     action: "edit",
                     resources: [actual.resource],
-                    sessionID: context.sessionID,
-                    agent: context.agent,
-                    source,
+                    ...Permission.invocation(context),
                   }
                   yield* replaces ? permission.assert({ ...request, save: ["*"] }) : permission.assertNotDenied(request)
                 }
@@ -378,11 +364,7 @@ export const Plugin = {
                 ].join("\n"),
                 metadata: { path: stem, model: ref, jobID: id },
               }
-            }).pipe(
-              Effect.mapError((error) =>
-                error instanceof ToolFailure ? error : new ToolFailure({ message: "Unable to generate image", error }),
-              ),
-            ),
+            }).pipe(Effect.mapError(toolFailure("Unable to generate image"))),
         })
       })
       .pipe(Effect.orDie)

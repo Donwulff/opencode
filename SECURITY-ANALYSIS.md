@@ -34,7 +34,7 @@ Paths below are relative to `packages/core/src` unless stated otherwise.
 | TinyFish authentication   | The URL check precedes credential use, MCP initialize, initialized notification, and search                                     | Preserve that order when merging handshake changes.                                                                                                                                    |
 | Remote instructions       | `config/plugin/instruction.ts` checks URLs and strips Unicode tag/zero-width characters before caching content                  | Config reload checks policy again. A denied URL loses its cached copy; an allowed URL with a failed fetch can retain the last good copy. Local instruction files remain trusted input. |
 | Remote skill discovery    | `config/plugin/skill.ts` passes effective security settings to `skill/discovery.ts`; the catalog and file downloads are checked | Skill paths are also checked for traversal and cross-origin references. Redirects remain a gap.                                                                                        |
-| Console Library           | `plugin/provider/opencode.ts` checks the latest URL policy before downloading skill bundles and sanitizes inline instructions | Skill downloads reject redirects. Instructions arrive in the Console config response, whose request remains outside the URL gate.                                                    |
+| Console Library           | `plugin/provider/opencode.ts` checks the latest URL policy before shared-cache reads and skill downloads, and sanitizes inline instructions | Skill downloads reject redirects. Instructions arrive in the Console config response, whose request remains outside the URL gate.                                                    |
 | Provider discovery        | `plugin/provider/autodiscover.ts` checks the model-list endpoint before requesting it                                           | Discovery protection is distinct from model inference transport.                                                                                                                       |
 | Provider availability     | `plugin/provider/restrict.ts` disables unconfigured providers when requested and checks provider `settings.baseURL`             | Providers without that setting, model-specific endpoint overrides, and arbitrary transport calls are not comprehensively covered. This is a registry filter, not a network firewall.   |
 | Model catalog refresh     | Config registers the `models-dev.ts` guard; it honors URL policy and `models_dev_enabled`                                       | The guard is process-global, installed by Location config; last registration wins. Startup before registration and multiple Locations are not a strong isolation boundary.             |
@@ -46,8 +46,9 @@ Paths below are relative to `packages/core/src` unless stated otherwise.
 | Provenance                | `Provenance.Plugin` is registered in `plugin/internal.ts`; records tool outcomes and selected session events                    | Opt-in. See [provenance-poc.md](specs/provenance-poc.md) for current event names and missing evidence.                                                                                 |
 
 The command metadata survives prompt admission and inbox delivery through Schema,
-`session/prompt.ts`, and `session/projector.ts`. The guard is called by the shell,
-edit, write, patch, subagent, image-generation, and artifact tools. Image generation
+`session/prompt.ts`, and `session/projector.ts`. The shared `file-write.ts` service
+enforces the guard for edit/write; shell, patch, subagent, image-generation, and
+artifact tools call it directly. Image generation
 and artifact mutations are blocked during both `/review` and `/learn`, before
 downloads, paid generation, or artifact-provider operations. Artifact reads remain
 available.

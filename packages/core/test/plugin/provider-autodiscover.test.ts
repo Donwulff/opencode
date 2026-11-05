@@ -29,7 +29,7 @@ it.live("discovers models from the configured endpoint and applies network polic
       (server) => Effect.promise(() => server.stop(true)),
     )
     const plugin = yield* Plugin.Service
-    const host = yield* PluginHost.make(plugin)
+    const host = yield* PluginHost.make(plugin, "test")
     const add = (allow: boolean) =>
       AutodiscoverPlugin.Plugin.effect(host).pipe(
         Effect.provide(

@@ -49,7 +49,7 @@ testEffect(PluginTestLayer).live("writes bounded provenance and separates tool f
     const directory = yield* tmpdirScoped()
     const file = path.join(directory.path, "events.jsonl")
     const plugin = yield* Plugin.Service
-    const host = yield* PluginHost.make(plugin)
+    const host = yield* PluginHost.make(plugin, "test")
     yield* Provenance.Plugin.effect(host).pipe(
       Effect.provide(
         Config.testLayer([

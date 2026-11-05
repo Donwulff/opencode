@@ -182,14 +182,14 @@ Paths in this table are relative to `packages/core/src` unless qualified.
 | URL policy and auditing        | `util/security.ts`, `util/network.ts`, `util/audit.ts`; check callers, not only definitions                                                                                                                                   |
 | Instructions                   | `config/plugin/instruction.ts`; preserve upstream glob/home-path handling, watchers, explicit sources, and reload caching; check policy before fetch and evict denied cached content                                          |
 | Skills                         | `config/plugin/skill.ts` passes security into `skill/discovery.ts` for catalog and file downloads                                                                                                                             |
-| Console Library                | `plugin/provider/opencode.ts` checks skill bundle URLs against the latest Location config before download, rejects redirects, and sanitizes inline instructions                                                              |
+| Console Library                | `plugin/provider/opencode.ts` checks skill bundle URLs against the latest Location config before shared-cache reads and downloads, rejects redirects, and sanitizes inline instructions                                        |
 | Search                         | All five `plugin/websearch/*` providers plus Console-hosted search in `plugin/provider/opencode.ts`; TinyFish must check before initialize as well as search                                                                  |
 | Fetch                          | `tool/plugin/webfetch.ts` checks before I/O and sanitizes output; `tool/plugin/image-generate.ts` checks reference URLs before download; `codemode/fetch.ts` checks the latest Location policy before permission/transport    |
 | Voice                          | `voice.ts` gates OpenAI, OpenCode-hosted GPT-Live, xAI, and Gemini Live setup requests with Location config; do not rely on provider registry filtering                                                                       |
 | Provider restriction/discovery | `plugin/provider/restrict.ts`, `plugin/provider/autodiscover.ts`, and registrations in `plugin/internal.ts`; restriction remains guarded against plugin removal                                                               |
 | Catalog                        | `models-dev.ts` guard and registration in `config.ts`; bundled snapshot now exists and can remain usable with network refresh disabled                                                                                        |
 | Shell                          | `shell.ts` must call `shell/sandbox.ts` before Environment spawn; tool/plugin/shell keeps command guard and post-approval audit                                                                                               |
-| Command restrictions           | `session/command.ts`, `session/prompt.ts`, Schema, inbox/projector and SessionStore preserve `command`; `tool/command-guard.ts` enforces it in shell/edit/write/patch/subagent/image-generation/artifact tools                |
+| Command restrictions           | `session/command.ts`, `session/prompt.ts`, Schema, inbox/projector and SessionStore preserve `command`; `file-write.ts` guards edit/write, and shell/patch/subagent/image-generation/artifact tools call `tool/command-guard.ts` |
 | Provenance                     | `provenance.ts`, `plugin/internal.ts`, tool execute hooks and current session event names                                                                                                                                     |
 | Other fork behavior            | Provider `system_prompt` in `plugin/optimize.ts`, agent `plan_reminder` in config/plan plugins, debug/review/learn commands, shared retry delay cap in `model-retry.ts` plus the post-plugin cap in `session/runner/retry.ts` |
 
@@ -296,3 +296,12 @@ Check the latest Location URL policy before each skill download and sanitize the
 inline instruction content. Keep upstream's redirect rejection and in-memory
 `skill://` files, including permission checks. Console config/account requests
 remain outside the URL gate; sanitizing inline content does not gate that request.
+
+The merge to `fff729917e` shares Console skill downloads across Locations and
+extracts web-search registration and file-writing helpers. Check the Location URL
+policy before reading the skill cache as well as inside its download: the shared
+cache can otherwise return an allowed Location's copy or retain it after a failed
+load. Keep search gates in the provider executors, before TinyFish initialization.
+`FileWrite.target` must enforce the command guard before external approval, with
+`SessionStore` explicitly in its service dependencies. Keep image URL policy in
+the new `readImage` path and discard the retired `readBytes` helper.

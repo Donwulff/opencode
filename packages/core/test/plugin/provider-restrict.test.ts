@@ -26,7 +26,7 @@ it.effect("filters the actual provider registry using configured identities and 
         })
     })
     const plugin = yield* Plugin.Service
-    const host = yield* PluginHost.make(plugin)
+    const host = yield* PluginHost.make(plugin, "test")
     yield* RestrictProvidersPlugin.Plugin.effect(host).pipe(
       Effect.provide(
         Config.testLayer([
