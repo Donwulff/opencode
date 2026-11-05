@@ -273,8 +273,19 @@ Observation can reconnect from its cursor, but failed/interrupted execution and
 uncertain admission are never resent. The explicit continuation path below can
 approve a stopped task's model handoff; ordinary drift checks remain intact.
 
+Provider windows close **new admissions**, not observation. `draining` keeps
+tracking already admitted tasks and learning, verifying Git and accounting for
+completion even when their pool is closed. New tasks, learning prompts and
+continuations still require an open pool; waiting learning retains its existing
+bounded wait/skip policy. Once active units are accounted for, a closed window
+with pending work becomes `paused` and the runner exits.
+
+`run --seconds N` is a separate observer lifetime: choose it long enough to
+cover completion after the admission cutoff (maximum 86400 seconds). Reconciliation
+and polling make no model calls. Review retains the existing medium default and
+explicit escalation; no extra model review is added to routine accounting.
 Run exits 0 when all enrolled units are ready, 1 on review/uncertainty, and 2 on
-its time bound or unavailable capacity/windows. Stopping the observer never
+its observation time bound or paused admissions with no active work. Stopping the observer never
 cancels active inference/tools. Restarting it reconciles existing intents before
 admission. A crash between queue claim and durable task intent requires review;
 it never sends another prompt automatically. Other active work stays untouched.

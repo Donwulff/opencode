@@ -171,7 +171,13 @@ class Batch:
                     self.save(task_id, "blocked", "Admission intent interrupted; inspect before recovery")
                     continue
                 try:
-                    stage = self.life.unit(task_id)["stage"]
+                    current = self.life.unit(task_id)
+                    stage = current["stage"]
+                    # A crash can leave a configured fork before its prompt admission.
+                    # Observing after cutoff must not start that still-unsubmitted work.
+                    if (stage == "learning" and not self.d.db.execute("SELECT 1 FROM task WHERE id=?", (current["child_id"],)).fetchone()
+                            and self.gate(spec["learn_pool"], at)):
+                        continue
                     gpu = stage == "await_gpu" and self.availability(spec["learn_pool"], at) is None
                     unit = self.life.advance_locked(task_id, gpu)
                     # A just-verified task releases inference capacity. Give its reserved
@@ -219,9 +225,15 @@ class Batch:
                     reasons[row["task_id"]] = "continuation_waiting"
                 else:
                     pool = spec["task_pool"] if self.life.unit(row["task_id"])["stage"] == "task" else spec["learn_pool"]
-                if self.gate(pool, at) is None:
+                reason = self.gate(pool, at)
+                if reason is None:
                     open_work = True
-            return {**result, "phase": "running" if open_work else "paused" if active or pending else "complete", "waiting": reasons}
+                else:
+                    reasons[row["task_id"]] = reason
+            # Provider gates control admission, not the lifetime of observation.
+            # Keep accounting active work (including bounded learning wait/skip)
+            # without opening a pool, retrying a prompt or cancelling execution.
+            return {**result, "phase": "running" if open_work else "draining" if active else "paused" if pending else "complete", "waiting": reasons}
 
 
 def main():
@@ -268,7 +280,7 @@ def main():
             while True:
                 result = batch.tick()
                 print(encoded(result), flush=True)
-                if result["phase"] != "running" or time.monotonic() >= deadline:
+                if result["phase"] not in ("running", "draining") or time.monotonic() >= deadline:
                     return 0 if result["phase"] == "complete" else 1 if result["phase"] == "blocked" else 2
                 time.sleep(min(args.interval, max(0, deadline - time.monotonic())))
         print(json.dumps(result, indent=2))

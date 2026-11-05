@@ -7,6 +7,7 @@ import os
 import subprocess
 import sys
 import unittest
+from unittest.mock import patch
 
 from dispatch import Dispatcher, DispatchError, encoded
 from batch import Batch
@@ -100,9 +101,105 @@ class BatchTests(unittest.TestCase):
         self.batch.tick(self.at)
         self.api.sessions['ses_fixture']['active'] = True
         result = self.batch.tick(self.at + timedelta(hours=2))
-        self.assertEqual(result['phase'], 'paused')
+        self.assertEqual(result['phase'], 'draining')
+        self.assertEqual(result['waiting']['doc-1'], 'outside_window')
         self.assertEqual(result['tasks'][0]['state'], 'active')
         self.assertTrue(self.api.sessions['ses_fixture']['active'])
+        self.assertEqual(len(self.api.posts), 1)
+
+    def test_task_completion_after_cutoff_is_verified_without_new_admissions(self):
+        self.policy['wait_seconds'] = 0
+        self.enqueue()
+        self.second()
+        self.batch.tick(self.at)
+        self.commit()
+        self.api.finish()
+        result = self.batch.tick(self.at + timedelta(hours=2))
+        self.assertEqual(result['phase'], 'paused')
+        self.assertEqual({row['task_id']: row['state'] for row in result['tasks']},
+                         {'doc-1': 'ready', 'doc-2': 'pending'})
+        self.assertEqual(self.dispatcher.task('doc-1')['state'], 'verified')
+        self.assertEqual(self.life.unit('doc-1')['detail']['learning'], 'skipped_gpu_unavailable')
+        self.assertEqual(self.api.forks, 0)
+        self.assertEqual(len(self.api.posts), 1)
+
+    def test_already_running_learning_finishes_after_cutoff_without_another_prompt(self):
+        self.task_done()
+        unit = self.life.unit('doc-1')
+        self.api.sessions[unit['fork_id']]['active'] = True
+        closed = self.at + timedelta(hours=2)
+        self.assertEqual(self.batch.tick(closed)['phase'], 'draining')
+        self.api.finish(unit['fork_id'])
+        self.assertEqual(self.batch.tick(closed)['phase'], 'complete')
+        self.assertEqual(self.life.unit('doc-1')['detail']['learning'], 'completed_no_changes')
+        self.assertEqual(len(self.api.posts), 2)
+
+    def test_closed_pool_states_do_not_stop_observation_or_reopen_admissions(self):
+        self.enqueue()
+        self.batch.tick(self.at)
+        for state in ('paused', 'quota', 'limited', 'offline'):
+            with self.subTest(state=state):
+                self.configure(state=state)
+                result = self.batch.tick(self.at)
+                self.assertEqual(result['phase'], 'draining')
+                self.assertEqual(result['waiting']['doc-1'], state)
+                self.assertEqual(self.batch.pool('gpu')['state'], state)
+                self.assertEqual(len(self.api.posts), 1)
+
+    def test_unsubmitted_learning_prompt_waits_for_an_open_pool_after_interruption(self):
+        self.enqueue()
+        self.batch.tick(self.at)
+        self.commit()
+        self.api.finish()
+        with patch.object(self.dispatcher, 'submit', side_effect=SystemExit('Fixture interruption before prompt')):
+            with self.assertRaises(SystemExit):
+                self.batch.tick(self.at)
+        unit = self.life.unit('doc-1')
+        self.assertEqual(unit['stage'], 'learning')
+        self.assertFalse(self.dispatcher.db.execute('SELECT 1 FROM task WHERE id=?', (unit['child_id'],)).fetchone())
+        self.assertEqual(self.batch.tick(self.at + timedelta(hours=2))['phase'], 'draining')
+        self.assertEqual(len(self.api.posts), 1)
+        self.batch.tick(self.at)
+        self.assertEqual(self.api.forks, 1)
+        self.assertEqual(len(self.api.posts), 2)
+
+    def test_cli_keeps_observing_past_cutoff_until_active_work_is_accounted(self):
+        self.policy['wait_seconds'] = 0
+        self.enqueue()
+        self.second()
+        self.batch.tick(self.at)
+        self.until = (self.at - timedelta(seconds=1)).isoformat()
+        self.configure()
+        command = [sys.executable, str(Path(__file__).with_name('batch.py')), '--db', str(self.ledger),
+                   'run', '--seconds', '10', '--interval', '1']
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+        try:
+            first = json.loads(process.stdout.readline())
+            self.assertEqual(first['phase'], 'draining')
+            self.commit()
+            self.api.finish()
+            output, error = process.communicate(timeout=15)
+            self.assertEqual(process.returncode, 2, error)
+            self.assertEqual(json.loads(output.splitlines()[-1])['phase'], 'paused')
+            self.assertEqual(self.life.unit('doc-1')['stage'], 'ready')
+            self.assertEqual(len(self.api.posts), 1)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+            process.stdout.close()
+            process.stderr.close()
+
+    def test_cli_observer_deadline_still_stops_with_active_work_preserved(self):
+        self.enqueue()
+        self.batch.tick(self.at)
+        self.until = (self.at - timedelta(seconds=1)).isoformat()
+        self.configure()
+        result = self.run_cli()
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['phase'], 'draining')
+        self.assertEqual(self.batch.status()['tasks'][0]['state'], 'active')
         self.assertEqual(len(self.api.posts), 1)
 
     def test_duplicate_worktree_pending_assignment_refused(self):
