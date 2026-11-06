@@ -55,6 +55,139 @@ class RecoveryTests(unittest.TestCase):
         if terminal:
             self.api.append('ses_fixture', 'session.tool.success', **fields, executed=executed)
 
+    def advance_base(self):
+        (self.repo/'HANDOVER.md').write_text('Coordinator checkpoint.\n')
+        self.git('add', 'HANDOVER.md')
+        self.git('commit', '-m', 'Coordinator checkpoint')
+        return self.git('rev-parse', 'HEAD')
+
+    def test_explicit_no_tool_baseline_preserves_failed_attempt_and_verifies_delivery(self):
+        self.api.sessions['ses_fixture']['info']['model']['providerID'] = 'free'
+        self.approve()
+        self.batch.configure('free', self.api.connection, 'free', 1, 'available', self.until)
+        self.started()
+        self.failed(quota=True)
+        original_base = json.loads(self.original['registry'])['head']
+        base = self.advance_base()
+        with self.assertRaises(DispatchError):
+            self.prepare()
+        plan = self.recovery.plan('doc-1', self.target, base)
+        self.assertEqual(plan['baseline_approval']['previous_base'], original_base)
+        self.assertEqual(plan['baseline_approval']['changed_paths'], ['HANDOVER.md'])
+        self.assertFalse(plan['effects_check_required'])
+        self.recovery.prepare('doc-1', self.target, plan['approval_hash'], accept_base=base)
+        self.assertEqual(len(self.api.posts), 1)  # Preparation never sends.
+        self.configure('paused')
+        self.assertEqual(self.batch.tick()['phase'], 'paused')
+        self.assertEqual(len(self.api.posts), 1)
+        self.assertEqual(json.loads(self.dispatcher.task('doc-1')['registry'])['head'], original_base)
+        self.configure()
+        self.batch.tick()
+        task = self.dispatcher.task('doc-1')
+        self.assertEqual(task['id'], self.original['id'])
+        self.assertEqual(task['request_hash'], self.original['request_hash'])
+        self.assertEqual(json.loads(task['registry'])['head'], base)
+        self.assertEqual(json.loads(self.dispatcher.db.execute('SELECT previous FROM attempt').fetchone()[0])
+                         ['task']['registry'], self.original['registry'])
+        self.commit()
+        self.api.finish()
+        self.batch.tick()
+        task = self.dispatcher.status('doc-1')
+        self.assertEqual(task['state'], 'verified')
+        self.assertEqual(task['verification']['base'], base)
+        self.assertEqual(task['attempts'][0]['baseline_approval']['accepted_base'], base)
+
+    def test_refresh_supersedes_unsent_blocked_checkpoint_without_overwriting_it(self):
+        self.started()
+        self.failed()
+        old = self.prepare()
+        before = dict(self.dispatcher.db.execute('SELECT * FROM attempt').fetchone())
+        base = self.advance_base()
+        self.assertEqual(self.batch.tick()['phase'], 'blocked')
+        self.assertEqual(self.dispatcher.db.execute('SELECT state FROM attempt').fetchone()[0], 'checkpoint_blocked')
+        plan = self.recovery.plan('doc-1', self.target, base)
+        self.recovery.prepare('doc-1', self.target, plan['approval_hash'], accept_base=base)
+        rows = self.dispatcher.db.execute('SELECT * FROM attempt ORDER BY number').fetchall()
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]['state'], 'superseded')
+        self.assertEqual(rows[0]['plan'], before['plan'])
+        self.assertEqual(rows[0]['previous'], before['previous'])
+        self.assertEqual(json.loads(rows[0]['plan'])['approval_hash'], old['approval_hash'])
+        self.assertNotEqual(json.loads(rows[1]['plan'])['message_id'], old['message_id'])
+        for _ in range(2):
+            self.recovery.prepare('doc-1', self.target, plan['approval_hash'], accept_base=base)
+        self.batch.tick()
+        self.batch.tick()
+        self.assertEqual(len(self.api.posts), 2)
+
+    def test_baseline_acceptance_refuses_tool_events_even_if_not_executed(self):
+        self.started()
+        self.tool(executed=False)
+        self.failed()
+        base = self.advance_base()
+        with self.assertRaisesRegex(DispatchError, 'zero recorded tool'):
+            self.recovery.plan('doc-1', self.target, base)
+        self.assertEqual(len(self.api.posts), 1)
+
+    def test_baseline_acceptance_refuses_unknown_tool_events(self):
+        self.started()
+        self.api.append('ses_fixture', 'session.tool.input.delta', id='partial')
+        self.failed()
+        with self.assertRaisesRegex(DispatchError, 'zero recorded tool'):
+            self.recovery.plan('doc-1', self.target, self.advance_base())
+
+    def test_baseline_acceptance_refuses_nonforward_history(self):
+        self.started()
+        self.failed()
+        # Only this disposable fixture ref is replaced to model unrelated history.
+        root = self.git('commit-tree', 'HEAD^{tree}', '-m', 'Unrelated fixture root')
+        self.git('update-ref', 'HEAD', root)
+        with self.assertRaises(DispatchError):
+            self.recovery.plan('doc-1', self.target, root)
+        self.assertEqual(len(self.api.posts), 1)
+
+    def test_baseline_approval_cannot_be_reused_for_a_different_base(self):
+        self.started()
+        self.failed()
+        base = self.advance_base()
+        plan = self.recovery.plan('doc-1', self.target, base)
+        self.recovery.prepare('doc-1', self.target, plan['approval_hash'], accept_base=base)
+        with self.assertRaisesRegex(DispatchError, 'another accepted baseline'):
+            self.recovery.prepare('doc-1', self.target, plan['approval_hash'])
+
+    def test_baseline_acceptance_refuses_dirty_or_assigned_output_changes(self):
+        self.started()
+        self.failed()
+        base = self.advance_base()
+        (self.repo/'new.txt').write_text('Unattributed partial work.\n')
+        with self.assertRaisesRegex(DispatchError, 'exact clean'):
+            self.recovery.plan('doc-1', self.target, base)
+        (self.repo/'new.txt').unlink()
+        (self.repo/'README.md').write_text('Unrelated upstream output.\n')
+        self.git('add', 'README.md')
+        self.git('commit', '-m', 'Upstream output change')
+        with self.assertRaisesRegex(DispatchError, 'assigned output'):
+            self.recovery.plan('doc-1', self.target, self.git('rev-parse', 'HEAD'))
+
+    def test_baseline_acceptance_is_immutable_and_not_a_history_rewrite(self):
+        self.started()
+        self.failed()
+        base = self.advance_base()
+        with self.assertRaisesRegex(DispatchError, 'immutable'):
+            self.recovery.plan('doc-1', self.target, 'HEAD')
+        plan = self.recovery.plan('doc-1', self.target, base)
+        (self.repo/'HANDOVER.md').write_text('Another coordinator checkpoint.\n')
+        self.git('add', 'HANDOVER.md')
+        self.git('commit', '-m', 'Later coordinator checkpoint')
+        with self.assertRaisesRegex(DispatchError, 'exact clean'):
+            self.recovery.prepare('doc-1', self.target, plan['approval_hash'], accept_base=base)
+        new_base = self.git('rev-parse', 'HEAD')
+        plan = self.recovery.plan('doc-1', self.target, new_base)
+        self.recovery.prepare('doc-1', self.target, plan['approval_hash'], accept_base=new_base)
+        (self.repo/'HANDOVER.md').write_text('Changed after approval.\n')
+        self.assertEqual(self.batch.tick()['phase'], 'blocked')
+        self.assertEqual(len(self.api.posts), 1)
+
     def test_same_task_new_message_and_original_submission_stays_idempotent(self):
         self.started()
         self.failed()

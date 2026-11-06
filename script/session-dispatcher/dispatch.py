@@ -306,6 +306,8 @@ class Dispatcher:
                     "previous_model": json.loads(previous["registry"])["model"], "model": plan["model"],
                     "previous_terminal": previous["terminal"], "approval_hash": plan["approval_hash"],
                     "effects_checked": plan["effects_checked"]})
+                if "baseline_approval" in plan:
+                    result["attempts"][-1]["baseline_approval"] = plan["baseline_approval"]
         return result
 
     def approve(self, name, session_id, worktree, connection, *, _unit=None):

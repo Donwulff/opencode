@@ -343,6 +343,32 @@ Lost admission receipts recover by observation, without another POST. Interrupte
 model changes or unconfirmed admission without evidence remain held for review.
 No container is created and no server/core configuration is changed.
 
+If a stopped **original attempt has zero recorded tool events**, a coordinator
+may explicitly accept a reviewed forward repository baseline. This is a narrow
+exception to the default history guard, not an automatic retry:
+
+```sh
+python3 recovery.py --db "$DISPATCH_STATE/ledger.sqlite3" plan docs-003 \
+  --model "$DISPATCH_MODEL" --accept-base "$REVIEWED_FULL_COMMIT"
+# Inspect the listed commits/changed paths and git diff previous_base..accepted_base.
+python3 recovery.py --db "$DISPATCH_STATE/ledger.sqlite3" prepare docs-003 \
+  --model "$DISPATCH_MODEL" --accept-base "$REVIEWED_FULL_COMMIT" \
+  --approve "$DISPATCH_APPROVAL"
+```
+
+The exact current HEAD must be clean, preserve the original history, leave
+assigned output paths unchanged, and have no unfinished Git operation. Any tool
+event, prior started handoff, foreign input or incomplete evidence refuses this
+path; `--effects-checked` cannot override it. Review the diff against the task's
+pinned inputs: their scope/hashes are never rewritten by this command.
+An unsent waiting or `checkpoint_blocked` intent is superseded with a new stable
+attempt/message ID; its original plan, approval and failed-attempt snapshot stay
+intact. Preparation sends nothing. Admission rechecks the accepted checkpoint
+and provider gate; only then does the new attempt adopt the accepted verification
+base. Status includes both bases and the reviewed diff hash. Ordinary partial-work
+continuation and all default drift checks remain unchanged. Already deferred or
+replaced tasks are not adopted, so this cannot replay a completed replacement.
+
 ## Disposable checks
 
 ```sh
