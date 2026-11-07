@@ -137,13 +137,18 @@ class Batch:
     def inference_held(self, row, client):
         # A non-verified task always holds its task/unit/worktree/branch/session evidence
         # in the ledger. Its *inference* reservation additionally ends only for a
-        # deliberately superseded, attributable stopped attempt that is proven idle:
-        # terminal failure/interruption with known admission and delivery, no history gap,
-        # drift or foreign input, every continuation intent superseded, the session not
-        # natively active and without pending input/forms, and the retained tail still at
-        # the reconciled cursor (the same settled-tail proof as continuation planning).
-        # Missing any of that evidence keeps the conservative reservation. This releases
-        # inference capacity only; it never releases the worktree/branch/session guards.
+        # deliberately deferred, retained stopped attempt that is proven idle: the queued
+        # row explicitly in the deferred state (never for ready/active/blocked/absent
+        # queue records), terminal failure/interruption with known admission and delivery,
+        # no history gap, drift or foreign input, every continuation intent superseded, the
+        # session not natively active and without pending input/forms, and the retained
+        # tail still at the reconciled cursor (the same settled-tail proof as continuation
+        # planning). Missing any of that evidence keeps the conservative reservation. This
+        # releases inference capacity only; it never releases the worktree/branch/session
+        # guards.
+        queued = self.d.db.execute("SELECT state FROM queued WHERE task_id=?", (row["id"],)).fetchone()
+        if queued is None or queued["state"] != "deferred":
+            return True
         if (row["terminal"] not in ("failed", "interrupted") or not row["enqueued"] or not row["delivered"]
                 or row["issue"] is not None or row["hazard"] != "Execution failed/interrupted; effects may already exist"):
             return True

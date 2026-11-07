@@ -217,9 +217,7 @@ const table = sqliteTable("session", {
 
 ## Session dispatcher (script/session-dispatcher)
 
-- The bounded-queue runner (`batch.py` tick) returns `phase=blocked` whenever any `queued` row is in state `blocked`, before the pending-admission loop; one deferred/blocked record therefore stops all new admissions, and `capacity` waiting reasons only surface on ticks with no blocked rows.
-- The runner mutates `pending`/`active`/`continuing` queued rows each tick; only `ready` rows are left untouched. Deferring an enrolled task out of the queue's active set means explicitly moving it to `ready`; the task's worktree/branch/session reservations are held by the ledger indexes, not by the queued state.
-- The exact string `Execution failed/interrupted; effects may already exist` is a cross-module contract: `dispatch.event` writes it for attributable terminal failures, `recovery.plan_locked` requires it to plan a continuation, and `batch.inference_held` requires it before releasing a task's inference slot. Rewording it requires updating all three.
-- Opening `Recovery(dispatcher)` without `batch=` creates the `attempt` table and bumps the ledger `user_version` to at least 4; batch-only ledgers are version 3 (and fixtures assert that), so the version a ledger lands on depends on which module opened it first.
-- "Settled idle" is proven by `client.idle(session_id)` plus `client.tail(session_id) == task["cursor"]` — the same settled-tail proof used by `dispatch.submit` and continuation planning. `Client.tail` requires an events-persist host and replays the full retained log, so `Batch.availability` pays that cost only for rows that pass the local ledger filter first.
-- When asserting ledger-row byte-equality in fixtures, snapshot after the last mutation: `Dispatcher.update` always rewrites `updated=now()`, and `recovery.plan` reconciles (a write) even when nothing changed.
+The Python dispatcher's queue/deferral mechanics, cross-module contracts (shared
+stopped-attempt hazard string, settled-tail proof, opt-in ledger versions) and
+fixture conventions live in `script/session-dispatcher/README.md`; read it before
+changing `dispatch.py`, `batch.py`, `lifecycle.py`, `recovery.py` or their tests.

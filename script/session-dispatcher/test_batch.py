@@ -48,11 +48,12 @@ class BatchTests(unittest.TestCase):
         self.approve(name, sid, repo)
         return repo
 
-    def deferred_stop(self, supersede=True, prepare=True):
+    def deferred_stop(self, supersede=True, prepare=True, queue='deferred'):
         """One retained, deferred stopped attempt: an attributable terminal failure before
         any tool event, an idle session with a settled retained tail, one continuation
-        intent the coordinator superseded, the record moved out of the queue's active set,
-        and a worktree that later advanced externally. Nothing resumes or edits it."""
+        intent the coordinator superseded, the record explicitly deferred out of the
+        queue's active set, and a worktree that later advanced externally. Nothing resumes
+        or edits it. queue=None drops the fixture queue row to model a missing record."""
         self.batch.enqueue('old-1', 'worker', 'Change pending to verified.', ['README.md'], self.policy)
         self.batch.tick(self.at)
         self.api.finish(terminal=None)
@@ -69,7 +70,10 @@ class BatchTests(unittest.TestCase):
             recovery.prepare('old-1', model, plan['approval_hash'])
             if supersede:
                 recovery.save('old-1', 1, 'superseded')
-        self.batch.save('old-1', 'ready', 'Deferred: replacement verified and merged separately')
+        if queue is None:
+            self.dispatcher.db.execute("DELETE FROM queued WHERE task_id='old-1'")
+        else:
+            self.batch.save('old-1', queue, 'Deferred: replacement verified and merged separately')
         (self.repo / 'HANDOVER.md').write_text('Coordinator checkpoint.\n')
         self.git('add', 'HANDOVER.md')
         self.git('commit', '-m', 'Coordinator checkpoint')
@@ -356,6 +360,7 @@ class BatchTests(unittest.TestCase):
         original = self.deferred_stop()
         attempt = dict(self.dispatcher.db.execute("SELECT * FROM attempt WHERE task_id='old-1'").fetchone())
         queued = dict(self.dispatcher.db.execute("SELECT * FROM queued WHERE task_id='old-1'").fetchone())
+        unit = dict(self.dispatcher.db.execute("SELECT * FROM unit WHERE task_id='old-1'").fetchone())
         observed = [tuple(row) for row in self.dispatcher.db.execute(
             "SELECT * FROM observed WHERE task_id='old-1' ORDER BY seq")]
         # The deferred stop no longer occupies the provider's sole inference slot.
@@ -368,13 +373,14 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(result['phase'], 'running', result)
         self.assertEqual(result['waiting'], {'new-2': 'capacity'}, result)
         self.assertEqual({row['task_id']: row['state'] for row in result['tasks']},
-                         {'old-1': 'ready', 'new-1': 'active', 'new-2': 'pending'})
+                         {'old-1': 'deferred', 'new-1': 'active', 'new-2': 'pending'})
         self.assertEqual(len(self.api.posts), 2)  # Original prompt plus exactly one new inference request.
         # The retained record stays byte-identical and its worktree/branch/session
         # reservations still prevent reuse, although the worktree advanced externally.
         self.assertEqual(dict(self.dispatcher.task('old-1')), original)
         self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM attempt WHERE task_id='old-1'").fetchone()), attempt)
         self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM queued WHERE task_id='old-1'").fetchone()), queued)
+        self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM unit WHERE task_id='old-1'").fetchone()), unit)
         self.assertEqual([tuple(row) for row in self.dispatcher.db.execute(
             "SELECT * FROM observed WHERE task_id='old-1' ORDER BY seq")], observed)
         self.assertNotEqual(self.git('rev-parse', 'HEAD'), self.base)
@@ -404,6 +410,19 @@ class BatchTests(unittest.TestCase):
                 self.tearDown()
                 self.setUp()
                 self.deferred_capacity(mutate, stop)
+
+    def test_non_deferred_or_missing_queue_records_hold_the_inference_reservation(self):
+        # A superseded, proven-idle stopped attempt releases inference only when the
+        # coordinator has explicitly deferred the queue record. Every other queue state,
+        # and a missing queue record, keep the conservative reservation.
+        for label, queue in [('ready', 'ready'), ('active', 'active'), ('pending', 'pending'),
+                             ('blocked', 'blocked'), ('continuing', 'continuing'), ('missing', None)]:
+            with self.subTest(label=label):
+                self.tearDown()
+                self.setUp()
+                self.deferred_stop(queue=queue)
+                self.assertEqual(self.batch.availability('gpu', self.at), 'capacity')
+                self.assertEqual(len(self.api.posts), 1)
 
     def run_cli(self):
         return subprocess.run([sys.executable, str(Path(__file__).with_name('batch.py')), '--db', str(self.ledger),
