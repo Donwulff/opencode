@@ -281,9 +281,11 @@ class BatchTests(unittest.TestCase):
     def test_lost_receipt_and_observer_reconnect_never_resend(self):
         self.enqueue()
         self.api.lose_receipt = True
-        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
+        # The unconfirmed admission holds new admissions, but the already-admitted unit
+        # keeps being drained/observed instead of stopping the observer.
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'draining')
         self.api.cut_after = 0
-        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'draining')
         self.api.cut_after = None
         self.assertEqual(self.batch.tick(self.at)['phase'], 'running')
         self.assertEqual(len(self.api.posts), 1)
@@ -355,6 +357,117 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.api.forks, 1)
         self.assertEqual(len(self.api.posts), 2)
         self.assertEqual(self.batch.status()['integration'], 'human_review_required')
+
+    def test_held_assignment_drains_other_admitted_units_without_new_admissions(self):
+        self.configure(capacity=2)
+        self.enqueue()
+        self.second()
+        self.second_session('third', 'ses_third')
+        self.batch.enqueue('doc-3', 'third', 'Change pending to verified.', ['README.md'], self.policy)
+        self.batch.tick(self.at)
+        self.assertEqual(len(self.api.posts), 2)  # doc-1/doc-2 admitted; doc-3 waits on capacity.
+        # doc-1 hits an attributable backend failure and is held for review.
+        self.api.finish('ses_fixture', terminal=None)
+        self.api.append('ses_fixture', 'session.step.failed',
+                        error={'type': 'provider.api', 'status': 503, 'message': 'backend unavailable'})
+        self.api.append('ses_fixture', 'session.execution.failed')
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['phase'], 'draining', result)
+        self.assertEqual(len(self.api.posts), 2)  # The still-pending doc-3 receives no prompt.
+        self.assertEqual(self.life.unit('doc-1')['stage'], 'needs_review')
+        original = dict(self.dispatcher.task('doc-1'))
+        queued = dict(self.dispatcher.db.execute("SELECT * FROM queued WHERE task_id='doc-1'").fetchone())
+        unit = dict(self.dispatcher.db.execute("SELECT * FROM unit WHERE task_id='doc-1'").fetchone())
+        observed = [tuple(row) for row in self.dispatcher.db.execute(
+            "SELECT * FROM observed WHERE task_id='doc-1' ORDER BY seq")]
+        # The unaffected doc-2 commits and completes; its enrolled learning forks exactly once.
+        second = self.root / 'second'
+        (second / 'README.md').write_text('Task status: verified.\n')
+        self.git('add', 'README.md', path=second)
+        self.git('commit', '-m', 'docs: fixture result\n\nOpenCode-Task: doc-2', path=second)
+        self.api.finish('ses_second')
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['phase'], 'draining', result)
+        self.assertEqual(self.life.unit('doc-2')['stage'], 'learning', result)
+        self.assertEqual(self.api.forks, 1)
+        self.assertEqual(len(self.api.posts), 3)
+        self.api.finish(self.life.unit('doc-2')['fork_id'])
+        # All unaffected units are settled: stop non-successfully on the remaining hold.
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['phase'], 'blocked', result)
+        self.assertEqual(self.life.unit('doc-2')['stage'], 'ready')
+        self.assertEqual(self.life.unit('doc-2')['detail']['learning'], 'completed_no_changes')
+        self.assertEqual(self.dispatcher.task(self.life.unit('doc-2')['child_id'])['state'], 'accounted')
+        self.assertEqual([row['state'] for row in result['tasks'] if row['task_id'] == 'doc-3'], ['pending'])
+        self.assertEqual(len(self.api.posts), 3)  # doc-3 never receives a prompt.
+        # The held record and its worktree/evidence stay intact.
+        self.assertEqual(dict(self.dispatcher.task('doc-1')), original)
+        self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM queued WHERE task_id='doc-1'").fetchone()), queued)
+        self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM unit WHERE task_id='doc-1'").fetchone()), unit)
+        self.assertEqual([tuple(row) for row in self.dispatcher.db.execute(
+            "SELECT * FROM observed WHERE task_id='doc-1' ORDER BY seq")], observed)
+        with self.assertRaisesRegex(DispatchError, 'reserves'):
+            self.approve()
+        with self.assertRaisesRegex(DispatchError, 'unresolved'):
+            self.dispatcher.submit('doc-4', 'worker', 'Change pending to verified.', ['README.md'])
+        self.assertEqual(len(self.api.posts), 3)
+        # An observer reconnect drains nothing twice: no repeated task or learning delivery.
+        self.dispatcher.close()
+        self.dispatcher = Dispatcher(self.ledger, lambda _: test_lifecycle.ForkClient(self.api))
+        self.batch = Batch(self.dispatcher)
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
+        self.assertEqual(len(self.api.posts), 3)
+        self.assertEqual(self.api.forks, 1)
+
+    def test_cli_drains_other_admitted_units_then_stops_blocked_on_the_hold(self):
+        # The loopback fixture implements fork/model/PATCH only in-process, so the
+        # subprocess observer drains under a closed learning window instead: the
+        # unaffected unit's learning is bounded wait/skip, and the CLI-level contract
+        # is drain the admitted work, then stop non-successfully on the hold.
+        self.policy['wait_seconds'] = 0
+        self.configure(capacity=2)
+        self.enqueue()
+        self.second()
+        self.second_session('third', 'ses_third')
+        self.batch.enqueue('doc-3', 'third', 'Change pending to verified.', ['README.md'], self.policy)
+        self.batch.tick(self.at)
+        self.assertEqual(len(self.api.posts), 2)  # doc-1/doc-2 admitted; doc-3 waits.
+        # doc-1 hits an attributable backend failure and is held for review.
+        self.api.finish('ses_fixture', terminal=None)
+        self.api.append('ses_fixture', 'session.step.failed',
+                        error={'type': 'provider.api', 'status': 503, 'message': 'backend unavailable'})
+        self.api.append('ses_fixture', 'session.execution.failed')
+        self.until = (self.at - timedelta(seconds=1)).isoformat()
+        self.configure(capacity=2)
+        command = [sys.executable, str(Path(__file__).with_name('batch.py')), '--db', str(self.ledger),
+                   'run', '--seconds', '20', '--interval', '1']
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                   env={**os.environ, 'PYTHONDONTWRITEBYTECODE': '1'})
+        try:
+            first = json.loads(process.stdout.readline())
+            self.assertEqual(first['phase'], 'draining', first)
+            second = self.root / 'second'
+            (second / 'README.md').write_text('Task status: verified.\n')
+            self.git('add', 'README.md', path=second)
+            self.git('commit', '-m', 'docs: fixture result\n\nOpenCode-Task: doc-2', path=second)
+            self.api.finish('ses_second')
+            output, error = process.communicate(timeout=30)
+            self.assertEqual(process.returncode, 1, error)
+            self.assertEqual(json.loads(output.splitlines()[-1])['phase'], 'blocked')
+            self.assertEqual(len(self.api.posts), 2)  # doc-3 never receives a prompt while the hold stands.
+            self.assertEqual(self.api.forks, 0)
+            unit = self.life.unit('doc-2')
+            self.assertEqual(unit['stage'], 'ready', unit)
+            self.assertEqual(unit['detail']['learning'], 'skipped_gpu_unavailable')
+            self.assertEqual(self.life.unit('doc-1')['stage'], 'needs_review')
+            self.assertEqual({row['task_id']: row['state'] for row in self.batch.status()['tasks']},
+                             {'doc-1': 'blocked', 'doc-2': 'ready', 'doc-3': 'pending'})
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=5)
+            process.stdout.close()
+            process.stderr.close()
 
     def test_settled_superseded_stop_frees_exactly_one_inference_slot(self):
         original = self.deferred_stop()

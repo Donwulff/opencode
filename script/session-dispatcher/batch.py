@@ -220,11 +220,21 @@ class Batch:
                         self.save(task_id, "ready" if unit["stage"] == "ready" else "blocked", unit["detail"].get("issue"))
                 except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
                     self.save(task_id, "blocked", str(error))
-            if self.d.db.execute("SELECT 1 FROM queued WHERE state='blocked'").fetchone():
-                return {**self.status(), "phase": "blocked"}
             active = self.d.db.execute("SELECT task_id FROM queued WHERE state='active'").fetchall()
-            if any(self.d.task(row[0])["issue"] or self.d.task(row[0])["hazard"] for row in active):
-                return {**self.status(), "phase": "blocked", "reason": "Observation/effects uncertain; no new admissions"}
+            held = self.d.db.execute("SELECT 1 FROM queued WHERE state='blocked'").fetchone()
+            if held or any(self.d.task(row[0])["issue"] or self.d.task(row[0])["hazard"] for row in active):
+                # A hold stops new admissions and uncertain-effect retries only. Keep
+                # observing, Git-verifying, accounting for and running the already-enrolled
+                # learning of the other already-admitted units (existing GPU, quota, window
+                # and wait/skip guards) until they settle; pending tasks are not admitted and
+                # the held attempt is not resumed, edited or cleared. Then stop
+                # non-successfully on the remaining hold rather than calling the batch
+                # complete. The bounded run time still applies.
+                reason = ("One or more assignments are held for review; no new admissions"
+                          if held else "Observation/effects uncertain; no new admissions")
+                if active:
+                    return {**self.status(), "phase": "draining", "reason": reason}
+                return {**self.status(), "phase": "blocked", "reason": reason}
             reasons = {}
             for row in self.d.db.execute("SELECT * FROM queued WHERE state='pending' ORDER BY created,task_id").fetchall():
                 task_id, spec = row["task_id"], json.loads(row["spec"])
@@ -240,7 +250,9 @@ class Batch:
                     self.save(task_id, "active")  # Intent before any POST; never automatically repeat an interrupted admission.
                     self.d.submit(task_id, spec["name"], spec["text"], spec["paths"], learning=spec["learning"])
                     if self.d.task(task_id)["issue"] or self.d.task(task_id)["hazard"]:
-                        return {**self.status(), "phase": "blocked", "reason": "Admission unconfirmed; reconcile without resending"}
+                        # This unit is already admitted and active; hold new admissions but
+                        # keep draining/observing it (GETs only, never a resend).
+                        return {**self.status(), "phase": "draining", "reason": "Admission unconfirmed; reconcile without resending"}
                 except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
                     self.save(task_id, "blocked", str(error))
                     return {**self.status(), "phase": "blocked"}
