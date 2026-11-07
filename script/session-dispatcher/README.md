@@ -265,6 +265,19 @@ one provider on one host; coordinate provider aliases/other hosts manually. The
 same ledger-file lock serializes queue/lifecycle writers, but cannot fence humans
 or direct submitters. There is no tool-process/container ownership enforcement.
 
+A retained, deferred stopped attempt distinguishes two reservations. Its task,
+unit, worktree, branch, session and attempt evidence stay held until the task is
+verified/accounted, exactly as before. Only its **inference** reservation ends,
+and only when every one of these holds: an attributable terminal failure or
+interruption with known admission and delivery, no history gap, drift, issue or
+foreign input; every continuation intent for the task superseded; the session
+proven not natively active and free of pending input/forms; and the retained
+event tail still at the reconciled cursor (the same settled-tail proof as
+continuation planning). Active native sessions always count, and missing or
+unsettled evidence, unknown admission/delivery, a missing terminal, or any
+missing/non-superseded continuation keep the conservative reservation. Nothing
+here resumes, edits or discards the retained record.
+
 Native structured quota errors pause the affected pool as `quota`; rate limits
 use `limited`. Raw error bodies are not copied. Neither cooldown expiry nor a
 healthy endpoint re-enables a pool. Explicit `pool ... --state available` is

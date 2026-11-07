@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 from dispatch import Dispatcher, DispatchError, encoded
 from batch import Batch
+from recovery import Recovery
 import test_lifecycle
 
 
@@ -39,6 +40,51 @@ class BatchTests(unittest.TestCase):
         self.api.session(repo, 'ses_second')
         self.approve('second', 'ses_second', repo)
         self.enqueue('doc-2', 'second')
+
+    def second_session(self, name='second', sid='ses_second'):
+        repo = self.root / name
+        self.git('worktree', 'add', '-b', name, str(repo))
+        self.api.session(repo, sid)
+        self.approve(name, sid, repo)
+        return repo
+
+    def deferred_stop(self, supersede=True, prepare=True):
+        """One retained, deferred stopped attempt: an attributable terminal failure before
+        any tool event, an idle session with a settled retained tail, one continuation
+        intent the coordinator superseded, the record moved out of the queue's active set,
+        and a worktree that later advanced externally. Nothing resumes or edits it."""
+        self.batch.enqueue('old-1', 'worker', 'Change pending to verified.', ['README.md'], self.policy)
+        self.batch.tick(self.at)
+        self.api.finish(terminal=None)
+        self.api.append('ses_fixture', 'session.execution.failed')
+        self.batch.tick(self.at)
+        task = self.dispatcher.task('old-1')
+        self.assertEqual((task['state'], task['terminal'], task['enqueued'], task['delivered'],
+                          task['issue'], task['hazard']),
+                         ('uncertain', 'failed', 1, 1, None, 'Execution failed/interrupted; effects may already exist'))
+        if prepare:
+            recovery = Recovery(self.dispatcher)
+            model = json.loads(task['registry'])['model']
+            plan = recovery.plan('old-1', model)
+            recovery.prepare('old-1', model, plan['approval_hash'])
+            if supersede:
+                recovery.save('old-1', 1, 'superseded')
+        self.batch.save('old-1', 'ready', 'Deferred: replacement verified and merged separately')
+        (self.repo / 'HANDOVER.md').write_text('Coordinator checkpoint.\n')
+        self.git('add', 'HANDOVER.md')
+        self.git('commit', '-m', 'Coordinator checkpoint')
+        return dict(self.dispatcher.task('old-1'))
+
+    def deferred_capacity(self, mutate, stop):
+        self.deferred_stop(**stop)
+        mutate()
+        self.second_session()
+        self.batch.enqueue('new-1', 'second', 'Change pending to verified.', ['README.md'], self.policy)
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['phase'], 'paused', result)
+        self.assertEqual(result['waiting'], {'new-1': 'capacity'}, result)
+        self.assertEqual([row['state'] for row in result['tasks'] if row['task_id'] == 'new-1'], ['pending'])
+        self.assertEqual(len(self.api.posts), 1)  # The waiting task never receives an inference request.
 
     def task_done(self):
         self.enqueue()
@@ -305,6 +351,59 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(self.api.forks, 1)
         self.assertEqual(len(self.api.posts), 2)
         self.assertEqual(self.batch.status()['integration'], 'human_review_required')
+
+    def test_settled_superseded_stop_frees_exactly_one_inference_slot(self):
+        original = self.deferred_stop()
+        attempt = dict(self.dispatcher.db.execute("SELECT * FROM attempt WHERE task_id='old-1'").fetchone())
+        queued = dict(self.dispatcher.db.execute("SELECT * FROM queued WHERE task_id='old-1'").fetchone())
+        observed = [tuple(row) for row in self.dispatcher.db.execute(
+            "SELECT * FROM observed WHERE task_id='old-1' ORDER BY seq")]
+        # The deferred stop no longer occupies the provider's sole inference slot.
+        self.assertIsNone(self.batch.availability('gpu', self.at))
+        self.second_session()
+        self.batch.enqueue('new-1', 'second', 'Change pending to verified.', ['README.md'], self.policy)
+        self.second_session('third', 'ses_third')
+        self.batch.enqueue('new-2', 'third', 'Change pending to verified.', ['README.md'], self.policy)
+        result = self.batch.tick(self.at)
+        self.assertEqual(result['phase'], 'running', result)
+        self.assertEqual(result['waiting'], {'new-2': 'capacity'}, result)
+        self.assertEqual({row['task_id']: row['state'] for row in result['tasks']},
+                         {'old-1': 'ready', 'new-1': 'active', 'new-2': 'pending'})
+        self.assertEqual(len(self.api.posts), 2)  # Original prompt plus exactly one new inference request.
+        # The retained record stays byte-identical and its worktree/branch/session
+        # reservations still prevent reuse, although the worktree advanced externally.
+        self.assertEqual(dict(self.dispatcher.task('old-1')), original)
+        self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM attempt WHERE task_id='old-1'").fetchone()), attempt)
+        self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM queued WHERE task_id='old-1'").fetchone()), queued)
+        self.assertEqual([tuple(row) for row in self.dispatcher.db.execute(
+            "SELECT * FROM observed WHERE task_id='old-1' ORDER BY seq")], observed)
+        self.assertNotEqual(self.git('rev-parse', 'HEAD'), self.base)
+        with self.assertRaisesRegex(DispatchError, 'reserves'):
+            self.approve()
+        with self.assertRaisesRegex(DispatchError, 'unresolved'):
+            self.dispatcher.submit('new-3', 'worker', 'Change pending to verified.', ['README.md'])
+        self.assertEqual(len(self.api.posts), 2)
+
+    def test_deferred_stop_variants_retain_the_inference_reservation(self):
+        cases = [
+            ('active native session', lambda: self.api.sessions['ses_fixture'].update(active=True), {}),
+            ('pending inbox input', lambda: self.api.sessions['ses_fixture']['inbox'].setdefault('msg_held', {'id': 'msg_held'}), {}),
+            ('pending form', lambda: self.api.sessions['ses_fixture']['forms'].append({'id': 'form_held'}), {}),
+            ('unobserved tail event', lambda: self.api.append('ses_fixture', 'session.metadata.updated'), {}),
+            ('non-superseded continuation', lambda: None, {'supersede': False}),
+            ('missing continuation', lambda: None, {'prepare': False}),
+            ('missing terminal', lambda: self.dispatcher.update('old-1', terminal=None), {}),
+            ('unknown delivery', lambda: self.dispatcher.update('old-1', delivered=0), {}),
+            ('unresolved observation', lambda: self.dispatcher.update(
+                'old-1', issue='Observation incomplete; cursor retained, no request retried'), {}),
+            ('foreign input hazard', lambda: self.dispatcher.update(
+                'old-1', hazard='Another user input overlaps this assignment'), {}),
+        ]
+        for label, mutate, stop in cases:
+            with self.subTest(label=label):
+                self.tearDown()
+                self.setUp()
+                self.deferred_capacity(mutate, stop)
 
     def run_cli(self):
         return subprocess.run([sys.executable, str(Path(__file__).with_name('batch.py')), '--db', str(self.ledger),
