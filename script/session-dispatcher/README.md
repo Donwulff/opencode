@@ -265,6 +265,31 @@ one provider on one host; coordinate provider aliases/other hosts manually. The
 same ledger-file lock serializes queue/lifecycle writers, but cannot fence humans
 or direct submitters. There is no tool-process/container ownership enforcement.
 
+A retained, deferred stopped attempt distinguishes two reservations. Its task,
+unit, worktree, branch, session and attempt evidence stay held until the task is
+verified/accounted, exactly as before. Only its **inference** reservation ends,
+and only when every one of these holds: the task's queued row is explicitly in
+the `deferred` state (ready/active/blocked queue records and a missing queue
+record keep their reservation); an attributable terminal failure or interruption
+with known admission and delivery, no history gap, drift, issue or foreign
+input; every continuation intent for the task superseded; the session proven not
+natively active and free of pending input/forms; and the retained event tail
+still at the reconciled cursor (the same settled-tail proof as continuation
+planning). Active native sessions always count, and missing or unsettled
+evidence, unknown admission/delivery, a missing terminal, or any
+missing/non-superseded continuation keep the conservative reservation. Nothing
+here resumes, edits or discards the retained record.
+
+Queue states: the runner processes `pending` (admission), `active` (observation)
+and `continuing` (handoff) rows each tick, and returns `phase=blocked` before
+any new admission whenever any row is `blocked`. A `deferred` row does not by
+itself block the tick; `deferred` and `ready` rows are left untouched by the
+runner. Deferring a retained record is explicit: move its queued row to
+`deferred` (moving it to `ready` is not the deferral protocol). The record's
+worktree/branch/session reservations are held by the ledger indexes and the
+submit/approve collision checks, not by the queue state, and a deferred task
+cannot be re-approved for continuation.
+
 Native structured quota errors pause the affected pool as `quota`; rate limits
 use `limited`. Raw error bodies are not copied. Neither cooldown expiry nor a
 healthy endpoint re-enables a pool. Explicit `pool ... --state available` is
@@ -368,6 +393,24 @@ and provider gate; only then does the new attempt adopt the accepted verificatio
 base. Status includes both bases and the reviewed diff hash. Ordinary partial-work
 continuation and all default drift checks remain unchanged. Already deferred or
 replaced tasks are not adopted, so this cannot replay a completed replacement.
+
+## Contracts and fixture notes
+
+- The exact string `Execution failed/interrupted; effects may already exist` is
+  a cross-module contract: `dispatch.event` writes it for an attributable
+  terminal failure, and `recovery.plan_locked` and `batch.inference_held`
+  require it. Rewording it requires updating all three.
+- "Settled idle" is proven by `client.idle(session_id)` plus
+  `client.tail(session_id) == task["cursor"]`. `Client.tail` requires an
+  events-persist host and replays the full retained log, so `Batch.availability`
+  pays that cost only for rows that pass the local ledger filter first.
+- Ledger schema versions are opt-in: opening `Recovery(dispatcher)` without
+  `batch=` creates the `attempt` table and bumps `user_version` to at least 4;
+  batch-only ledgers are version 3 (fixtures assert that), so the version a
+  ledger lands on depends on which module opened it first.
+- When asserting ledger-row byte-equality in fixtures, snapshot after the last
+  mutation: `Dispatcher.update` always rewrites `updated=now()`, and
+  `recovery.plan` reconciles (a write) even when nothing changed.
 
 ## Disposable checks
 

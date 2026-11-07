@@ -120,11 +120,12 @@ class Batch:
         for sid in client.json("GET", "/api/session/active")["data"]:
             if client.json("GET", f"/api/session/{sid}")["data"]["model"]["providerID"] == pool["provider"]:
                 busy.add(sid)
-        for row in self.d.db.execute("SELECT id,session_id,registry FROM task WHERE state NOT IN ('verified','accounted')"):
+        for row in self.d.db.execute("SELECT * FROM task WHERE state NOT IN ('verified','accounted')"):
             if row["id"] == _owner:
                 continue  # Only the checked, idle failed attempt can reuse its own inference reservation.
             binding = json.loads(row["registry"])
-            if binding["connection"] == pool["connection"] and binding["model"]["providerID"] == pool["provider"]:
+            if binding["connection"] == pool["connection"] and binding["model"]["providerID"] == pool["provider"] \
+                    and self.inference_held(row, client):
                 busy.add(row["session_id"])
         for row in self.d.db.execute("""SELECT u.*,t.registry FROM unit u JOIN task t ON t.id=u.task_id
                                       WHERE u.stage IN ('forking','configuring','learning','accounting','needs_review')"""):
@@ -132,6 +133,36 @@ class Batch:
             if (row["stage"] != "needs_review" or row["fork_id"]) and binding["connection"] == pool["connection"] and policy["model"]["providerID"] == pool["provider"]:
                 busy.add(row["fork_id"] or row["task_id"])
         return "capacity" if len(busy) + pool["external"] >= pool["capacity"] else None
+
+    def inference_held(self, row, client):
+        # A non-verified task always holds its task/unit/worktree/branch/session evidence
+        # in the ledger. Its *inference* reservation additionally ends only for a
+        # deliberately deferred, retained stopped attempt that is proven idle: the queued
+        # row explicitly in the deferred state (never for ready/active/blocked/absent
+        # queue records), terminal failure/interruption with known admission and delivery,
+        # no history gap, drift or foreign input, every continuation intent superseded, the
+        # session not natively active and without pending input/forms, and the retained
+        # tail still at the reconciled cursor (the same settled-tail proof as continuation
+        # planning). Missing any of that evidence keeps the conservative reservation. This
+        # releases inference capacity only; it never releases the worktree/branch/session
+        # guards.
+        queued = self.d.db.execute("SELECT state FROM queued WHERE task_id=?", (row["id"],)).fetchone()
+        if queued is None or queued["state"] != "deferred":
+            return True
+        if (row["terminal"] not in ("failed", "interrupted") or not row["enqueued"] or not row["delivered"]
+                or row["issue"] is not None or row["hazard"] != "Execution failed/interrupted; effects may already exist"):
+            return True
+        if not self.d.db.execute("SELECT 1 FROM sqlite_master WHERE name='attempt'").fetchone():
+            return True  # Pre-recovery ledgers have no continuation evidence to supersede.
+        states = [state for state, in self.d.db.execute("SELECT state FROM attempt WHERE task_id=?", (row["id"],))]
+        if not states or any(state != "superseded" for state in states):
+            return True
+        if not client.idle(row["session_id"]):
+            return True
+        try:
+            return client.tail(row["session_id"]) != row["cursor"]
+        except DispatchError:
+            return True  # An unprovable retained tail keeps the conservative reservation.
 
     def save(self, task_id, state, issue=None):
         self.d.db.execute("UPDATE queued SET state=?,issue=?,updated=? WHERE task_id=?", (state, issue, now(), task_id))
