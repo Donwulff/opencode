@@ -221,3 +221,10 @@ The Python dispatcher's queue/deferral mechanics, cross-module contracts (shared
 stopped-attempt hazard string, settled-tail proof, opt-in ledger versions) and
 fixture conventions live in `script/session-dispatcher/README.md`; read it before
 changing `dispatch.py`, `batch.py`, `lifecycle.py`, `recovery.py` or their tests.
+
+- The loopback test API (`test_dispatch.API`) serves only session info/events and
+  message POST over HTTP; fork/model/PATCH are simulated only by
+  `test_lifecycle.ForkClient`, so a subprocess observer (`batch.py run` with the
+  default client) can never complete a learning fork. CLI-level tests must close
+  the learning window (`wait_seconds=0`, expired `until`) so learning settles as
+  `skipped_gpu_unavailable`.
