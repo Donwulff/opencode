@@ -229,12 +229,13 @@ as an instruction by this tool.
 
 ## Bounded unattended queue
 
-`batch.py` adds two tables to the **same ledger** (version 3): frozen approved
+`batch.py` adds two tables to the **same ledger** (initially version 3): frozen approved
 assignments and provider pools. Existing task/session/worktree/branch checks,
 message IDs, event cursors and the learning lifecycle remain authoritative.
 No server, model client, container or second event store is created. Enable it
-only after all cooperating dispatcher clients use this version; older clients
-refuse version 3. This prototype has not been enabled on active task ledgers.
+only after all cooperating dispatcher clients use a compatible version. The
+queue and learning are in live use; new dependency gates below are separately
+opt-in and require a controlled observer upgrade.
 
 Approve each idle session as above, configure its provider pool, then enqueue
 bounded assignments. Use a separate pool for the learning provider when needed.
@@ -261,6 +262,62 @@ preapproved tasks as capacity permits. `ready` means a reviewable integration
 unit, **not** source correctness, passing runtime tests or an integrated branch.
 Use `review.py` for a separate bounded structured review; merging remains manual.
 
+### Task-ID prerequisites
+
+Add `--dependencies /private/prerequisites.json` to `enqueue`, for example:
+
+```json
+[
+  {"task":"source-fix","when":"integrated"},
+  {"task":"stock-comparison","when":"verified"},
+  {"task":"release-choice","when":"approved"}
+]
+```
+
+Every condition is required. `verified` means the existing Git/event verifier
+passed and any enrolled learning unit is accounted (`ready`, including an
+accurately recorded failed/skipped/no-change learning outcome). It does not
+mean source correctness or release approval. `integrated` additionally checks
+the final task/learning commit's actual ancestry in `refs/heads/main` in the
+prerequisite's repository; use an explicit `"ref":"refs/heads/dev"` for another
+local target branch. It works with manual integrations and does not merge or
+infer approval from the integration table's stage.
+
+`approved` adds an explicit operator decision bound to this dependent assignment
+and the prerequisite's immutable verified-result fingerprint:
+
+```sh
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" approve-dependency \
+  docs-003 release-choice --reason 'Reviewed the specific result and decision'
+```
+
+Approval cannot replace verification/learning accounting or authorize a merge.
+Status includes each edge's waiting/blocked reason and retained admission proof.
+Unknown future task IDs wait; cycles (including forward-reference cycles) and
+duplicate/invalid edges are rejected. Failed/deferred prerequisites hold their
+descendants; unrelated work continues under unchanged resource reservations.
+Definitions are immutable and included in idempotency checks. Satisfied commit
+pins are appended as data to the submitted prompt and covered by its existing
+prompt hash; the task's approved base is unchanged. To change an
+unsubmitted assignment, `batch.py ... defer TASK --reason ...`, then explicitly
+enqueue a new task ID. Never edit SQL to release an uncertain/admitted task.
+
+The first nonempty dependency list atomically adds `queue_dependency` and sets
+schema **6**. Existing specs/hashes are unchanged; old rows have no prerequisites.
+Do not add dependencies to a ledger while an old observer is running: stop only
+its recorded observer process at an owned handoff boundary, retain native agents,
+back up the ledger, and restart observation with the reviewed new code first.
+Older clients refuse schema 6 on open; that does not fence an already-running
+old process. The live ledger was not migrated during prototype tests.
+
+These gates do not synchronize a worktree, change its approved base, reapprove a
+session or populate new technical work. Same-worktree follow-ups still need the
+previous reservation released and a fresh explicit approval; they cannot be
+pre-enqueued on a guessed future base. PLAN remains the technical roadmap;
+SQLite owns task assignments, edges, approvals, event/Git proofs and learning
+state. HANDOVER should retain reasoning/recovery pointers rather than duplicate
+recoverable queue snapshots. Runtime/build evidence remains in its original records.
+
 Capacity counts native active sessions, unresolved ledger admissions and learning
 reservations. `--external N` reserves capacity used outside this host. Pools map
 one provider on one host; coordinate provider aliases/other hosts manually. The
@@ -283,27 +340,23 @@ missing/non-superseded continuation keep the conservative reservation. Nothing
 here resumes, edits or discards the retained record.
 
 Queue states: the runner processes `pending` (admission), `active` (observation)
-and `continuing` (handoff) rows each tick. A hold — any `blocked` queue row, or
-an active task with an unexplained issue/hazard — stops **new admissions and
-uncertain-effect retries only**: the runner keeps observing, Git-verifying,
-accounting for and running the already-enrolled learning of the other
-already-admitted units within the existing GPU, quota, window and wait/skip
-guards, reporting `phase=draining`. When the unaffected units are all settled it
-stops non-successfully on the remaining hold (`phase=blocked`, exit 1), never
-`complete`; pending tasks stay unadmitted and the held attempt is not resumed,
-edited or cleared, and the bounded run time still stops the run. A `deferred`
-row does not by itself block the tick; `deferred` and `ready` rows are left
-untouched by the runner. Deferring a retained record is explicit: move its
+and `continuing` (handoff) rows each tick. Holds and admission/recovery errors
+are scoped to their assignment and dependent tasks. Independent work continues
+with the existing worktree/branch/session guards and conservative inference
+reservations; no held attempt is resumed, edited or cleared. Provider quota and
+availability still gate their whole provider pool. Database corruption and other
+unhandled infrastructure errors stop the observer.
+
+`phase=waiting` keeps bounded observation alive for prerequisites, explicit
+approval, integration or capacity within an open window. Admitted work continues
+to be observed after cutoff (`draining`); an expired window with only pending
+work stops (`paused`). Once only held/failed dependent work remains, stop with
+`blocked`/exit 1, never `complete`. The run deadline always applies. `deferred`
+and `ready` rows stay untouched. Deferring a retained record is explicit: move its
 queued row to `deferred` (moving it to `ready` is not the deferral protocol).
 The record's worktree/branch/session reservations are held by the ledger
 indexes and the submit/approve collision checks, not by the queue state, and a
 deferred task cannot be re-approved for continuation.
-
-A synchronous exception during a new admission still stops that run as blocked,
-even when other work was already admitted. Their retained state is preserved;
-restart observation after inspecting the hold, without resending the uncertain
-admission. The draining change covers holds present at a tick boundary and
-unconfirmed admission receipts, not every admission-exception path.
 
 Native structured quota errors pause the affected pool as `quota`; rate limits
 use `limited`. Raw error bodies are not copied. Neither cooldown expiry nor a
@@ -430,7 +483,7 @@ replaced tasks are not adopted, so this cannot replay a completed replacement.
 ## Disposable checks
 
 ```sh
-python3 -m unittest -v test_dispatch test_lifecycle test_batch test_recovery
+python3 -m unittest -v test_dispatch test_lifecycle test_batch test_recovery test_integrate test_dependencies
 python3 native_smoke.py
 python3 native_smoke.py --learning
 python3 native_smoke.py --batch
@@ -464,3 +517,10 @@ interrupted its own post-commit execution, continued the same session on another
 fixture model without recreating the commit, and completed separate learning:
 nine fake-provider steps, two task admissions, retained task cursor 36. Actual
 free-provider quota exhaustion and live-investigation handoff were not exercised.
+
+Dependency checkpoint (2026-11-09, source base `1150b4bd7223`): 159 disposable
+fixtures passed with Python 3.14.4 / SQLite 3.46.1 / Git 2.53.0. Coverage includes
+v5 compatibility and opt-in v6, cycles, immutable changes, verification/learning,
+actual Git ancestry, scoped provider/recovery failures, observer approval pickup,
+crash-before-POST and lost responses. No live schema migration or dependency
+dispatch, model invocation, core/API change or container modification was tested.

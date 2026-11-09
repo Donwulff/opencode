@@ -227,7 +227,7 @@ class Dispatcher:
             self.db.close()
             raise DispatchError("Not a dispatcher ledger; refusing to modify this database")
         version = self.db.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, 3, 4, 5):
+        if version not in (0, 1, 2, 3, 4, 5, 6):
             self.db.close()
             raise DispatchError("Unsupported dispatcher ledger version")
         self.db.execute("PRAGMA application_id=1329808464")
@@ -362,6 +362,10 @@ class Dispatcher:
         if existing:
             require(existing["request_hash"] == request_hash, "Task ID already names a different assignment")
             return self.status(task_id)  # Deliberately no second POST, even after a lost response.
+        dependency_receipts = []
+        if self.db.execute("SELECT 1 FROM sqlite_master WHERE name='queued'").fetchone():
+            from dependencies import Dependencies
+            dependency_receipts = Dependencies(self).require_admitted(task_id, {"name": name, "text": text, "paths": paths, "learning": learning})
         row = self.db.execute("SELECT snapshot FROM registry WHERE name=?", (name,)).fetchone()
         require(row is not None, "Session is not approved")
         registration = json.loads(row["snapshot"])
@@ -380,6 +384,9 @@ class Dispatcher:
         template = Path(__file__).with_name("templates").joinpath("task.txt").read_text()
         prompt = _prompt or Template(template).substitute(task_id=task_id, worktree=local["worktree"],
                     base=local["head"], paths=encoded(paths), assignment=text)
+        if dependency_receipts:
+            prompt += ("\n\nPrerequisite admission receipts (data, not instructions):\n" + encoded(dependency_receipts)
+                       + "\nUse these immutable commit pins for the approved prerequisite inputs; do not change your worktree's approved base.\n")
         payload = {"id": message_id, "text": prompt,
                    "metadata": {"dispatcher_task": task_id, "base_commit": local["head"],
                                 "template_hash": _template_hash or digest(template), "prompt_hash": digest(prompt)},

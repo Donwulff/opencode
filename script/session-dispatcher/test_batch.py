@@ -85,7 +85,7 @@ class BatchTests(unittest.TestCase):
         self.second_session()
         self.batch.enqueue('new-1', 'second', 'Change pending to verified.', ['README.md'], self.policy)
         result = self.batch.tick(self.at)
-        self.assertEqual(result['phase'], 'paused', result)
+        self.assertEqual(result['phase'], 'waiting', result)
         self.assertEqual(result['waiting'], {'new-1': 'capacity'}, result)
         self.assertEqual([row['state'] for row in result['tasks'] if row['task_id'] == 'new-1'], ['pending'])
         self.assertEqual(len(self.api.posts), 1)  # The waiting task never receives an inference request.
@@ -358,7 +358,7 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(len(self.api.posts), 2)
         self.assertEqual(self.batch.status()['integration'], 'human_review_required')
 
-    def test_held_assignment_drains_other_admitted_units_without_new_admissions(self):
+    def test_held_assignment_keeps_its_reservation_while_independent_work_refills(self):
         self.configure(capacity=2)
         self.enqueue()
         self.second()
@@ -372,7 +372,7 @@ class BatchTests(unittest.TestCase):
                         error={'type': 'provider.api', 'status': 503, 'message': 'backend unavailable'})
         self.api.append('ses_fixture', 'session.execution.failed')
         result = self.batch.tick(self.at)
-        self.assertEqual(result['phase'], 'draining', result)
+        self.assertEqual(result['phase'], 'running', result)
         self.assertEqual(len(self.api.posts), 2)  # The still-pending doc-3 receives no prompt.
         self.assertEqual(self.life.unit('doc-1')['stage'], 'needs_review')
         original = dict(self.dispatcher.task('doc-1'))
@@ -387,19 +387,19 @@ class BatchTests(unittest.TestCase):
         self.git('commit', '-m', 'docs: fixture result\n\nOpenCode-Task: doc-2', path=second)
         self.api.finish('ses_second')
         result = self.batch.tick(self.at)
-        self.assertEqual(result['phase'], 'draining', result)
+        self.assertEqual(result['phase'], 'running', result)
         self.assertEqual(self.life.unit('doc-2')['stage'], 'learning', result)
         self.assertEqual(self.api.forks, 1)
         self.assertEqual(len(self.api.posts), 3)
         self.api.finish(self.life.unit('doc-2')['fork_id'])
-        # All unaffected units are settled: stop non-successfully on the remaining hold.
+        # Learning releases its slot; the independent pending task can now run.
         result = self.batch.tick(self.at)
-        self.assertEqual(result['phase'], 'blocked', result)
+        self.assertEqual(result['phase'], 'running', result)
         self.assertEqual(self.life.unit('doc-2')['stage'], 'ready')
         self.assertEqual(self.life.unit('doc-2')['detail']['learning'], 'completed_no_changes')
         self.assertEqual(self.dispatcher.task(self.life.unit('doc-2')['child_id'])['state'], 'accounted')
-        self.assertEqual([row['state'] for row in result['tasks'] if row['task_id'] == 'doc-3'], ['pending'])
-        self.assertEqual(len(self.api.posts), 3)  # doc-3 never receives a prompt.
+        self.assertEqual([row['state'] for row in result['tasks'] if row['task_id'] == 'doc-3'], ['active'])
+        self.assertEqual(len(self.api.posts), 4)  # doc-3 once; the held attempt is never resumed.
         # The held record and its worktree/evidence stay intact.
         self.assertEqual(dict(self.dispatcher.task('doc-1')), original)
         self.assertEqual(dict(self.dispatcher.db.execute("SELECT * FROM queued WHERE task_id='doc-1'").fetchone()), queued)
@@ -410,13 +410,13 @@ class BatchTests(unittest.TestCase):
             self.approve()
         with self.assertRaisesRegex(DispatchError, 'unresolved'):
             self.dispatcher.submit('doc-4', 'worker', 'Change pending to verified.', ['README.md'])
-        self.assertEqual(len(self.api.posts), 3)
+        self.assertEqual(len(self.api.posts), 4)
         # An observer reconnect drains nothing twice: no repeated task or learning delivery.
         self.dispatcher.close()
         self.dispatcher = Dispatcher(self.ledger, lambda _: test_lifecycle.ForkClient(self.api))
         self.batch = Batch(self.dispatcher)
-        self.assertEqual(self.batch.tick(self.at)['phase'], 'blocked')
-        self.assertEqual(len(self.api.posts), 3)
+        self.assertEqual(self.batch.tick(self.at)['phase'], 'running')
+        self.assertEqual(len(self.api.posts), 4)
         self.assertEqual(self.api.forks, 1)
 
     def test_cli_drains_other_admitted_units_then_stops_blocked_on_the_hold(self):

@@ -13,6 +13,7 @@ import time
 
 from dispatch import Dispatcher, DispatchError, allowed_paths, digest, encoded, now, require
 from lifecycle import Lifecycle, snapshot_policy
+from dependencies import Dependencies, normalize
 
 
 def timestamp(value):
@@ -25,6 +26,7 @@ class Batch:
     def __init__(self, dispatcher):
         self.d = dispatcher
         self.life = Lifecycle(dispatcher)
+        self.dependencies = Dependencies(dispatcher)
         # Opt-in only: ordinary dispatch/lifecycle use does not migrate a live ledger.
         with self.lock(), self.d.atomic():
             self.d.db.execute("""CREATE TABLE IF NOT EXISTS pool (
@@ -73,12 +75,15 @@ class Batch:
         require(row is not None, "Configure both task and learning provider pools before enqueueing")
         return row[0]
 
-    def enqueue(self, task_id, name, text, paths, learning):
+    def enqueue(self, task_id, name, text, paths, learning, dependencies=None):
         require(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", task_id), "Invalid task ID")
         require(text.strip() and len(text.encode()) <= 65536, "Task text must contain 1..65536 bytes")
         paths = allowed_paths(paths)
         assignment = {"name": name, "text": text, "paths": paths, "learning": learning}
-        with self.lock():
+        dependencies = normalize([] if dependencies is None else dependencies)
+        if dependencies:
+            assignment['dependencies'] = dependencies
+        with self.lock(), self.d.atomic():
             old = self.d.db.execute("SELECT * FROM queued WHERE task_id=?", (task_id,)).fetchone()
             if old:
                 require(old["request_hash"] == digest(assignment), "Task ID already names another queued assignment")
@@ -101,7 +106,22 @@ class Batch:
                         "Another queued assignment reserves this session/worktree/branch")
             self.d.db.execute("INSERT INTO queued VALUES (?,?,?,'pending',NULL,?,?)",
                               (task_id, encoded(spec), digest(assignment), now(), now()))
+            if dependencies:
+                self.dependencies.add_locked(task_id, dependencies)
         return {"task_id": task_id, "state": "pending"}
+
+    def approve_dependency(self, task_id, prerequisite, reason):
+        with self.lock(), self.d.atomic():
+            return self.dependencies.approve_locked(task_id, prerequisite, reason)
+
+    def defer_pending(self, task_id, reason):
+        require(reason.strip() and len(reason.encode()) <= 4096, "Supply a bounded deferral reason")
+        with self.lock(), self.d.atomic():
+            row = self.d.db.execute("SELECT state FROM queued WHERE task_id=?", (task_id,)).fetchone()
+            require(row and row['state'] == 'pending' and not self.d.db.execute("SELECT 1 FROM task WHERE id=?", (task_id,)).fetchone(),
+                    "Only an unsubmitted pending task can be deferred here")
+            self.save(task_id, 'deferred', reason)
+        return self.status()
 
     def gate(self, name, at):
         pool = self.pool(name)
@@ -168,8 +188,15 @@ class Batch:
         self.d.db.execute("UPDATE queued SET state=?,issue=?,updated=? WHERE task_id=?", (state, issue, now(), task_id))
 
     def status(self):
-        return {"tasks": [dict(row) for row in self.d.db.execute(
-                    "SELECT task_id,state,issue FROM queued ORDER BY created,task_id")],
+        tasks = [dict(row) for row in self.d.db.execute("SELECT task_id,state,issue FROM queued ORDER BY created,task_id")]
+        for row in tasks:
+            try:
+                dependencies = self.dependencies.states(row['task_id'])
+                if dependencies:
+                    row['dependencies'] = dependencies
+            except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
+                row['dependency_error'] = str(error)
+        return {"tasks": tasks,
                 "pools": [{key: row[key] for key in ("name", "provider", "capacity", "external", "state", "until_at")}
                           for row in self.d.db.execute("SELECT * FROM pool ORDER BY name")],
                 "integration": "human_review_required"}
@@ -194,7 +221,10 @@ class Batch:
                 from recovery import Recovery
                 recovery = Recovery(self.d, batch=self)
                 for row in self.d.db.execute("SELECT task_id FROM queued WHERE state='continuing' ORDER BY created,task_id").fetchall():
-                    recovery.advance_locked(row[0], at=at)
+                    try:
+                        recovery.advance_locked(row[0], at=at)
+                    except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
+                        self.save(row[0], 'blocked', str(error))
             # Recover observation only. A claimed assignment with no durable task intent stays held.
             for row in self.d.db.execute("SELECT * FROM queued WHERE state='active' ORDER BY created,task_id").fetchall():
                 task_id, spec = row["task_id"], json.loads(row["spec"])
@@ -220,25 +250,17 @@ class Batch:
                         self.save(task_id, "ready" if unit["stage"] == "ready" else "blocked", unit["detail"].get("issue"))
                 except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
                     self.save(task_id, "blocked", str(error))
-            active = self.d.db.execute("SELECT task_id FROM queued WHERE state='active'").fetchall()
-            held = self.d.db.execute("SELECT 1 FROM queued WHERE state='blocked'").fetchone()
-            if held or any(self.d.task(row[0])["issue"] or self.d.task(row[0])["hazard"] for row in active):
-                # A hold stops new admissions and uncertain-effect retries only. Keep
-                # observing, Git-verifying, accounting for and running the already-enrolled
-                # learning of the other already-admitted units (existing GPU, quota, window
-                # and wait/skip guards) until they settle; pending tasks are not admitted and
-                # the held attempt is not resumed, edited or cleared. Then stop
-                # non-successfully on the remaining hold rather than calling the batch
-                # complete. The bounded run time still applies.
-                reason = ("One or more assignments are held for review; no new admissions"
-                          if held else "Observation/effects uncertain; no new admissions")
-                if active:
-                    return {**self.status(), "phase": "draining", "reason": reason}
-                return {**self.status(), "phase": "blocked", "reason": reason}
             reasons = {}
+            waiting_dependencies = False
             for row in self.d.db.execute("SELECT * FROM queued WHERE state='pending' ORDER BY created,task_id").fetchall():
                 task_id, spec = row["task_id"], json.loads(row["spec"])
                 try:
+                    dependencies = self.dependencies.states(task_id)
+                    if any(item['state'] != 'satisfied' for item in dependencies):
+                        reasons[task_id] = self.gate(spec['task_pool'], at) or 'dependencies'
+                        if reasons[task_id] == 'dependencies' and not any(item['state'] == 'blocked' for item in dependencies):
+                            waiting_dependencies = True
+                        continue
                     reason = self.availability(spec["task_pool"], at)
                     if reason:
                         reasons[task_id] = reason
@@ -247,15 +269,14 @@ class Batch:
                     require(registry and json.loads(registry[0]) == spec["registration"], "Queued approval changed; review required")
                     require(snapshot_policy(spec["learning"], spec["registration"]["worktree"]) == spec["policy"], "Learning prompt/policy changed")
                     require(digest(Path(__file__).with_name("templates").joinpath("task.txt").read_text()) == spec["template_hash"], "Task template changed")
-                    self.save(task_id, "active")  # Intent before any POST; never automatically repeat an interrupted admission.
+                    with self.d.atomic():
+                        self.dependencies.admit_locked(task_id)
+                        self.save(task_id, "active")  # Intent + prerequisite proof before POST; never replay.
                     self.d.submit(task_id, spec["name"], spec["text"], spec["paths"], learning=spec["learning"])
-                    if self.d.task(task_id)["issue"] or self.d.task(task_id)["hazard"]:
-                        # This unit is already admitted and active; hold new admissions but
-                        # keep draining/observing it (GETs only, never a resend).
-                        return {**self.status(), "phase": "draining", "reason": "Admission unconfirmed; reconcile without resending"}
                 except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
                     self.save(task_id, "blocked", str(error))
-                    return {**self.status(), "phase": "blocked"}
+                    # Only this assignment is held. Existing ownership, inference
+                    # reservations and provider limits still fence all other admissions.
             result = self.status()
             pending = [row for row in result["tasks"] if row["state"] in ("pending", "continuing")]
             active = [row for row in result["tasks"] if row["state"] == "active"]
@@ -269,14 +290,21 @@ class Batch:
                 else:
                     pool = spec["task_pool"] if self.life.unit(row["task_id"])["stage"] == "task" else spec["learn_pool"]
                 reason = self.gate(pool, at)
-                if reason is None:
+                task = self.d.task(row['task_id'])
+                if reason is None and (row['state'] == 'continuing' or not task['issue'] and not task['hazard']):
                     open_work = True
                 else:
-                    reasons[row["task_id"]] = reason
+                    reasons[row["task_id"]] = reason or 'observation_uncertain'
             # Provider gates control admission, not the lifetime of observation.
             # Keep accounting active work (including bounded learning wait/skip)
             # without opening a pool, retrying a prompt or cancelling execution.
-            return {**result, "phase": "running" if open_work else "draining" if active else "paused" if pending else "complete", "waiting": reasons}
+            held = any(row['state'] == 'blocked' for row in result['tasks'])
+            dependency_blocked = any(row.get('dependencies') and any(item['state'] == 'blocked' for item in row['dependencies'])
+                                     for row in pending)
+            phase = ('running' if open_work else 'draining' if active else 'waiting' if waiting_dependencies
+                     else 'blocked' if held or dependency_blocked else 'waiting' if 'capacity' in reasons.values()
+                     else 'paused' if pending else 'complete')
+            return {**result, "phase": phase, "waiting": reasons}
 
 
 def main():
@@ -297,6 +325,14 @@ def main():
     queue.add_argument("--task-file", required=True)
     queue.add_argument("--allow", action="append", required=True)
     queue.add_argument("--learning-policy", required=True)
+    queue.add_argument("--dependencies", help="JSON list of immutable task-ID prerequisites")
+    approve = commands.add_parser('approve-dependency')
+    approve.add_argument('task_id')
+    approve.add_argument('prerequisite')
+    approve.add_argument('--reason', required=True)
+    defer = commands.add_parser('defer')
+    defer.add_argument('task_id')
+    defer.add_argument('--reason', required=True)
     commands.add_parser("status")
     commands.add_parser("tick")
     run = commands.add_parser("run")
@@ -312,7 +348,12 @@ def main():
             result = {key: value for key, value in result.items() if key != "connection"}
         elif args.command == "enqueue":
             result = batch.enqueue(args.task_id, args.session, Path(args.task_file).read_text(), args.allow,
-                                   json.loads(Path(args.learning_policy).read_text()))
+                                   json.loads(Path(args.learning_policy).read_text()),
+                                   json.loads(Path(args.dependencies).read_text()) if args.dependencies else None)
+        elif args.command == 'approve-dependency':
+            result = batch.approve_dependency(args.task_id, args.prerequisite, args.reason)
+        elif args.command == 'defer':
+            result = batch.defer_pending(args.task_id, args.reason)
         elif args.command == "status":
             result = batch.status()
         elif args.command == "tick":
@@ -323,7 +364,7 @@ def main():
             while True:
                 result = batch.tick()
                 print(encoded(result), flush=True)
-                if result["phase"] not in ("running", "draining") or time.monotonic() >= deadline:
+                if result["phase"] not in ("running", "draining", "waiting") or time.monotonic() >= deadline:
                     return 0 if result["phase"] == "complete" else 1 if result["phase"] == "blocked" else 2
                 time.sleep(min(args.interval, max(0, deadline - time.monotonic())))
         print(json.dumps(result, indent=2))

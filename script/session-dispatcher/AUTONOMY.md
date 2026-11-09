@@ -19,6 +19,28 @@ and [integration gate](LIFECYCLE.md#approved-integration-gate) in the same
 Python/stdlib/SQLite architecture. No new framework, service, database, or
 external dependency is introduced.
 
+**Implementation review, 2026-11-09.** The queue already admits an arbitrarily
+deep approved backlog, observes recovery, verifies Git and accounts for learning;
+another three-task batch is a coordination choice, not a queue limit. The live
+schema-5 ledger had no dependency fields/edges: `depends_on` below was design
+only. The bounded schema-6 prototype now adds task-ID prerequisites (verified
+delivery plus accounted learning, actual integration ancestry, or explicit
+result approval), admission proofs and assignment-scoped holds; see
+[the implemented contract](README.md#task-id-prerequisites). It is fixture-tested,
+not activated on the running observer. Recovery and integration APIs exist but
+need explicit approvals; all 20 observed integration enrollments were deferred
+in favor of manual merges. Automatic reapproval, plan import/selection, reusable
+worktree allocation and follow-up drafting remain proposals.
+
+Do not implement the proposed path-intersection `done` shortcut below: sharing
+an output path is not proof of completing an acceptance criterion. Nor does an
+agent's plan commit establish operator authorization. Dependencies gate approved
+assignments; they do not supply missing source inputs or approve future bases.
+The global-hold stop condition in §3.5 is superseded by scoped holds; conservative
+resource reservations, explicit recovery and human integration approval remain.
+Any future approved-task importer should store operational state and dependencies
+in SQLite, not create a second Git-maintained task-status board beside PLAN.
+
 ## 1. Current-state architecture
 
 ### 1.1 Components and responsibilities

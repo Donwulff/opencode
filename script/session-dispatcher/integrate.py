@@ -32,7 +32,7 @@ class Integration:
             for name, field in [('unit','task_id'),('source','worktree'),('branch','branch_key')]:
                 self.d.db.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS integration_{name} ON integration({field}) WHERE stage NOT IN ('merged','deferred')")
             self.d.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS integration_target ON integration(target) WHERE stage IN ('approved','merging','uncertain')")
-            self.d.db.execute('PRAGMA user_version=5')
+            self.d.db.execute(f"PRAGMA user_version={max(5, self.d.db.execute('PRAGMA user_version').fetchone()[0])}")
 
     @contextmanager
     def lock(self):
