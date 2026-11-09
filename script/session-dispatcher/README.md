@@ -283,14 +283,27 @@ missing/non-superseded continuation keep the conservative reservation. Nothing
 here resumes, edits or discards the retained record.
 
 Queue states: the runner processes `pending` (admission), `active` (observation)
-and `continuing` (handoff) rows each tick, and returns `phase=blocked` before
-any new admission whenever any row is `blocked`. A `deferred` row does not by
-itself block the tick; `deferred` and `ready` rows are left untouched by the
-runner. Deferring a retained record is explicit: move its queued row to
-`deferred` (moving it to `ready` is not the deferral protocol). The record's
-worktree/branch/session reservations are held by the ledger indexes and the
-submit/approve collision checks, not by the queue state, and a deferred task
-cannot be re-approved for continuation.
+and `continuing` (handoff) rows each tick. A hold — any `blocked` queue row, or
+an active task with an unexplained issue/hazard — stops **new admissions and
+uncertain-effect retries only**: the runner keeps observing, Git-verifying,
+accounting for and running the already-enrolled learning of the other
+already-admitted units within the existing GPU, quota, window and wait/skip
+guards, reporting `phase=draining`. When the unaffected units are all settled it
+stops non-successfully on the remaining hold (`phase=blocked`, exit 1), never
+`complete`; pending tasks stay unadmitted and the held attempt is not resumed,
+edited or cleared, and the bounded run time still stops the run. A `deferred`
+row does not by itself block the tick; `deferred` and `ready` rows are left
+untouched by the runner. Deferring a retained record is explicit: move its
+queued row to `deferred` (moving it to `ready` is not the deferral protocol).
+The record's worktree/branch/session reservations are held by the ledger
+indexes and the submit/approve collision checks, not by the queue state, and a
+deferred task cannot be re-approved for continuation.
+
+A synchronous exception during a new admission still stops that run as blocked,
+even when other work was already admitted. Their retained state is preserved;
+restart observation after inspecting the hold, without resending the uncertain
+admission. The draining change covers holds present at a tick boundary and
+unconfirmed admission receipts, not every admission-exception path.
 
 Native structured quota errors pause the affected pool as `quota`; rate limits
 use `limited`. Raw error bodies are not copied. Neither cooldown expiry nor a

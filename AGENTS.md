@@ -222,5 +222,10 @@ stopped-attempt hazard string, settled-tail proof, opt-in ledger versions) and
 fixture conventions live in `script/session-dispatcher/README.md`; read it before
 changing `dispatch.py`, `batch.py`, `lifecycle.py`, `recovery.py` or their tests.
 
-- The full dispatcher fixture suite (`python3 -m unittest test_dispatch test_lifecycle test_batch test_recovery test_integrate`) takes ~5.5 min (134 tests, ~339 s measured 2026-11-08), longer than a 300 s foreground command timeout; run it in the background.
-- Under the `opencode-safe` git guard, the seven `test_integrate` tests that perform a real `git merge` fail with "blocked git subcommand" (exit 2) — an environmental failure, not a regression; the other 127 tests pass and read-only `git merge-tree --write-tree` is allowed. Do not "fix" passing code to work around the blocked merge.
+- The full dispatcher fixture suite (`python3 -m unittest test_dispatch test_lifecycle test_batch test_recovery test_integrate`) took ~5.5 min (134 tests, ~339 s measured 2026-11-08); allow the process to outlive a short foreground command timeout.
+- Under the `opencode-safe` git guard, seven `test_integrate` tests that perform a real `git merge` failed with "blocked git subcommand" (exit 2) on 2026-11-08. Preserve the guard failure as an environment limitation; do not alter application correctness checks to make it pass.
+- The loopback HTTP fixture (`test_dispatch.API`) lacks fork/model/PATCH support;
+  those operations are simulated by `test_lifecycle.ForkClient`. CLI subprocess
+  tests using that HTTP fixture must either extend its contract or close the
+  learning window (`wait_seconds=0`, expired `until`) and assert the explicit
+  `skipped_gpu_unavailable` outcome. A fixture limitation is not live API behavior.
