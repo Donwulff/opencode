@@ -1,17 +1,21 @@
 # Resource admission for the manual dispatcher
 
-Implementation note (2026-11-05): [the bounded queue](README.md#bounded-unattended-queue)
-now implements explicitly approved pending assignments, provider pools, finite
-availability windows, capacity accounting and structured quota/rate-limit pauses.
-It reuses [the learning lifecycle](LIFECYCLE.md). It is fixture/native-tested, not enabled
-on active task ledgers. Direct task submission remains manually resource-gated.
+Current implementation status (reviewed 2026-11-10): [the bounded queue](README.md#bounded-unattended-queue)
+is in live use with approved assignments, provider pools, finite availability
+windows, capacity accounting, quota/rate-limit pauses and the
+[learning lifecycle](LIFECYCLE.md). [Task-ID prerequisites](README.md#task-id-prerequisites)
+are implemented and fixture-tested; schema 6 remains opt-in and was not enabled
+on the inspected schema-5 live ledger. Direct task submission remains manually
+resource-gated. The [current roadmap](AUTONOMY.md) owns the implementation milestones.
 
-The remaining sections retain the broader design and historical operating
-observations from 2026-11-02. Tool/container leases, recurring calendars, task
-selection and automatic integration remain unimplemented. The separate
-[checkpointed continuation](README.md#checkpointed-task-continuation) now supports
-an explicitly approved stopped-task handoff, not a standing automatic retry policy. Current operator availability controls admissions; Codex
-review remains a separate bounded command. Do not resubmit existing assignments.
+The sections below retain the broader resource design and dated operating
+observations from 2026-11-02. Their context sizes, availability notices and
+concurrency suggestions are historical, not current admissions policy. The
+current Qwen cap is three including learning; exact availability and externally
+occupied capacity come from the approved live pool records. Tool/container leases,
+recurring calendars and automatic worktree reuse remain proposals. Existing
+[checkpointed continuation](README.md#checkpointed-task-continuation) requires an
+explicit approved handoff; no standing automatic retry policy is active.
 
 ## Starting policy
 

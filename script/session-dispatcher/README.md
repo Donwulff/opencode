@@ -18,8 +18,8 @@ The opt-in bounded queue below drains approved assignments through the same
 ledger and lifecycle, with provider capacity, availability and quota gates.
 The broader [resource admission design](RESOURCE_CONTROL.md) remains partly
 unimplemented: no task selection, tool/container leases or automatic retries.
-The [plan-driven unattended operation design](AUTONOMY.md) is a planning
-document for closing those gaps; it changes no behavior. Explicit
+The [unattended-operation roadmap](AUTONOMY.md) separates live capabilities,
+fixture-tested extensions and staged implementation work; it changes no behavior. Explicit
 checkpointed continuation and model handoff are described below.
 Direct `dispatch.py submit` remains manually resource-gated.
 
