@@ -286,6 +286,26 @@ Multiple reasons for one reserved session count as one occupied slot. Accounted
 historical failures retain their evidence and are distinguished from current
 holds; manually closed checkpoints are not labelled verified deliveries.
 
+Add an explicit loopback inference endpoint to check the actual backend as well:
+
+```sh
+python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" status --live \
+  --run-dir "$DISPATCH_STATE/runs/YOUR_RUN" --inference-url http://localhost:8040
+```
+
+This makes bounded GETs to `/health`, `/v1/models` and `/metrics`, refuses redirects
+and submits no generation. It shows advertised models, current running/waiting
+requests, KV-cache usage/capacity, preemptions and cumulative prompt/generation
+counters when exported by vLLM. Missing metrics remain unknown. Task lines include
+the event cursor and tool-result count for the current observed run; old attempts
+are not counted as new work. Tool outcomes and token counters do not prove a
+build/test passed. Status stays read-only, never reopens a pool or retries work.
+Use `--json` for structured checks; exit 0 means the report was generated, even
+when `inference.state` is unavailable. No raw error bodies or configuration labels
+are printed. Health is a reachability check; KV capacity and idle memory do not
+establish peak GPU headroom during real prefill, decoding or speculative work.
+Validate the requested concurrency with real assignments after a server change.
+
 Use one private run directory outside all registered worktrees. Set the existing
 pool admission deadline first, then choose a longer observation lifetime for
 draining work already admitted:

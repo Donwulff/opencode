@@ -254,6 +254,15 @@ def text_report(value):
     runner = value['runner']
     lines = [f"Observer: {runner['state']} (last successful tick: {runner.get('last_successful_tick_at') or 'unknown'})",
              'Queue: ' + ', '.join(f'{k}={v}' for k, v in sorted(value['counts']['queue'].items()))]
+    if 'inference' in value:
+        probe = value['inference']
+        lines.append('Inference: ' + probe['state'] + '; models=' + json.dumps(probe['models']))
+        lines.append('  endpoints: ' + ', '.join(path + '=' + check['state']
+                                                for path, check in probe['checks'].items()))
+        lines.append('  metrics: ' + (', '.join(name + '=' + json.dumps(samples)
+                                               for name, samples in probe['metrics'].items()) or 'unknown'))
+        lines.append('  cache capacity: ' + (json.dumps(probe['cache'], sort_keys=True) if probe['cache'] else 'unknown'))
+        lines.append('  ' + probe['limits'])
     for pool in value['pools']:
         lines.append(f"Pool {pool['name']}: {pool['admission_gate']}, capacity={pool['capacity']}, "
                      f"external={pool['external']}, occupied={pool.get('occupied', 'unknown')}, "
@@ -263,7 +272,10 @@ def text_report(value):
     for task in value['tasks']:
         if task['queue_state'] != 'ready' and task['worktree_reserved']:
             lines.append(f"{task['task_id']}: {task['queue_state']}, stage={task['stage']}, "
-                         f"task={task['task_state']}, hold={task.get('hold_reason', 'none')}")
+                         f"task={task['task_state']}, hold={task.get('hold_reason', 'none')}, "
+                         f"cursor={task['event_cursor']}, tool_results="
+                         + (str(sum(task['run_tool_outcomes'].values()))
+                            if task.get('run_tool_outcomes') is not None else 'unknown'))
     for session in value['native_sessions']:
         if session.get('form_count') or session['state'] == 'unknown':
             lines.append(f"{session['session_id']}: pending_forms={session.get('form_count', 'unknown')}")
@@ -288,6 +300,7 @@ def main():
         if name == 'status':
             command.add_argument('--live', action='store_true')
             command.add_argument('--json', action='store_true')
+            command.add_argument('--inference-url', help='GET-only loopback inference health/model/metrics URL')
     args = parser.parse_args()
     try:
         if args.command == 'run':
@@ -298,7 +311,7 @@ def main():
             result = request_stop(args.db, args.run_dir)
         else:
             from operations import report
-            result = report(args.db, live=args.live, run_dir=args.run_dir)
+            result = report(args.db, live=args.live, run_dir=args.run_dir, inference_url=args.inference_url)
             if not args.json:
                 print(text_report(result))
                 return 0

@@ -4,14 +4,66 @@ from contextlib import closing
 from datetime import datetime, timezone
 import http.client
 import json
+import math
+import re
 from pathlib import Path
 import sqlite3
+import urllib.error
+import urllib.parse
+import urllib.request
 
 from batch import capacity_members, timestamp
-from dispatch import Client, DispatchError, require
+from dispatch import Client, DispatchError, NoRedirect, require
 
 
-def report(database, *, live=False, run_dir=None, at=None, client_factory=Client):
+def inference_status(url, *, timeout=3):
+    """Bounded local metadata GETs only; never submit inference or change admission."""
+    parsed = urllib.parse.urlsplit(url)
+    require(parsed.scheme == 'http' and parsed.hostname in ('localhost', '127.0.0.1', '::1')
+            and not parsed.username and not parsed.password and not parsed.query and not parsed.fragment
+            and parsed.path in ('', '/'), 'Inference status requires an explicit loopback HTTP root URL')
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    result = {'checked_at': datetime.now(timezone.utc).isoformat(), 'checks': {},
+              'models': [], 'metrics': {}, 'cache': {},
+              'limits': 'Metadata only: no generation test or total GPU-memory headroom measurement.'}
+    names = {'num_requests_running', 'num_requests_waiting', 'kv_cache_usage_perc',
+             'num_preemptions_total', 'prompt_tokens_total', 'generation_tokens_total'}
+    for path, limit in [('/health', 1024), ('/v1/models', 65536), ('/metrics', 1024 * 1024)]:
+        try:
+            request = urllib.request.Request(url.rstrip('/') + path, method='GET')
+            with opener.open(request, timeout=timeout) as response:
+                raw, status = response.read(limit + 1), response.status
+            require(len(raw) <= limit, 'Inference metadata response exceeds read limit')
+            if path == '/v1/models':
+                data = json.loads(raw)['data']
+                require(isinstance(data, list) and 0 < len(data) <= 50, 'Invalid model metadata')
+                require(all(isinstance(item, dict) and isinstance(item.get('id'), str)
+                            and len(item['id']) <= 256 for item in data), 'Invalid model ID')
+                result['models'] = [item['id'] for item in data]
+            elif path == '/metrics':
+                for line in raw.decode().splitlines():
+                    match = re.fullmatch(r'vllm:([a-z_]+)(?:\{.*\})?\s+(\S+)(?:\s+\d+)?', line)
+                    if match and match[1] in names:
+                        value = float(match[2])
+                        if math.isfinite(value):
+                            result['metrics'].setdefault(match[1], []).append(value)
+                    if line.startswith('vllm:cache_config_info{'):
+                        for name in ['kv_cache_memory_bytes', 'kv_cache_size_tokens', 'kv_cache_max_concurrency']:
+                            found = re.search(r'(?:[,{])' + name + r'="([0-9.eE+-]+)"', line)
+                            if found and math.isfinite(float(found[1])):
+                                result['cache'].setdefault(name, []).append(float(found[1]))
+            result['checks'][path] = {'state': 'ok', 'http_status': status}
+        except (DispatchError, OSError, ValueError, KeyError, TypeError, http.client.HTTPException) as error:
+            result['checks'][path] = {'state': 'unavailable', 'error_type': type(error).__name__}
+            if isinstance(error, urllib.error.HTTPError):
+                result['checks'][path]['http_status'] = error.code
+                error.close()
+    result['state'] = ('responding' if all(result['checks'][path]['state'] == 'ok'
+                                         for path in ('/health', '/v1/models')) else 'unavailable')
+    return result
+
+
+def report(database, *, live=False, run_dir=None, at=None, client_factory=Client, inference_url=None):
     at = at or datetime.now(timezone.utc)
     path = Path(database).absolute()
     require(not path.is_symlink() and path.is_file(), "Existing ordinary ledger required")
@@ -65,6 +117,13 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
                     'has_hazard': bool(task and task['hazard']),
                     'dependencies': spec.get('dependencies', []),
                     'worktree_reserved': bool(reservations), 'reservation_reasons': reservations}
+            # Outcomes belong to the current observed run, not historical task attempts.
+            item['run_tool_outcomes'] = None
+            if task and task['run_start'] is not None:
+                item['run_tool_outcomes'] = dict(db.execute(
+                    "SELECT type,count(*) FROM observed WHERE task_id=? AND seq>? "
+                    "AND type IN ('session.tool.success','session.tool.failed') GROUP BY type",
+                    (task['id'], task['run_start'])))
             if row['state'] in ('blocked', 'deferred') or item['has_issue'] or item['has_hazard']:
                 item['hold_reason'] = ('historical_accounted' if not reservations and task and task['state'] == 'accounted'
                                        else 'deferred_unsent' if not reservations and not task
@@ -124,6 +183,8 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
                   'limits': ['Ledger update time is not a successful native observation timestamp.',
                              'Offline occupancy is unknown. Live snapshots do not authorize dispatch.',
                              'Issue bodies, prompts, tool output and connection credentials are omitted.']}
+        if inference_url is not None:
+            result['inference'] = inference_status(inference_url)
         if 'integration' in tables:
             result['integration_counts'] = dict(db.execute('SELECT stage,count(*) FROM integration GROUP BY stage'))
         return result

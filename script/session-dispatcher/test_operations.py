@@ -153,6 +153,32 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual(value['pools'][0]['occupied'], 0)
         self.assertFalse(value['ready_receipts'][0]['verified_delivery'])
 
+    def test_cli_inference_status_preserves_ledger_and_sends_no_prompts(self):
+        from test_inference_status import InferenceFixture
+        self.enqueue()
+        before = self.ledger.read_bytes()
+        with InferenceFixture() as fixture:
+            result = subprocess.run([sys.executable, str(Path(__file__).with_name('runner.py')), '--db', str(self.ledger),
+                                     'status', '--json', '--inference-url', fixture.url],
+                                    capture_output=True, text=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['inference']['state'], 'responding')
+        self.assertEqual(self.ledger.read_bytes(), before)
+        self.assertEqual(self.api.posts, [])
+        self.assertEqual(len(fixture.calls), 3)
+
+    def test_tool_results_are_scoped_to_current_observed_run(self):
+        self.enqueue()
+        self.batch.tick(self.at)
+        self.api.finish(terminal=None)
+        self.api.append('ses_fixture', 'session.tool.success', id='old_tool')
+        self.dispatcher.reconcile('doc-1')
+        value = report(self.ledger)
+        self.assertEqual(value['tasks'][0]['run_tool_outcomes'], {'session.tool.success': 1})
+        self.api.append('ses_fixture', 'session.execution.started')
+        self.dispatcher.reconcile('doc-1')
+        self.assertEqual(report(self.ledger)['tasks'][0]['run_tool_outcomes'], {})
+
     def test_stale_heartbeat_is_unknown_even_with_lock_and_plausible_pid(self):
         root = self.root / 'runner'
         root.mkdir(mode=0o700)
