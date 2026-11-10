@@ -22,6 +22,61 @@ def timestamp(value):
     return stamp.astimezone(timezone.utc)
 
 
+def inference_held(db, row, client):
+    # A non-verified task always holds its task/unit/worktree/branch/session evidence
+    # in the ledger. Its *inference* reservation additionally ends only for a
+    # deliberately deferred, retained stopped attempt that is proven idle: the queued
+    # row explicitly in the deferred state (never for ready/active/blocked/absent
+    # queue records), terminal failure/interruption with known admission and delivery,
+    # no history gap, drift or foreign input, every continuation intent superseded, the
+    # session not natively active and without pending input/forms, and the retained
+    # tail still at the reconciled cursor (the same settled-tail proof as continuation
+    # planning). Missing any of that evidence keeps the conservative reservation. This
+    # releases inference capacity only; it never releases the worktree/branch/session
+    # guards.
+    queued = db.execute("SELECT state FROM queued WHERE task_id=?", (row["id"],)).fetchone()
+    if queued is None or queued["state"] != "deferred":
+        return True
+    if (row["terminal"] not in ("failed", "interrupted") or not row["enqueued"] or not row["delivered"]
+            or row["issue"] is not None or row["hazard"] != "Execution failed/interrupted; effects may already exist"):
+        return True
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name='attempt'").fetchone():
+        return True  # Pre-recovery ledgers have no continuation evidence to supersede.
+    states = [state for state, in db.execute("SELECT state FROM attempt WHERE task_id=?", (row["id"],))]
+    if not states or any(state != "superseded" for state in states):
+        return True
+    if not client.idle(row["session_id"]):
+        return True
+    try:
+        return client.tail(row["session_id"]) != row["cursor"]
+    except DispatchError:
+        return True  # An unprovable retained tail keeps the conservative reservation.
+
+
+def capacity_members(db, pool, client, *, owner=None):
+    """Read the same conservative reservations for admission and operational status."""
+    busy = {}
+    def add(sid, kind, task_id=None, stage=None):
+        busy.setdefault(sid, []).append({"kind": kind, "task_id": task_id, "stage": stage})
+    for sid in client.json("GET", "/api/session/active")["data"]:
+        if client.json("GET", f"/api/session/{sid}")["data"]["model"]["providerID"] == pool["provider"]:
+            add(sid, "native_active")
+    for row in db.execute("SELECT * FROM task WHERE state NOT IN ('verified','accounted')"):
+        if row["id"] == owner:
+            continue  # Only an explicitly checked stopped attempt can reuse its own slot.
+        binding = json.loads(row["registry"])
+        if binding["connection"] == pool["connection"] and binding["model"]["providerID"] == pool["provider"] \
+                and inference_held(db, row, client):
+            add(row["session_id"], "unresolved_task", row["id"])
+    for row in db.execute("""SELECT u.*,t.registry FROM unit u JOIN task t ON t.id=u.task_id
+                           WHERE u.stage IN ('forking','configuring','learning','accounting','needs_review')"""):
+        policy, binding = json.loads(row["config"]), json.loads(row["registry"])
+        if (row["stage"] != "needs_review" or row["fork_id"]) and binding["connection"] == pool["connection"] \
+                and policy["model"]["providerID"] == pool["provider"]:
+            add(row["fork_id"] or row["task_id"], "learning_unit", row["task_id"], row["stage"])
+    return busy
+
+
 class Batch:
     def __init__(self, dispatcher):
         self.d = dispatcher
@@ -136,53 +191,8 @@ class Batch:
             return reason
         pool = self.pool(name)
         client = self.d.client_factory(pool["connection"])
-        busy = set()
-        for sid in client.json("GET", "/api/session/active")["data"]:
-            if client.json("GET", f"/api/session/{sid}")["data"]["model"]["providerID"] == pool["provider"]:
-                busy.add(sid)
-        for row in self.d.db.execute("SELECT * FROM task WHERE state NOT IN ('verified','accounted')"):
-            if row["id"] == _owner:
-                continue  # Only the checked, idle failed attempt can reuse its own inference reservation.
-            binding = json.loads(row["registry"])
-            if binding["connection"] == pool["connection"] and binding["model"]["providerID"] == pool["provider"] \
-                    and self.inference_held(row, client):
-                busy.add(row["session_id"])
-        for row in self.d.db.execute("""SELECT u.*,t.registry FROM unit u JOIN task t ON t.id=u.task_id
-                                      WHERE u.stage IN ('forking','configuring','learning','accounting','needs_review')"""):
-            policy, binding = json.loads(row["config"]), json.loads(row["registry"])
-            if (row["stage"] != "needs_review" or row["fork_id"]) and binding["connection"] == pool["connection"] and policy["model"]["providerID"] == pool["provider"]:
-                busy.add(row["fork_id"] or row["task_id"])
+        busy = capacity_members(self.d.db, pool, client, owner=_owner)
         return "capacity" if len(busy) + pool["external"] >= pool["capacity"] else None
-
-    def inference_held(self, row, client):
-        # A non-verified task always holds its task/unit/worktree/branch/session evidence
-        # in the ledger. Its *inference* reservation additionally ends only for a
-        # deliberately deferred, retained stopped attempt that is proven idle: the queued
-        # row explicitly in the deferred state (never for ready/active/blocked/absent
-        # queue records), terminal failure/interruption with known admission and delivery,
-        # no history gap, drift or foreign input, every continuation intent superseded, the
-        # session not natively active and without pending input/forms, and the retained
-        # tail still at the reconciled cursor (the same settled-tail proof as continuation
-        # planning). Missing any of that evidence keeps the conservative reservation. This
-        # releases inference capacity only; it never releases the worktree/branch/session
-        # guards.
-        queued = self.d.db.execute("SELECT state FROM queued WHERE task_id=?", (row["id"],)).fetchone()
-        if queued is None or queued["state"] != "deferred":
-            return True
-        if (row["terminal"] not in ("failed", "interrupted") or not row["enqueued"] or not row["delivered"]
-                or row["issue"] is not None or row["hazard"] != "Execution failed/interrupted; effects may already exist"):
-            return True
-        if not self.d.db.execute("SELECT 1 FROM sqlite_master WHERE name='attempt'").fetchone():
-            return True  # Pre-recovery ledgers have no continuation evidence to supersede.
-        states = [state for state, in self.d.db.execute("SELECT state FROM attempt WHERE task_id=?", (row["id"],))]
-        if not states or any(state != "superseded" for state in states):
-            return True
-        if not client.idle(row["session_id"]):
-            return True
-        try:
-            return client.tail(row["session_id"]) != row["cursor"]
-        except DispatchError:
-            return True  # An unprovable retained tail keeps the conservative reservation.
 
     def save(self, task_id, state, issue=None):
         self.d.db.execute("UPDATE queued SET state=?,issue=?,updated=? WHERE task_id=?", (state, issue, now(), task_id))
@@ -333,7 +343,11 @@ def main():
     defer = commands.add_parser('defer')
     defer.add_argument('task_id')
     defer.add_argument('--reason', required=True)
-    commands.add_parser("status")
+    status = commands.add_parser("status")
+    status.add_argument("--operations", action="store_true", help="Read-only operational view without reconciliation")
+    status.add_argument("--live", action="store_true", help="GET-only native occupancy/form snapshots")
+    status.add_argument("--run-dir")
+    status.add_argument("--text", action="store_true")
     commands.add_parser("tick")
     run = commands.add_parser("run")
     run.add_argument("--seconds", type=int, default=3600)
@@ -341,6 +355,14 @@ def main():
     args = parser.parse_args()
     dispatcher = None
     try:
+        if args.command == "status" and args.operations:
+            from operations import report
+            from runner import text_report
+            result = report(args.db, live=args.live, run_dir=args.run_dir)
+            print(text_report(result) if args.text else json.dumps(result, indent=2))
+            return 0
+        if args.command == "status":
+            require(not (args.live or args.run_dir or args.text), "Use --operations for operational status flags")
         dispatcher = Dispatcher(args.db)
         batch = Batch(dispatcher)
         if args.command == "pool":
@@ -360,13 +382,15 @@ def main():
             result = batch.tick()
         else:
             require(0 <= args.seconds <= 86400 and 1 <= args.interval <= 60, "Invalid run bounds")
-            deadline = time.monotonic() + args.seconds
-            while True:
-                result = batch.tick()
-                print(encoded(result), flush=True)
-                if result["phase"] not in ("running", "draining", "waiting") or time.monotonic() >= deadline:
-                    return 0 if result["phase"] == "complete" else 1 if result["phase"] == "blocked" else 2
-                time.sleep(min(args.interval, max(0, deadline - time.monotonic())))
+            from runner import observer_lock
+            with observer_lock(args.db):
+                deadline = time.monotonic() + args.seconds
+                while True:
+                    result = batch.tick()
+                    print(encoded(result), flush=True)
+                    if result["phase"] not in ("running", "draining", "waiting") or time.monotonic() >= deadline:
+                        return 0 if result["phase"] == "complete" else 1 if result["phase"] == "blocked" else 2
+                    time.sleep(min(args.interval, max(0, deadline - time.monotonic())))
         print(json.dumps(result, indent=2))
         return 1 if result.get("phase") == "blocked" else 0
     except KeyboardInterrupt:

@@ -11,8 +11,8 @@ It is an implementation roadmap, not authorization to change live assignments.
 The goal is feasible by extending the existing dispatcher. It already drains a
 deep **approved** backlog through execution, Git verification and learning.
 Repeatedly supplying only three tasks was an operating practice, not a queue
-limit. The remaining work is safe context reuse, durable runner operation,
-recovery policy and review preparation. A new general controller, task database
+limit. M1 below now supplies opt-in runner/status support. The remaining work is
+safe context reuse, recovery policy and review preparation. A new general controller, task database
 or inference client would duplicate working behavior.
 
 Automatic admission and selection of new technical investigations are different
@@ -137,7 +137,11 @@ Acceptance: kill/restart the observer at the supported boundary; no duplicate
 prompt, lost cursor or interrupted agent. Independent tasks continue around a
 held unit. Report stale/unknown observation honestly. Test admission cutoff and
 later drain deadline separately. No model call is needed for this milestone.
-This is the recommended next implementation step.
+Implemented as opt-in [runner/status support](README.md#operational-status-and-bounded-observer)
+in `runner.py`, `operations.py` and `batch.py`, with dedicated disposable-process
+fixtures in `test_runner.py` / `test_operations.py`. No ledger schema change or
+live observer takeover is performed. Adoption needs the documented owned handoff;
+M2 is the next implementation milestone after that operational check.
 
 ### M2 — Import a complete approved backlog
 

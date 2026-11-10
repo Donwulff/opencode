@@ -262,6 +262,89 @@ preapproved tasks as capacity permits. `ready` means a reviewable integration
 unit, **not** source correctness, passing runtime tests or an integrated branch.
 Use `review.py` for a separate bounded structured review; merging remains manual.
 
+### Operational status and bounded observer
+
+Milestone 1 adds a read-only operational view and a process wrapper around the
+same `Batch.tick()` loop. It adds no ledger tables, server or model calls.
+Plain `batch.py status` retains its existing output. For operational JSON use
+`status --operations`; add `--text` for a short view and `--live` for GET-only
+native capacity/inbox/form snapshots:
+
+```sh
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" status --operations --live --text
+```
+
+The report distinguishes task and learning stages, names conservative capacity
+reservations, counts pending forms without copying their text, and points to
+immutable ready-unit commits. It reads a consistent in-memory copy so slow
+native GETs do not hold a live ledger reader lock. Offline occupancy is **unknown**, not zero.
+Native snapshots have observation timestamps; task `updated` is only a ledger
+update time. Ready receipt references are historical, not fresh verification of
+a worktree that may since have advanced. Prompts, tool output, credentials and
+raw issue bodies are omitted; issue IDs point back to existing task status.
+Multiple reasons for one reserved session count as one occupied slot. Accounted
+historical failures retain their evidence and are distinguished from current
+holds; manually closed checkpoints are not labelled verified deliveries.
+
+Use one private run directory outside all registered worktrees. Set the existing
+pool admission deadline first, then choose a longer observation lifetime for
+draining work already admitted:
+
+```sh
+export DISPATCH_RUN="$DISPATCH_STATE/runs/night-001"
+python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" start \
+  --run-dir "$DISPATCH_RUN" --seconds 14400 --interval 5
+python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" status --run-dir "$DISPATCH_RUN" --live
+# Stop observation at the next tick boundary; this does not pause pools or cancel agents:
+python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" stop --run-dir "$DISPATCH_RUN"
+# Restart/reconcile the same run, retaining its original absolute deadline:
+python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" start --run-dir "$DISPATCH_RUN"
+```
+
+`run` is the foreground equivalent of `start`, suitable for an existing process
+supervisor. `start` detaches with a new POSIX session and a private `observer.log`;
+fixtures verify it survives its launcher. It does not install supervision or
+promise survival of host reboot, logout policy or destruction of its containing
+process group/cgroup. Resume explicitly under the same run directory after those
+events. A startup acknowledgement means ownership was recorded, not task success.
+No startup error or unconfirmed startup is automatically retried.
+
+The run directory holds immutable deadline/config plus per-attempt code hashes,
+runtime/schema identity, PID/start/boot/namespace diagnostics, heartbeat, last
+successful tick, and exit reason. Records are private and atomically replaced.
+The ledger remains authoritative for assignments and effects. A stale heartbeat
+or unverifiable owner is unknown; a released ownership lock without an exit
+receipt is an unobserved exit. Missing PID visibility is not death or permission
+to signal anything. `stop` is bound to one attempt and sends no process signal.
+SIGTERM/SIGINT also stop only this observer at a tick boundary.
+
+New runners and new `batch.py run` processes share a lifetime observer lock,
+separate from the existing short ledger/tick lock. Another observer is refused,
+including through a parent-directory path alias. **Already running older
+observers do not hold this lock.** At first adoption, stop only the established
+observer through its supported ownership/exit procedure, preserve native agents,
+then start the new runner. Do not adopt an uncertain task, clear a hold or launch
+a second observer merely because no new-format heartbeat exists.
+
+Pausing admissions remains the existing explicit `pool ... --state paused`
+operation, preserving its binding/capacity/external occupancy. Observation can
+continue after that pause or the admission cutoff. Stopping observation does not
+cancel native execution. Restart reconciles existing queued intents before new
+admission; it never resends an uncertain prompt. The finite observer deadline
+still applies: restart cannot extend it; a fresh window requires a new run
+directory and explicit resource availability. Exit codes are 0 for complete or
+requested observer stop (distinguished by `exit_reason`), 1 for blocked/error,
+and 2 for paused admission or observation deadline.
+
+M1 validation (2026-11-10): the 174-test full fixture run passed, followed by
+a 21-test focused run after final status/snapshot/schema-guard refinements.
+Disposable real-process fixtures cover launcher survival, duplicate owners,
+SIGKILL/restart without resend, cutoff/draining, stop without agent cancellation,
+and independent work around a hold. Status fixtures cover secrets, stale
+heartbeats, read-only schema preservation and concurrent writes during slow GETs.
+The current schema-5 live ledger was inspected through GET-only status; its
+runner was not replaced and no live task, permission, model or pool was changed.
+
 ### Task-ID prerequisites
 
 Add `--dependencies /private/prerequisites.json` to `enqueue`, for example:
