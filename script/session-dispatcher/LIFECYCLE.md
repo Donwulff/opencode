@@ -53,7 +53,9 @@ Watch exits 0 when all units are ready, 1 for a review hold/error, or 2 when its
 time bound ends with unfinished units. Status output distinguishes those states.
 
 Admission counts active sessions using the learning provider and this ledger's
-fork reservations, including queued and uncertain admissions. Maximum is 1–3.
+fork reservations, including queued and uncertain admissions. Maximum is 1–4;
+the default remains three. A fourth slot requires explicit resource authorization
+and a matching provider-pool capacity. Existing policy snapshots stay unchanged.
 This is a conservative cooperative limit, not KV-memory measurement. It cannot
 see other inference clients, provider aliases on the same GPU, queued work from
 other dispatchers or other OpenCode hosts. Use one host, one ledger and the

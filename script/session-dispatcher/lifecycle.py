@@ -36,7 +36,7 @@ def snapshot_policy(policy, worktree):
     require(not re.search(r"^\s*!`", text, re.M), "Executable command expansion is not supported")
     maximum = policy.get("max_active", 3)
     wait = policy.get("wait_seconds", 21600)
-    require(type(maximum) is int and 1 <= maximum <= 3, "Learning concurrency must be 1..3")
+    require(type(maximum) is int and 1 <= maximum <= 4, "Learning concurrency must be 1..4")
     require(type(wait) is int and 0 <= wait <= 86400, "GPU wait must be 0..86400 seconds")
     wrapper = Path(__file__).with_name("templates").joinpath("learn.txt").read_text()
     return {"model": model, "allow": paths, "max_active": maximum, "wait_seconds": wait,

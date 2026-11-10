@@ -238,6 +238,18 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.life.advance('doc-1', True)['stage'], 'await_gpu')
         self.assertEqual(self.api.forks, 0)
 
+    def test_four_session_learning_capacity_admits_after_one_slot_frees(self):
+        self.policy['max_active'] = 4
+        self.completed()
+        for index in range(4):
+            sid = self.api.session(self.repo, 'ses_busy_' + str(index))
+            self.api.sessions[sid]['active'] = True
+        self.assertEqual(self.life.advance('doc-1', True)['stage'], 'await_gpu')
+        self.assertEqual(self.api.forks, 0)
+        self.api.sessions['ses_busy_3']['active'] = False
+        self.assertEqual(self.life.advance('doc-1', True)['stage'], 'learning')
+        self.assertEqual(self.api.forks, 1)
+
     def test_snapshot_is_immutable_and_duplicate_submit_does_not_send(self):
         self.submit()
         Path(self.policy['prompt']).write_text('New unreviewed prompt\n')
@@ -265,7 +277,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(len(self.api.posts), 1)
 
     def test_learning_policy_scope_and_concurrency_rejected(self):
-        for change in ({'allow': ['README.md']}, {'max_active': 4}):
+        for change in ({'allow': ['README.md']}, {'max_active': 5}, {'max_active': True}):
             with self.assertRaises(DispatchError):
                 snapshot_policy({**self.policy, **change}, self.repo)
 
