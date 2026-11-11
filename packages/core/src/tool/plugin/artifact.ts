@@ -8,6 +8,7 @@ import { Artifact } from "../../artifact.js"
 import { Config } from "../../config.js"
 import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
 import { CommandGuard } from "../command-guard.js"
+import { Flag } from "../../flag.js"
 
 export const CreateToolInput = Schema.Struct({
   title: Schema.String.annotate({ description: "Human-readable artifact title." }),
@@ -63,7 +64,8 @@ export const Plugin = {
       Effect.forkScoped({ startImmediately: true }),
     )
 
-    const enabled = () => Config.latest(loaded.entries, "experimental")?.artifacts === true
+    const flags = yield* Flag.Service
+    const enabled = () => flags.resolve(loaded.entries).artifacts.enabled
     const failure = (error: { readonly message: string }) => new ToolFailure({ message: error.message, error })
 
     yield* ctx.tool

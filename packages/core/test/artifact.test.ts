@@ -6,6 +6,7 @@ import { Artifact } from "@opencode/core/artifact"
 import { Bus } from "@opencode/core/bus"
 import { Config } from "@opencode/core/config"
 import { Database } from "@opencode/core/database/database"
+import { Flag } from "@opencode/core/flag"
 import { Image } from "@opencode/core/image"
 import { Location } from "@opencode/core/location"
 import { Permission } from "@opencode/core/permission"
@@ -51,6 +52,7 @@ const buildLayer = (artifactsEnabled: boolean, dir: string) => {
       Bus.node,
       Config.node,
       Database.node,
+      Flag.node,
       Global.node,
       Location.node,
       Permission.node,

@@ -12,11 +12,10 @@ import { State } from "@opencode/core/state"
 import { Tool } from "@opencode/core/tool"
 import type { Info } from "@opencode/schema/tool"
 import { LayerNode } from "@opencode/util/effect/layer-node"
-import { codeModeListings, executeTool, toolDefinitions } from "./lib/tool"
+import { codeModeListings, executeTool, toolDefinitions, toolNodeReplacements } from "./lib/tool"
 import { Deferred, Effect, Exit, Fiber, Layer, Logger, Schema, SchemaGetter, SchemaIssue, Scope } from "effect"
 import { z } from "zod"
 import { testEffect } from "./lib/effect"
-import { permissionLayer } from "./lib/permission"
 
 const imageStore = Layer.mock(Image.Service, {
   normalize: (resource, content) => {
@@ -40,11 +39,13 @@ const imageStore = Layer.mock(Image.Service, {
     })
   },
 })
+// The test's `Config.Test` handle must be the very instance the Tool node sees, so the shared layer
+// both replaces the node and merges over the built layer (which also types the test handle).
 const configLayer = Config.testLayer()
 const registryLayer = AppNodeBuilder.build(LayerNode.group([Tool.node, PluginHooks.node]), [
+  ...toolNodeReplacements(),
   Config.node.replace(configLayer),
   Image.node.replace(imageStore),
-  Permission.node.replace(permissionLayer()),
 ]).pipe(Layer.provideMerge(configLayer))
 const it = testEffect(registryLayer)
 const identity = {
@@ -552,7 +553,7 @@ describe("Tool", () => {
         },
       })
       expect(callable.output).toMatchObject({
-        output: expect.stringContaining('"text": "sales"'),
+        output: expect.stringContaining('"text":"sales"'),
         toolCalls: [
           { tool: "registry.search", status: "completed" },
           { tool: "registry.search.sales", status: "completed" },
@@ -621,7 +622,7 @@ describe("Tool", () => {
           },
         },
       })
-      expect(result.output).toMatchObject({ output: expect.stringContaining('"text": "sales"') })
+      expect(result.output).toMatchObject({ output: expect.stringContaining('"text":"sales"') })
     }),
   )
 

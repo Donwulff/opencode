@@ -3,7 +3,6 @@ import { Duration, Effect, Fiber, Layer, Schema } from "effect"
 import * as TestClock from "effect/testing/TestClock"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
-import { Config } from "@opencode/core/config"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { LayerNodePlatform } from "@opencode/util/effect/app-node-platform"
 import { Permission } from "@opencode/core/permission"
@@ -11,11 +10,9 @@ import { Session } from "@opencode/core/session"
 import { Tool } from "@opencode/core/tool"
 import { WebFetchTool } from "@opencode/core/tool/plugin/webfetch"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
-import { Image } from "@opencode/core/image"
 import { testEffect } from "./lib/effect"
-import { imagePassthrough } from "./lib/image"
 import { permissionLayer } from "./lib/permission"
-import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions } from "./lib/tool"
+import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions, toolNodeReplacements } from "./lib/tool"
 
 const webFetchToolNode = makeLocationNode({
   name: "test/webfetch-tool-plugin",
@@ -57,9 +54,7 @@ const permission = permissionLayer({
 })
 const toolLayer = (replacements: LayerNode.Replacements = []) =>
   AppNodeBuilder.build(LayerNode.group([Tool.node, webFetchToolNode]), [
-    Permission.node.replace(permission),
-    Image.node.replace(imagePassthrough),
-    Config.node.replace(Config.testLayer()),
+    ...toolNodeReplacements(permission),
     ...replacements,
   ])
 const it = testEffect(toolLayer([LayerNodePlatform.httpClient.replace(http)]))
@@ -539,13 +534,13 @@ describe("WebFetchTool registration", () => {
     }),
   )
 
-  it.effect("matches rules without the fragment and rejects credentials in the URL", () =>
+  it.effect("matches rules against the URL as written without the fragment and rejects credentials", () =>
     Effect.gen(function* () {
       reset()
       const registry = yield* Tool.Service
 
-      yield* executeTool(registry, call({ url: "https://example.com/page#top", format: "text" }))
-      expect(assertions.map((assertion) => assertion.resources)).toEqual([["https://example.com/page"]])
+      yield* executeTool(registry, call({ url: "https://Example.com#top", format: "text" }))
+      expect(assertions.map((assertion) => assertion.resources)).toEqual([["https://Example.com"]])
 
       reset()
       expect(yield* executeTool(registry, call({ url: "https://user@example.com/", format: "text" }))).toMatchObject({

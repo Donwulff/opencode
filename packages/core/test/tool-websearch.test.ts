@@ -2,7 +2,6 @@ import { describe, expect } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { HttpClientError } from "effect/http"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
-import { Config } from "@opencode/core/config"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { Permission } from "@opencode/core/permission"
 import { KV } from "@opencode/core/kv"
@@ -13,11 +12,9 @@ import { toSessionError } from "@opencode/core/session/to-session-error"
 import { Tool } from "@opencode/core/tool"
 import { WebSearchTool } from "@opencode/core/tool/plugin/websearch"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
-import { Image } from "@opencode/core/image"
 import { testEffect } from "./lib/effect"
-import { imagePassthrough } from "./lib/image"
 import { permissionLayer } from "./lib/permission"
-import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions } from "./lib/tool"
+import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions, toolNodeReplacements } from "./lib/tool"
 import { webSearchHost } from "./plugin/host"
 import { TestWebSearch } from "./lib/websearch"
 import type { SessionContext } from "@opencode/plugin/effect/session"
@@ -83,7 +80,7 @@ const setup = Effect.gen(function* () {
   )
   const context = yield* Layer.build(
     AppNodeBuilder.build(LayerNode.group([Tool.node, webSearchToolNode]), [
-      Permission.node.replace(
+      ...toolNodeReplacements(
         permissionLayer({
           assert: (input) =>
             Effect.sync(() => {
@@ -103,8 +100,6 @@ const setup = Effect.gen(function* () {
             }),
         }),
       ),
-      Image.node.replace(imagePassthrough),
-      Config.node.replace(Config.testLayer()),
     ]),
   )
   return Object.assign(fixture, { websearch, kv, registry: Context.get(context, Tool.Service) })

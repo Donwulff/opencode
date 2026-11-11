@@ -1,0 +1,523 @@
+---
+title: Sigurnost
+description: Kontrole mrežne sigurnosti, izolacija podprocesa, validacija URL-ova i evidencija (audit logging).
+---
+
+OpenCode pruža sveobuhvatne sigurnosne kontrole koje ograničavaju mrežni pristup, izoluju podprocese i prate aktivnost sistema. Ove funkcije namijenjene su isključivo internim okruženjima u kojima trebate kontrolisati s kojim vanjskim uslugama vaš AI asistent može komunicirati i spriječiti curenje podataka putem shell komandi.
+
+---
+
+## Načini sigurnosti
+
+OpenCode podržava tri načina sigurnosti koja određuju kako se validiraju mrežni zahtjevi:
+
+### `internal-only` (zadano za interna okruženja)
+
+Dopušta samo localhost, privatne IP adrese i konfigurisane interne domene. Svi vanjski URL-ovi su blokirani osim ako nisu izričito dopušteni.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only"
+  }
+}
+```
+
+### `external-allowed`
+
+Dopušta sve URL-ove, ali bilježi vanjske URL-ove u svrhe revizije. Ovaj način je koristan za praćenje mrežne aktivnosti bez blokiranja.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "external-allowed"
+  }
+}
+```
+
+### `strict`
+
+Dopušta samo URL-ove koji odgovaraju izričito konfigurisanim domenama u `external_domains`, localhost, privatnim IP adresama i internim DNS sufiksima. Svi ostali URL-ovi su blokirani.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+---
+
+## Opcije konfiguracije
+
+Sve sigurnosne postavke nalaze se pod `security` ključem u OpenCode konfiguraciji.
+
+### `mode`
+
+Odabir načina sigurnosti. Jedno od: `"internal-only"`, `"external-allowed"`, `"strict"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict"
+  }
+}
+```
+
+### `allow_internal_dns_suffixes`
+
+Niz internih DNS sufiksa koji se dopuštaju. Može sadržavati šabrone (wildcard) za podudaranje potdomena.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"]
+  }
+}
+```
+
+S ovom konfiguracijom, `api.internal.corp.com` i `db.dev.internal` bi bili dopušteni.
+
+### `block_domain_regex`
+
+Niz regularnih izraza za podudaranje i blokiranje određenih domena ili obrazaca.
+
+```json title="opencode.json"
+{
+  "security": {
+    "block_domain_regex": [".*\\.evil\\.com$", ".*\\.test\\.com$"]
+  }
+}
+```
+
+### `allow_local`
+
+Dopušta localhost URL-ove (zadano: `true`).
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_local": true
+  }
+}
+```
+
+### `allow_private_ip`
+
+Dopušta privatne IP adrese (zadano: `true`).
+
+Pokrivene privatne IP opsezi:
+
+- `10.0.0.0/8` (klasa A)
+- `172.16.0.0/12` (klasa B)
+- `192.168.0.0/16` (klasa C)
+- `127.0.0.0/8` (loopback)
+- `::1` (IPv6 loopback)
+
+```json title="opencode.json"
+{
+  "security": {
+    "allow_private_ip": true
+  }
+}
+```
+
+### `models_dev_enabled`
+
+Uključuje preuzimanje popisa modela sa `models.dev` (zadano: `true`). Kada je isključeno, OpenCode neće pokušavati preuzeti najnoviji popis modela sa models.dev.
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+### `audit_log_enabled`
+
+Uključuje evidenciju sigurnosnih događaja (zadano: `true`). Kada je uključeno, sigurnosni događaji se bilježe u `~/.config/opencode/audit.jsonl`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "audit_log_enabled": true
+  }
+}
+```
+
+### `external_domains`
+
+Izričito dopuštene vanjske domene u strict načinu. Podržava obrasce sa šabronima.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com", "*.azure.com", "api.example.com"]
+  }
+}
+```
+
+S obrascem `*.azure.com`, URL-ovi poput `my-resource.openai.azure.com` bi bili dopušteni.
+
+### `allow_external_ips`
+
+Dopušta vanjske/javne IP adrese (zadano: `false`). Važi samo kada je `mode` postavljen na `"internal-only"`.
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "internal-only",
+    "allow_external_ips": false
+  }
+}
+```
+
+### `allowed_ip_ranges`
+
+Dodatni dopušteni IP opsezi u CIDR notaciji.
+
+```json title="opencode.json"
+{
+  "security": {
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  }
+}
+```
+
+---
+
+## Sigurnost providera
+
+Sigurnosne kontrole se primjenjuju na sve konfiguracije providera, uključujući:
+
+- OpenAI
+- Azure OpenAI
+- Anthropic
+- Amazon Bedrock
+- Google Gemini
+- Lokalni modeli (llama.cpp, Ollama)
+- Prilagođeni provideri
+
+Kada je dobavljač konfigurisan sa prilagođenim `baseURL` ili endpointom, URL se validira u odnosu na sigurnosnu konfiguraciju prije nego što se dobavljač učita.
+
+### Primjer: OpenAI sa prilagođenim endpointom
+
+```json title="opencode.json"
+{
+  "security": {
+    "mode": "strict",
+    "external_domains": ["api.openai.com"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "baseURL": "https://api.openai.com/v1"
+      }
+    }
+  }
+}
+```
+
+Ako `baseURL` ne odgovara dopuštenim domenama, dobavljač će biti blokiran i greška zabilježena.
+
+---
+
+## Evidencija (Audit logging)
+
+Evidencija prati sve sigurnosno relevantne događaje u `~/.config/opencode/audit.jsonl`.
+
+### Struktura zapisa
+
+Svaki zapis sadrži:
+
+- `timestamp`: ISO 8601 vremenski pečat
+- `type`: Kategorija događaja (`url_check`, `provider_load`, `tool_request`, `blocked_access` itd.)
+- `level`: `info` ili `warn`
+- `message`: Opis čitljiv ljudu
+- `context`: Dodatni kontekst (URL-ovi, ID-jevi providera, nazivi alata)
+- `metadata`: Podaci čitljivi mašini (status dopuštenosti, broj modela itd.)
+
+### Vrste događaja
+
+| Vrsta                  | Opis                             |
+| ---------------------- | -------------------------------- |
+| `url_check`            | Validacija URL-a uspješna        |
+| `blocked_access`       | Validacija URL-a nije uspješna   |
+| `provider_load`        | Pokušaj učitavanja providera     |
+| `model_access`         | Pokušaj pristupa modelu          |
+| `tool_request`         | Mrežni zahtjev alata dopušten    |
+| `tool_blocked`         | Mrežni zahtjev alata blokiran    |
+| `fetch_request`        | Napravljen HTTP zahtjev          |
+| `session_model_change` | Pokušaj promjene modela sesije   |
+
+### Primjer evidencije
+
+```json
+{"timestamp":"2024-01-15T10:30:00.000Z","type":"blocked_access","level":"warn","message":"URL not in allowlist (mode: strict)","context":{"url":"https://api.evil.com","providerId":"openai"},"metadata":{"allowed":false}}
+{"timestamp":"2024-01-15T10:30:05.000Z","type":"provider_load","level":"info","message":"Provider loaded: openai (custom, 150 models)","context":{"providerId":"openai","source":"config"},"metadata":{"modelsCount":150,"allowed":true}}
+```
+
+### Pregled evidencije
+
+Evidencija je samo-aditivna (append-only). Nedavne stavke možete pregledati sa:
+
+```bash
+tail ~/.config/opencode/audit.jsonl
+```
+
+---
+
+## Primjeri konfiguracije
+
+### Stroga sigurnost sa internim pristupom
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "strict",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "models_dev_enabled": true,
+    "audit_log_enabled": true,
+    "allow_internal_dns_suffixes": [".internal.corp.com", ".dev.internal"],
+    "external_domains": ["api.openai.com", "*.azure.com", "api.anthropic.com"],
+    "allowed_ip_ranges": ["192.168.100.0/24", "10.0.0.0/8"]
+  },
+  "provider": {
+    "openai": {
+      "options": {
+        "apiKey": "{env:OPENAI_API_KEY}"
+      }
+    },
+    "anthropic": {
+      "options": {
+        "apiKey": "{env:ANTHROPIC_API_KEY}"
+      }
+    }
+  }
+}
+```
+
+### Razvoj sa evidentiranjem vanjskog pristupa
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "external-allowed",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "audit_log_enabled": true
+  }
+}
+```
+
+### Isključivo interno sa prilagođenom blocklistom
+
+```json title="opencode.json"
+{
+  "$schema": "https://opencode.ai/config.json",
+  "security": {
+    "mode": "internal-only",
+    "allow_local": true,
+    "allow_private_ip": true,
+    "block_domain_regex": [".*\\.sandbox.*", ".*\\.test.*"],
+    "allow_internal_dns_suffixes": [".corp.local"]
+  }
+}
+```
+
+---
+
+## Kontrole models.dev
+
+Opcija `models_dev_enabled` kontroliše može li OpenCode preuzeti najnoviji popis modela sa `https://models.dev`.
+
+### Kako funkcioniše
+
+1. Pri pokretanju OpenCode provjerava je li `models_dev_enabled` postavljen na `false`
+2. Ako je isključeno, preskače preuzimanje najnovijih modela i koristi samo keširane/poznate modele
+3. Ako je uključeno, preuzima modele sa models.dev uz sigurnosnu validaciju
+
+### Isključivanje models.dev
+
+```json title="opencode.json"
+{
+  "security": {
+    "models_dev_enabled": false
+  }
+}
+```
+
+Kada je isključeno:
+
+- Pojavljuje se poruka u logu: `"models.dev fetching is disabled by security configuration"`
+- Mogu se koristiti samo modeli koje OpenCode već poznaje
+- Korisno za okruženja odvojena od mreže ili kada želite strogo kontrolisati dostupne modele
+
+---
+
+## Izvršavanje alata
+
+### webfetch alat
+
+Alat `webfetch` validira URL-ove u odnosu na sigurnosnu konfiguraciju prije preuzimanja sadržaja:
+
+1. Provjera formata URL-a (mora počinjati sa `http://` ili `https://`)
+2. Validacija URL-a u odnosu na sigurnosnu konfiguraciju
+3. Ako je blokiran: podiže grešku i bilježi blokirani pristup
+4. Ako je dopušten: nastavlja sa preuzimanjem i bilježi uspješnu validaciju
+
+Lanci preusmjeravanja su također validirani — svaka destinacija preusmjeravanja provjerava se u odnosu na sigurnosnu konfiguraciju prije nego što se prati.
+
+### websearch alat
+
+Alat `websearch` validira URL MCP endpointa:
+
+1. Gradnja URL-a MCP endpointa: `https://mcp.exa.ai/mcp`
+2. Validacija u odnosu na sigurnosnu konfiguraciju
+3. Ako je blokiran: podiže grešku i bilježi blokirani pristup
+4. Ako je dopušten: izvršava pretragu i bilježi uspješnu validaciju
+
+### URL-ovi uputa i vještina
+
+Udaljeni URL-ovi konfigurisani u stavkama `instructions:` i URL-ovi otkrivanja vještina (konfigurisani putem `skills:`) također se validiraju u odnosu na sigurnosnu konfiguraciju prije preuzimanja. To znači da `mode: "internal-only"` blokira preuzimanje uputa i vještina sa vanjskih hostova, a ne samo webfetch/websearch zahtjeve.
+
+### Tok validacije alata
+
+```
+Zahtjev alata → Učitana konfiguracija → Sigurnosno validirano → Dopušteno? → Preuzimanje / Greška
+                                                        ↓ Da
+                                                   Nastavi
+                                                        ↓ Ne
+                                                 Evidiraj i blokiraj
+```
+
+---
+
+## Izolacija podprocesa
+
+Uz HTTP-nivo validacije URL-ova, OpenCode može pokretati sva pozivanja podprocesa (bash komande, grep, ripgrep) u ograničenom Linux mrežnom imenskom prostoru (namespace), tako da kod podprocesa ne može uspostaviti izlazne mrežne veze čak ni ako LLM to bude upućen.
+
+Ovo je primarna odbrana od curenja podataka putem bash alata — podproces jednostavno nema mrežno sučelje koje može koristiti.
+
+### Kako funkcioniše
+
+Kada je postavljen `OPENCODE_SPAWN_SANDBOX=1`, svaki podproces se omotava sa `bwrap` (bubblewrap) ili `unshare` (kao rezervno rješenje):
+
+```bash
+# Preferred: bwrap (pre-installed in the container image via EPEL)
+bwrap --bind / / --dev /dev --proc /proc \
+  --unshare-user --uid 0 --gid 0 --unshare-net \
+  -- sh -c "ip link set lo up 2>/dev/null; <command>"
+
+# Fallback: unshare
+unshare --user --map-root-user --net -- sh -c "ip link set lo up 2>/dev/null; <command>"
+```
+
+Podproces radi u vlastitom mrežnom imenskom prostoru. Loopback se pokreće kako bi testni serveri na `localhost` ostali dosegljivi, ali nema vanjskog sučelja ni DNS rezolvera. `curl`, `wget`, `git push`, `nc`, DNS curenje — sve tiho neuspješno iz pješčanika.
+
+### Šta je u pješčaniku
+
+| Mjesta pozivanja      | U pješčaniku |
+| --------------------- | ------------ |
+| bash alat             | Da — `sandboxedArgs()` u `bash.ts` |
+| grep alat             | Da — putem `Process.spawn` → `sandboxedCmd()` u `util/process.ts` |
+| ripgrep               | Da — putem `Process.spawn` → `sandboxedCmd()` |
+| Jezik serveri (LSP)   | Ne — LSP komunicira samo preko lokalnog IPC-a, mreža nije potrebna |
+| Interaktivni terminal (PTY) | Ne — pod ljudskom kontrolom, ne vođen AI-om |
+
+Pozivi API-ja dobavljača, webfetch i websearch koriste JavaScript `fetch()` koji radi u roditeljskom procesu OpenCode-a i **nisu** pogođeni pješčanikom podprocesa — njima upravljanje vrše postavke validacije URL-ova i načina sigurnosti navedene iznad.
+
+### Uključivanje pješčanika
+
+```bash
+# Via environment variable (recommended for container deployments):
+OPENCODE_SPAWN_SANDBOX=1 opencode
+
+# Or bake it into a container image:
+ENV OPENCODE_SPAWN_SANDBOX=1
+```
+
+Ako je postavljen `OPENCODE_SPAWN_SANDBOX=1`, ali ni `bwrap` ni `unshare` nisu dostupni, OpenCode bilježi upozorenje i nastavlja bez pješčanika. Provjerite izlaz loga ako je pokrivenost pješčanikom obavezna.
+
+---
+
+## Upravljana / preduzećka konfiguracija
+
+OpenCode konfiguracija se učitava u slojevima, od najnižeg ka najvišem prioritetu:
+
+1. Kompilirane zadane vrijednosti
+2. `~/.config/opencode/` — globalno korisničko
+3. `.opencode/` — konfiguracija nivoa projekta (automatski otkrivena)
+4. `~/.opencode/` — globalno korisničko nadjačavanje
+5. `$OPENCODE_CONFIG_DIR` — injekcija u vrijeme izvršavanja
+6. `$OPENCODE_CONFIG_CONTENT` — inline JSON
+7. `/etc/opencode/` — **upravljana / preduzećka konfiguracija (najviši prioritet)**
+
+Datoteka `/etc/opencode/opencode.jsonc`, ako postoji, ima prednost nad svim ostalim, uključujući `.opencode/config.json` projekta i `OPENCODE_CONFIG_DIR` promjenljivu okruženja. U kontejnerskim deploymentima ona je u vlasništvu root korisnika i ne može je mijenjati aktivni korisnik, što je čini nepromjenjivom granicom sigurnosne politike.
+
+To znači da sigurnosne postavke ugrađene u `/etc/opencode/` ne mogu biti nadjačane putem:
+
+- Konfiguracionih datoteka radnog prostora (`.opencode/config.json`)
+- Promjenljivih okruženja koje postavi radni prostor
+- Presmjeravanja `$OPENCODE_CONFIG_DIR`
+
+Konfiguracija nivoa projekta i dalje normalno funkcioniše za postavke koje se ne odnose na sigurnost (alati, modeli, MCP serveri, upute, promptovi).
+
+### Upotreba u kontejnerima
+
+U kontejnerskom imidžu, `/etc/opencode/opencode.jsonc` se instalira kao datoteka u vlasništvu root korisnika u vrijeme gradnje, sa sigurnosnom politikom za taj deployment:
+
+```json title="/etc/opencode/opencode.jsonc"
+{
+  "security": {
+    "mode": "internal-only",
+    "audit_log_enabled": true,
+    "models_dev_enabled": false
+  },
+  "share": "disabled",
+  "autoupdate": false
+}
+```
+
+### Zaobilazak za razvoj
+
+`opencode-run.sh --dangerously-open` postavlja `OPENCODE_TEST_MANAGED_CONFIG_DIR=/nonexistent` kako bi preskočio pretragu upravljane konfiguracije, omogućavajući neograničen pristup za lokalni razvoj nad pouzdanim kodom. Nikada ne koristite ovaj flag pri analizi nepouzdанog koda.
+
+---
+
+## Čitaj-samo komande
+
+Ugrađene komande `/review` i `/learn` nametnu čitaj-samo način putem `command-guard.ts`, koje presreće pozive alata i blokira operacije koje bi mijenjale datoteke.
+
+### `/review` — potpuno čitaj-samo
+
+Sve operacije pisanja su blokirane:
+
+- Pisanje, uređivanje i kreiranje datoteka (`write`, `edit` alati)
+- Shell presmjeravanje (`>`, `>>`, `<<`, `<(`)
+- Shell komande koje mijenjaju datoteke: `rm`, `mv`, `cp`, `chmod`, `chown`, `touch`, `mkdir`, `rmdir`
+- Git komande koje mijenjaju stanje: `reset`, `checkout`, `restore`, `stash`, `clean`, `rebase`, `merge`, `commit`, `push`, `cherry-pick`, `revert`, `switch`, `branch`, `tag`
+
+### `/learn` — pisanje samo u AGENTS.md
+
+Komanda `/learn` može pisati samo u `AGENTS.md` datoteke i ništa drugo. Primjenjuju se sva ograničenja shell i git komandi iz `/review`.
+
+### Ograničenja
+
+Ograničenje je blocklist primijenjen na shell nizinu komande prije izvršavanja. Pokriva najčešće obrasce mijenjanja, ali ne i svaku moguću alatu za pisanje datoteka (npr. `tee`, `dd`). Upit za korisnička odobrenja se pokreće za svaku bash komandu i prikazuje punu nizinu komande, pružajući drugu liniju odbrane.
+
+---
+
+## Napomene
+
+- Sigurnosna validacija se dešava **prije** izvršavanja alata i učitavanja providera
+- Evidencija se **uvijek** primjenjuje kada je uključena, bez obzira na ishod
+- U `strict` načinu, **ništa** nije dopušteno osim ako nije izričito u `external_domains`, `allow_internal_dns_suffixes` ili ne odgovara `allowed_ip_ranges`
+- Zadane vrijednosti za `allow_local` i `allow_private_ip` su `true`
+- Zadana vrijednost za `allow_external_ips` je `false`

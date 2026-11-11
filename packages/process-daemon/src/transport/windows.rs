@@ -286,7 +286,7 @@ impl Connection {
         Ok(Cancellation(Arc::clone(&self.pipe)))
     }
 
-    /// Protocol 7 has an explicit response/final event, not a pipe half-close.
+    /// The protocol has an explicit response/final event, not a pipe half-close.
     /// Retain the pipe until the client reads that frame and closes its end.
     /// An uncooperative peer is cancelled after a bounded grace period.
     pub(crate) fn finish_response(&mut self) -> io::Result<()> {
@@ -540,7 +540,7 @@ impl Drop for Operation {
     }
 }
 
-fn event() -> io::Result<OwnedHandle> {
+pub(crate) fn event() -> io::Result<OwnedHandle> {
     // SAFETY: create an unnamed, non-inheritable, initially unset manual-reset event.
     owned_handle(unsafe { CreateEventW(null(), 1, 0, null()) })
 }
@@ -705,6 +705,9 @@ mod tests {
                     exit_code: Some(0),
                     signal: None,
                     final_offset: 123,
+                    output_lines: None,
+                    output_error: None,
+                    exited_at: 1,
                 },
             )
             .unwrap();

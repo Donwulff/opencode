@@ -121,8 +121,6 @@ export type SessionStructuredError = {
   retryAfterMs?: number
 }
 
-export type SessionGenerateResponse = { data: { text: string } }
-
 export type SessionInterruptResponse = { interrupted: boolean }
 
 export type FormID = string
@@ -188,7 +186,7 @@ export type ModelCacheFormat = "anthropic" | "alibaba"
 
 export type ModelMediaInput = "assets" | "state" | "root"
 
-export type ModelCapabilities = { tools: boolean; input: Array<string>; output: Array<string>; temperature?: boolean }
+export type ToolFreeformFormat = "text" | "regex" | "lark"
 
 export type MoneyUSDPerMillionTokens = number
 
@@ -469,6 +467,8 @@ export type SessionMessageCompactionRunning = {
 
 export type UsageLimitsBudgetModel = { providerID: ProviderID; modelID: string; name: string; spent?: MoneyUSD }
 
+export type SessionGenerateResponse = { data: { text: string; tokens: TokenUsageInfo; cost: MoneyUSD } }
+
 export type FileSystemEntry = { path: RelativePath; type: "file" | "directory" }
 
 export type SessionRevert = {
@@ -724,6 +724,14 @@ export type ProviderCompatibility = {
   streamUsage?: boolean
   cacheFormat?: ModelCacheFormat
   mediaInput?: ModelMediaInput
+}
+
+export type ModelCapabilities = {
+  tools: boolean
+  freeform?: Array<ToolFreeformFormat>
+  input: Array<string>
+  output: Array<string>
+  temperature?: boolean
 }
 
 export type ModelCost = {
@@ -996,6 +1004,7 @@ export type UsageLimitsGo = { rolling: UsageLimitsMeter; weekly: UsageLimitsMete
 
 export type ConfigModelCapabilities = {
   tools?: boolean
+  freeform?: Array<ToolFreeformFormat>
   input?: Array<string>
   output?: Array<string>
   temperature?: boolean
@@ -1429,6 +1438,16 @@ export type SessionStepStarted = {
   }
 }
 
+export type SessionStepFirstToken = {
+  id: EventID
+  created: number
+  metadata?: { [x: string]: any }
+  type: "session.step.first-token"
+  durable: { aggregateID: string; seq: EventSeq; version: 1 }
+  location?: LocationRef
+  data: { sessionID: SessionID; assistantMessageID: SessionMessageID }
+}
+
 export type SessionStepStreamed = {
   id: EventID
   created: number
@@ -1667,7 +1686,7 @@ export type SessionUsageRecorded = {
   type: "session.usage.recorded"
   durable: { aggregateID: string; seq: EventSeq; version: 1 }
   location?: LocationRef
-  data: { sessionID: SessionID; source: "title" | "compaction"; cost: MoneyUSD; tokens: TokenUsageInfo }
+  data: { sessionID: SessionID; source: "title" | "compaction" | "generate"; cost: MoneyUSD; tokens: TokenUsageInfo }
 }
 
 export type LocationShutdown = {
@@ -1694,7 +1713,7 @@ export type CredentialUpdated = {
   metadata?: { [x: string]: any }
   type: "credential.updated"
   location?: LocationRef
-  data: {}
+  data: { integrationID: IntegrationID; credentialID: CredentialID }
 }
 
 export type CredentialSwitched = {
@@ -2567,13 +2586,18 @@ export type ConfigEntry =
         provenance?: { enabled?: boolean; path?: string; preview_chars?: number }
         experimental?: {
           portable_shell_scanner?: boolean
+          codemode_vm?: boolean
+          all_flags?: boolean
           todo?: boolean
           background_compaction?: boolean
           media_blob?: boolean
-          part_rows?: boolean
-          image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           schedules?: boolean
           artifacts?: boolean
+          shell_timeout_background?: boolean
+          console_watches?: boolean
+          mcp_events?: boolean
+          part_rows?: boolean
+          image_generate?: boolean | { model?: string | { providerID: string; model: string; variant?: string } }
           subagent_depth?: number
           location_idle_timeout?: string | false
           policies?: Array<{
@@ -2709,7 +2733,7 @@ export type SessionInboxInfo = SessionInboxUser | SessionInboxSynthetic | Sessio
 export type SessionMessageAssistant = {
   id: SessionMessageID
   metadata?: { [x: string]: JsonValue }
-  time: { created: number; streamed?: number; completed?: number }
+  time: { created: number; firstToken?: number; streamed?: number; completed?: number }
   type: "assistant"
   agent: AgentID
   model: ModelRef
@@ -2841,6 +2865,7 @@ export type SessionEventDurable =
   | SessionShellStarted
   | SessionShellEnded
   | SessionStepStarted
+  | SessionStepFirstToken
   | SessionStepStreamed
   | SessionStepEnded
   | SessionStepFailed
@@ -2899,6 +2924,7 @@ export type V2Event =
   | SessionShellStarted
   | SessionShellEnded
   | SessionStepStarted
+  | SessionStepFirstToken
   | SessionStepStreamed
   | SessionStepEnded
   | SessionStepFailed
@@ -3976,7 +4002,12 @@ export type ExperimentalGenerateDecisionsInput = {
     | { readonly type: "file"; readonly data: string; readonly mime: string; readonly name?: string }
   >
   readonly questions: ReadonlyArray<
-    | { readonly type: "predicate"; readonly name: string; readonly instructions: string }
+    | {
+        readonly type: "predicate"
+        readonly name: string
+        readonly instructions: string
+        readonly criteria?: { readonly true?: string; readonly false?: string }
+      }
     | {
         readonly type: "choice"
         readonly name: string
@@ -4393,6 +4424,7 @@ export type EventSubscribeInput = {
         | "session.shell.started"
         | "session.shell.ended"
         | "session.step.started"
+        | "session.step.first-token"
         | "session.step.streamed"
         | "session.step.ended"
         | "session.step.failed"
