@@ -8,12 +8,13 @@ import math
 import re
 from pathlib import Path
 import sqlite3
+import subprocess
 import urllib.error
 import urllib.parse
 import urllib.request
 
 from batch import capacity_members, timestamp
-from dispatch import Client, DispatchError, NoRedirect, require
+from dispatch import Client, DispatchError, NoRedirect, git, require
 
 
 def inference_status(url, *, timeout=3):
@@ -134,6 +135,8 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
                 proof = json.loads(task['verification']) if task and task['verification'] else {}
                 ready.append({'task_id': row['task_id'], 'task_commit': proof.get('commit'),
                               'final_commit': detail.get('final_commit'), 'learning': detail.get('learning'),
+                              'common': binding['common'], 'base': proof.get('base'),
+                              'proof_kind': proof.get('kind'), 'learning_commit': detail.get('learning_commit'),
                               'verified_delivery': bool(task and task['state'] == 'verified' and proof),
                               'verified_at': proof.get('verified_at'), 'unit_updated_at': unit['updated'],
                               'meaning': 'recorded_receipt_reference_not_fresh_worktree_verification'})
@@ -190,3 +193,65 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
         return result
     finally:
         db.close()
+
+
+def review_ready(database, repository, ref='HEAD'):
+    """Compare historical receipts to one frozen target, without recertifying a worktree."""
+    snapshot = report(database)
+    repository = Path(repository).resolve(strict=True)
+    common = git(repository, 'rev-parse', '--path-format=absolute', '--git-common-dir').decode().strip()
+    target = git(repository, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}').decode().strip()
+    counts, units = Counter(), []
+    for receipt in snapshot['ready_receipts']:
+        if receipt['common'] != common:
+            continue
+        item = dict(receipt, state='needs_review', human_review_required=True)
+        try:
+            require(receipt['verified_delivery'] and receipt['proof_kind'] == 'git_scope',
+                    'Manual/accounted delivery is not a machine-verified Git result')
+            commits = {}
+            for name in ('base', 'task_commit', 'final_commit'):
+                value = receipt[name]
+                require(isinstance(value, str) and re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', value),
+                        'Receipt has no valid frozen commit identity')
+                commits[name] = git(repository, 'rev-parse', '--verify', value + '^{commit}').decode().strip()
+            def ancestor(older, newer):
+                result = subprocess.run(['git', '-C', str(repository), 'merge-base', '--is-ancestor', older, newer],
+                                        capture_output=True)
+                require(result.returncode in (0, 1), 'Git ancestry inspection failed')
+                return result.returncode == 0
+            require(ancestor(commits['base'], commits['task_commit'])
+                    and ancestor(commits['task_commit'], commits['final_commit']), 'Frozen receipt ancestry disagrees')
+            learning = receipt['learning_commit']
+            require(not learning or learning == commits['final_commit'], 'Learning commit disagrees with final receipt')
+            if ancestor(commits['final_commit'], target):
+                counts['already_integrated'] += 1
+                continue
+            require(ancestor(commits['base'], target), 'Target does not contain the approved task base')
+            item.update(state='awaiting_review',
+                        source_commits=git(repository, 'rev-list', '--reverse',
+                                           commits['base'] + '..' + commits['final_commit']).decode().splitlines(),
+                        source_paths=git(repository, 'diff', '--no-ext-diff', '--no-textconv', '--no-renames',
+                                         '--name-only', '-z', commits['base'], commits['final_commit']).decode().split('\0')[:-1])
+        except DispatchError as error:
+            item['reason'] = str(error)
+        counts[item['state']] += 1
+        units.append(item)
+    return {'generated_at': snapshot['generated_at'], 'target': {'common': common, 'ref': ref, 'commit': target},
+            'counts': dict(counts), 'units': units,
+            'limits': ['Historical Git receipt ancestry only; no fresh worktree or runtime verification.',
+                       'Source paths/commits describe the original unit, not a proposed merge delta.',
+                       'No merge preflight, review approval, ledger update, model call or network request.']}
+
+
+def review_text(value):
+    lines = ['Review target: ' + value['target']['ref'] + ' ' + value['target']['commit'],
+             'Receipts: ' + json.dumps(value['counts'], sort_keys=True)]
+    for unit in value['units']:
+        lines.append(unit['task_id'] + ': ' + unit['state'] + '; learning=' + str(unit['learning']))
+        if unit['state'] == 'awaiting_review':
+            lines.append('  task=' + unit['task_commit'] + '; final=' + unit['final_commit'])
+            lines.append('  original source paths: ' + json.dumps(unit['source_paths']))
+        else:
+            lines.append('  ' + unit['reason'])
+    return '\n'.join(lines + value['limits'])

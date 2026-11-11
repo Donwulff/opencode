@@ -274,6 +274,21 @@ native capacity/inbox/form snapshots:
 python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" status --operations --live --text
 ```
 
+For a compact handoff of **unmerged frozen task + learning receipts**, without
+rechecking agent worktrees or modifying the ledger:
+
+```sh
+python3 batch.py --db "$DISPATCH_STATE/ledger.sqlite3" status --review-ready \
+  --repository /path/to/project --ref main --text
+```
+
+The target commit is frozen for that report. Machine-verified receipts already
+reachable from it are counted and omitted; unverified deliveries, missing objects and a missing
+task base are reported per unit. JSON also lists the original source commits and
+paths. These are **not** the proposed target merge delta or a correctness review.
+Use the existing integration preflight and review gates before merging; this
+view neither releases worktrees nor changes approvals or scheduling.
+
 The report distinguishes task and learning stages, names conservative capacity
 reservations, counts pending forms without copying their text, and points to
 immutable ready-unit commits. It reads a consistent in-memory copy so slow

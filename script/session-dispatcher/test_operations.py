@@ -9,9 +9,10 @@ import subprocess
 import sys
 import threading
 import unittest
+from unittest.mock import patch
 
 from dispatch import Client, DispatchError
-from operations import report
+from operations import report, review_ready, review_text
 from runner import inspect_run, observer_lock, write_json
 import test_batch
 
@@ -110,6 +111,86 @@ class OperationsTests(unittest.TestCase):
         value = report(self.ledger)
         self.assertEqual(value['ready_receipts'][0]['final_commit'], commit)
         self.assertIn('not_fresh', value['ready_receipts'][0]['meaning'])
+
+    def ready_for_review(self):
+        base = self.git('rev-parse', 'HEAD')
+        self.git('branch', 'target', base)
+        self.policy['wait_seconds'] = 0
+        self.enqueue()
+        self.batch.tick(self.at)
+        commit = self.commit()
+        self.api.finish()
+        self.configure(state='paused')
+        self.batch.tick(self.at)
+        return base, commit
+
+    def test_review_handoff_uses_frozen_receipt_and_omits_integrated_units_without_writes(self):
+        base, commit = self.ready_for_review()
+        (self.repo / 'later.txt').write_text('Later independent work.\n')
+        self.git('add', 'later.txt')
+        self.git('commit', '-m', 'later independent work')
+        (self.repo / 'scratch.txt').write_text('Preserve this untracked artifact.\n')
+        before = (self.ledger.read_bytes(), self.git('show-ref'), self.git('status', '--porcelain'),
+                  (self.repo / '.git/index').read_bytes(), list(self.api.posts))
+        value = review_ready(self.ledger, self.repo, 'target')
+        self.assertEqual(value['target']['commit'], base)
+        self.assertEqual(value['counts'], {'awaiting_review': 1})
+        self.assertEqual(value['units'][0]['source_commits'], [commit])
+        self.assertEqual(value['units'][0]['source_paths'], ['README.md'])
+        self.assertIn('doc-1: awaiting_review', review_text(value))
+        self.assertEqual(review_ready(self.ledger, self.repo)['counts'], {'already_integrated': 1})
+        cli = subprocess.check_output([sys.executable, str(Path(__file__).with_name('batch.py')), '--db',
+                                       str(self.ledger), 'status', '--review-ready', '--repository',
+                                       str(self.repo), '--ref', 'target'], text=True)
+        self.assertEqual(json.loads(cli)['units'], value['units'])
+        self.assertEqual((self.ledger.read_bytes(), self.git('show-ref'), self.git('status', '--porcelain'),
+                          (self.repo / '.git/index').read_bytes(), list(self.api.posts)), before)
+
+    def test_review_handoff_keeps_learning_commit_and_outcome_separate(self):
+        self.git('branch', 'target')
+        self.task_done()
+        unit = self.life.unit('doc-1')
+        task_commit = self.git('rev-parse', 'HEAD')
+        (self.repo / 'AGENTS.md').write_text('Preserve the fixture. Use exact receipt IDs.\n')
+        self.api.finish(unit['fork_id'])
+        self.batch.tick(self.at)
+        final = self.life.unit('doc-1')['detail']['learning_commit']
+        value = review_ready(self.ledger, self.repo, 'target')
+        self.assertEqual(value['units'][0]['source_commits'], [task_commit, final])
+        self.assertEqual(value['units'][0]['learning_commit'], final)
+        self.assertEqual(value['units'][0]['learning'], 'completed')
+        self.assertEqual(value['units'][0]['source_paths'], ['AGENTS.md', 'README.md'])
+        self.assertEqual(review_ready(self.ledger, self.repo, task_commit)['counts'], {'awaiting_review': 1})
+        self.assertEqual(review_ready(self.ledger, self.repo, final)['counts'], {'already_integrated': 1})
+
+    def test_review_handoff_isolates_missing_history_and_filters_other_repositories(self):
+        self.ready_for_review()
+        snapshot = report(self.ledger)
+        good = snapshot['ready_receipts'][0]
+        snapshot['ready_receipts'] += [dict(good, task_id='missing', final_commit='f' * 40),
+                                      dict(good, task_id='other-repo', common='/another/repo/.git')]
+        with patch('operations.report', return_value=snapshot):
+            value = review_ready(self.ledger, self.repo, 'target')
+        self.assertEqual(value['counts'], {'awaiting_review': 1, 'needs_review': 1})
+        self.assertEqual([r['task_id'] for r in value['units']], ['doc-1', 'missing'])
+        self.assertIn('Git inspection failed', value['units'][1]['reason'])
+        value = review_ready(self.ledger, self.repo, self.base)
+        self.assertEqual(value['counts'], {'needs_review': 1})
+        self.assertIn('approved task base', value['units'][0]['reason'])
+
+    def test_review_handoff_does_not_promote_manual_accounting_or_bad_ancestry(self):
+        base, commit = self.ready_for_review()
+        snapshot = report(self.ledger)
+        good = snapshot['ready_receipts'][0]
+        snapshot['ready_receipts'] = [dict(good, verified_delivery=False),
+                                    dict(good, task_id='bad-chain', base=commit, task_commit=base),
+                                    dict(good, task_id='bad-learn', learning_commit=base)]
+        with patch('operations.report', return_value=snapshot):
+            value = review_ready(self.ledger, self.repo, 'target')
+        self.assertEqual(value['counts'], {'needs_review': 3})
+        self.assertIn('not a machine-verified', value['units'][0]['reason'])
+        self.assertIn('ancestry disagrees', value['units'][1]['reason'])
+        self.assertIn('Learning commit disagrees', value['units'][2]['reason'])
 
     def test_unrelated_database_is_refused_without_changes(self):
         path = self.root / 'other.sqlite'

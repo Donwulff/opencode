@@ -344,6 +344,9 @@ def main():
     defer.add_argument('task_id')
     defer.add_argument('--reason', required=True)
     status = commands.add_parser("status")
+    status.add_argument("--review-ready", action="store_true", help="Read-only unmerged frozen receipt handoff")
+    status.add_argument("--repository", help="Target repository for --review-ready")
+    status.add_argument("--ref", help="Target ref for --review-ready (default HEAD)")
     status.add_argument("--operations", action="store_true", help="Read-only operational view without reconciliation")
     status.add_argument("--live", action="store_true", help="GET-only native occupancy/form snapshots")
     status.add_argument("--run-dir")
@@ -355,6 +358,15 @@ def main():
     args = parser.parse_args()
     dispatcher = None
     try:
+        if args.command == "status":
+            if args.review_ready:
+                require(args.repository and not (args.operations or args.live or args.run_dir),
+                        'Use --review-ready --repository PATH [--ref REF] [--text] alone')
+                from operations import review_ready, review_text
+                result = review_ready(args.db, args.repository, args.ref or 'HEAD')
+                print(review_text(result) if args.text else json.dumps(result, indent=2))
+                return 0
+            require(not (args.repository or args.ref), 'Use --review-ready with --repository/--ref')
         if args.command == "status" and args.operations:
             from operations import report
             from runner import text_report
