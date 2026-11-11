@@ -1,8 +1,8 @@
 import type { ModelInfo } from "@opencode/client"
-import { createMemo, createSignal, Show } from "solid-js"
+import { createMemo, createSignal, onMount, Show } from "solid-js"
 import { useLocal } from "../context/local"
 import { DialogSelect } from "../ui/dialog-select"
-import { useDialog } from "../ui/dialog"
+import { DIALOG_LIST_INSET, useDialog } from "../ui/dialog"
 import { DialogIntegration } from "./dialog-integration"
 import { DialogVariant } from "./dialog-variant"
 import * as fuzzysort from "fuzzysort"
@@ -11,6 +11,7 @@ import { useData } from "../context/data"
 import { modelPreferenceKey } from "../model-preference"
 import { useLocation } from "../context/location"
 import { useNewDesigns } from "../config"
+import { useTheme } from "../context/theme"
 import { DialogFreeModels } from "./dialog-model-free"
 import { FavoriteMarker, isFreeModel, prioritizeFavorites, sortModelOptions } from "./model-options"
 
@@ -60,6 +61,7 @@ function DialogConnectedModels(props: {
   const newDesigns = useNewDesigns()
   const data = useData()
   const location = useLocation()
+  const theme = useTheme().surface("dialog")
   const [query, setQuery] = createSignal("")
   // Under new designs, favoriting does not reorder the list until the dialog is reopened.
   const favoritesAtOpen = [...local.model.favorite()]
@@ -80,7 +82,30 @@ function DialogConnectedModels(props: {
   const providers = createMemo(
     () => new Map((data.location.provider.list(location.ref) ?? []).map((item) => [item.id, item])),
   )
-  const models = createMemo(() => data.location.model.list(location.ref) ?? [])
+  const modelList = createMemo(() => data.location.model.list(location.ref))
+  const models = createMemo(() => modelList() ?? [])
+  onMount(() => {
+    // An interrupted or failed location sync leaves the catalog missing; retry it while the user looks.
+    if (!props.providerID && modelList() === undefined) void data.location.sync(location.ref)
+  })
+  // "No items available" is indistinguishable from a failed or missing catalog sync, so say which it is.
+  const emptyView = createMemo(() => {
+    if (props.providerID) return
+    const message =
+      modelList() === undefined
+        ? "Loading models…"
+        : "No models available in this workspace"
+    const hint =
+      modelList() === undefined
+        ? undefined
+        : "Connect an integration or add providers to your config"
+    return (
+      <box paddingLeft={DIALOG_LIST_INSET} paddingRight={DIALOG_LIST_INSET}>
+        <text fg={theme.text.feedback.warning.base}>{message}</text>
+        {hint ? <text fg={theme.text.muted}>{hint}</text> : undefined}
+      </box>
+    )
+  })
 
   const showExtra = createMemo(() => connected() && !props.providerID)
 
@@ -198,6 +223,7 @@ function DialogConnectedModels(props: {
       searchInTitle
       titlePlaceholder="Search models"
       options={options()}
+      emptyView={emptyView()}
       actions={[
         {
           command: "model.dialog.provider",

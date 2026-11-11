@@ -1,10 +1,12 @@
 import * as fuzzysort from "fuzzysort"
-import { createMemo, createSignal } from "solid-js"
+import { createMemo, createSignal, onMount } from "solid-js"
 import { useData } from "../context/data"
 import { useLocal } from "../context/local"
 import { useLocation } from "../context/location"
 import { modelPreferenceKey } from "../model-preference"
+import { DIALOG_LIST_INSET } from "../ui/dialog"
 import { DialogSelect } from "../ui/dialog-select"
+import { useTheme } from "../context/theme"
 import { FavoriteMarker, ModelDetail, isFreeModel, prioritizeFavorites } from "./model-options"
 
 /** Model picker for users without a connected provider, under the "new-designs" experiment. */
@@ -15,7 +17,20 @@ export function DialogFreeModels(props: {
   const local = useLocal()
   const data = useData()
   const location = useLocation()
+  const theme = useTheme().surface("dialog")
   const [query, setQuery] = createSignal("")
+  const modelList = createMemo(() => data.location.model.list(location.ref))
+  onMount(() => {
+    // An interrupted or failed location sync leaves the catalog missing; retry it while the user looks.
+    if (modelList() === undefined) void data.location.sync(location.ref)
+  })
+  const emptyView = createMemo(() => (
+    <box paddingLeft={DIALOG_LIST_INSET} paddingRight={DIALOG_LIST_INSET}>
+      <text fg={theme.text.feedback.warning.base}>
+        {modelList() === undefined ? "Loading models…" : "No free models available in this workspace"}
+      </text>
+    </box>
+  ))
   // Favoriting does not reorder the list until the dialog is reopened.
   const favoritePriority = new Set(local.model.favorite().map(modelPreferenceKey))
   const recentRank = new Map(local.model.recent().map((item, index) => [modelPreferenceKey(item), index]))
@@ -24,7 +39,7 @@ export function DialogFreeModels(props: {
     local.model.favorite().some((item) => item.providerID === value.providerID && item.modelID === value.modelID)
 
   const options = createMemo(() => {
-    const all = (data.location.model.list(location.ref) ?? [])
+    const all = (modelList() ?? [])
       .filter((model) => model.status !== "deprecated" && isFreeModel(model))
       .map((model) => {
         const value = { providerID: model.providerID, modelID: model.id }
@@ -55,6 +70,7 @@ export function DialogFreeModels(props: {
       title="Free models"
       description="Connect a provider for access to more models"
       options={options()}
+      emptyView={emptyView()}
       actions={[
         {
           command: "model.dialog.provider",
