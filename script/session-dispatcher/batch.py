@@ -130,11 +130,14 @@ class Batch:
         require(row is not None, "Configure both task and learning provider pools before enqueueing")
         return row[0]
 
-    def enqueue(self, task_id, name, text, paths, learning, dependencies=None):
+    def enqueue(self, task_id, name, text, paths, learning, dependencies=None, *, purpose='delivery'):
         require(re.fullmatch(r"[A-Za-z0-9_-]{1,80}", task_id), "Invalid task ID")
         require(text.strip() and len(text.encode()) <= 65536, "Task text must contain 1..65536 bytes")
         paths = allowed_paths(paths)
         assignment = {"name": name, "text": text, "paths": paths, "learning": learning}
+        require(purpose in ('delivery', 'shadow_review'), 'Unknown assignment purpose')
+        if purpose != 'delivery':
+            assignment['purpose'] = purpose  # Legacy frozen assignments/hashes stay byte-identical.
         dependencies = normalize([] if dependencies is None else dependencies)
         if dependencies:
             assignment['dependencies'] = dependencies
@@ -262,7 +265,7 @@ class Batch:
                     self.save(task_id, "blocked", str(error))
             reasons = {}
             waiting_dependencies = False
-            for row in self.d.db.execute("SELECT * FROM queued WHERE state='pending' ORDER BY created,task_id").fetchall():
+            for row in self.d.db.execute("SELECT * FROM queued WHERE state='pending' ORDER BY coalesce(json_extract(spec,'$.purpose'),'delivery')='shadow_review',created,task_id").fetchall():
                 task_id, spec = row["task_id"], json.loads(row["spec"])
                 try:
                     dependencies = self.dependencies.states(task_id)

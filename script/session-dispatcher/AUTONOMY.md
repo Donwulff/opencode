@@ -447,7 +447,17 @@ verified properties, not intentions); the blocked-row characterization
 (dirt = exactly two untracked MP08 probe files; HEAD `6913176` in main;
 cited commit `8b92a823…` reachable).
 
-## Shadow-review calibration experiment (proposed, not authorized)
+## Shadow-review calibration experiment
+
+**Operator-authorized bounded trial, 2026-11-12:** `shadow.py` and the opt-in
+coordinator hook now implement forward capture plus labelled cold replay using
+the existing queue and learning. Fresh report-only sessions have frozen local
+inputs and no author-session context; references are recorded before exposing
+shadow results in the handoff. Ten units or three classification disagreements
+stop further case creation, pending adjudication. Existing delivery controls stay.
+This is a unit-level trial, not a statistical error-rate estimate or acceptance
+policy change. [README commands and recovery limits](README.md#bounded-shadow-review-trial)
+own the implemented contract; the design discussion below is its rationale.
 
 Purpose: convert the two refuted premises (risk-tier safety, same-family
 review independence) from argument into measurement. Fresh, independent

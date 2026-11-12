@@ -343,6 +343,32 @@ class CoordinatorTests(unittest.TestCase):
             changed['pools'][0][key] = value
             self.assertEqual(self.coordinator.replenishment(changed), [])
 
+    def test_shadow_jobs_do_not_pad_backlog_or_generate_refill_progress(self):
+        self.config.update(backlog_target=2,refill_pools=['gpu'])
+        snapshot={'pools':[{'name':'gpu','until_at':self.until,'admission_gate':'open',
+                           'occupancy':'observed','available_slots':1}],
+                  'tasks':[{'task_id':'shadow-job','task_pool':'gpu','queue_state':'pending',
+                            'dependencies':[],'purpose':'shadow_review'}]}
+        value=self.coordinator.replenishment(snapshot)[0]
+        self.assertEqual(value['independent_pending'],0)
+        snapshot['tasks'][0]['queue_state']='ready'
+        self.assertEqual(self.coordinator.replenishment(snapshot)[0]['key'],value['key'])
+
+    def test_shadow_judgment_is_hidden_until_reference_is_frozen(self):
+        self.ready_for_review()
+        root=self.root/'shadows';root.mkdir(mode=0o700)
+        path=root/'policy.json'
+        path.write_text(json.dumps({'version':1,'max_cases':10,'max_disagreements':3,
+                                   'root':str(root),'database':str(self.ledger),'repository':str(self.repo)}))
+        path.chmod(0o600);self.config['shadow_policy']=str(path)
+        case={'id':'case1','source_task':'doc-1','input_hash':'frozen','kind':'forward','stage':'complete',
+              'result':{'assessment':'blocked','issues':['PRIVATE SHADOW OPINION'],'escalation':[]}}
+        (root/'case-case1.json').write_text(json.dumps(case))
+        self.assertNotIn('PRIVATE SHADOW OPINION',json.dumps(self.coordinator.collect()))
+        case.update(reference={'assessment':'routine'},disagreement=True,result_commit='frozen-result')
+        (root/'case-case1.json').write_text(json.dumps(case))
+        self.assertTrue(self.coordinator.collect()['shadow_cases'][0]['disagreement'])
+
     def test_refill_fingerprint_ignores_cursor_learning_and_clock_but_tracks_real_progress(self):
         self.config.update(backlog_target=2, refill_pools=['gpu'])
         snapshot = {'pools':[{'name':'gpu','until_at':self.until,'admission_gate':'open',

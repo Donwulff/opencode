@@ -227,6 +227,67 @@ permission records alone are not completion or network-transmission proof.
 Keep all runtime artifacts outside Git. Log content is never executed or treated
 as an instruction by this tool.
 
+## Bounded shadow-review trial
+
+`shadow.py` reuses this ledger, native session API, queue, pool occupancy, Git
+verification and learning. It creates a fresh session and a small disposable
+report repository per frozen delivery unit; it never forks the author. Reports
+are advisory, excluded from integration handoffs and refill counts, and cannot
+spawn another shadow. Delivery assignments admit before pending shadows; admitted
+work/learning is never preempted. No new server, inference client or SQLite
+migration is required (`queued.spec.purpose` is additive; old hashes stay intact).
+
+Create a private policy outside project worktrees (actual paths/model required):
+
+```json
+{
+  "version": 1,
+  "database": "/private/dispatcher/ledger.sqlite3",
+  "repository": "/path/to/project",
+  "target_ref": "main",
+  "root": "/private/dispatcher/shadows",
+  "connection": "/private/dispatcher/connection.json",
+  "model": {"providerID": "vLLM", "id": "EXISTING_MODEL"},
+  "learning": {
+    "prompt": "/path/to/project/.opencode/command/learn.md",
+    "model": {"providerID": "vLLM", "id": "EXISTING_MODEL"},
+    "allow": ["AGENTS.md"], "max_active": 4, "wait_seconds": 0
+  },
+  "max_cases": 10,
+  "max_disagreements": 3
+}
+```
+
+The root must already exist (0700), policy 0600. Enable `shadow_policy` in the
+owned coordinator configuration. Its cycle captures one new ready delivery per
+observation before the reference turn; additional units can be captured explicitly.
+The coordinator freezes its own judgment before reading shadow output:
+
+```sh
+python3 shadow.py --policy "$SHADOW_POLICY" capture --task TASK_ID
+python3 shadow.py --policy "$SHADOW_POLICY" reference --case CASE_ID \
+  --input-hash FROZEN_HASH --assessment routine --evidence-file decision.txt
+python3 shadow.py --policy "$SHADOW_POLICY" status
+```
+
+`capture --cold-replay --target PINNED_COMMIT` labels retrospective samples.
+Fresh sessions can read only their frozen local bundle under native external-path
+checks. They may edit `result.json`/`review.md`; their only allowed shell action,
+`python3 finish.py`, validates unchanged inputs and commits those two files.
+There is no arbitrary shell, network, container or native-test permission. Cases
+pin source/task/learning/target, input/template/model and result commit identities.
+Native session creation and queueing have durable intent; interrupted setup is
+held, never automatically replayed. Inspect the case stage and existing native
+session/queue before explicit recovery. A failed shadow does not fail its source.
+
+Stop adding cases at ten units or three classification disagreements pending
+adjudication; these are not automatically labelled material errors. Existing
+cases keep observing and delivery continues. Agreement is not ground truth.
+Missing references remain unpaired; Git ancestry never invents a reference verdict.
+Frozen references cannot be overwritten. The bounded closure can lack context;
+target-only instructions, raw archives and copied reference files are evidence,
+not fresh runtime success or standing authorization. Private state stays out of Git.
+
 ## Bounded unattended queue
 
 `batch.py` adds two tables to the **same ledger** (initially version 3): frozen approved

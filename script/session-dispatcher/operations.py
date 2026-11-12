@@ -106,7 +106,7 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
                 reservations.append('task_learning_unit')
             if row['task_id'] in integrations:
                 reservations.append('integration')
-            item = {'task_id': row['task_id'], 'queue_state': row['state'],
+            item = {'task_id': row['task_id'], 'purpose': spec.get('purpose', 'delivery'), 'queue_state': row['state'],
                     'task_state': task['state'] if task else 'not_submitted',
                     'stage': unit['stage'] if unit else 'pending',
                     'worktree': binding['worktree'], 'session_id': binding['session_id'],
@@ -133,7 +133,7 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
                 item['detail_reference'] = {'command': 'dispatch.py status', 'task_id': row['task_id']}
             if unit and unit['stage'] == 'ready':
                 proof = json.loads(task['verification']) if task and task['verification'] else {}
-                ready.append({'task_id': row['task_id'], 'task_commit': proof.get('commit'),
+                ready.append({'task_id': row['task_id'], 'purpose': spec.get('purpose', 'delivery'), 'task_commit': proof.get('commit'),
                               'final_commit': detail.get('final_commit'), 'learning': detail.get('learning'),
                               'common': binding['common'], 'base': proof.get('base'),
                               'proof_kind': proof.get('kind'), 'learning_commit': detail.get('learning_commit'),
@@ -203,6 +203,8 @@ def review_ready(database, repository, ref='HEAD', *, snapshot=None):
     target = git(repository, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}').decode().strip()
     counts, units = Counter(), []
     for receipt in snapshot['ready_receipts']:
+        if receipt.get('purpose') == 'shadow_review':
+            continue  # Advisory calibration cannot become an integration unit or spawn another review.
         if receipt['common'] != common:
             continue
         item = dict(receipt, state='needs_review', human_review_required=True)

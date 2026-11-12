@@ -17,6 +17,7 @@ import stat
 from string import Template
 import subprocess
 import sys
+import tarfile
 import threading
 import time
 import uuid
@@ -123,6 +124,11 @@ def load_config(path):
             and len(set(pools)) == len(pools),
             'Explicit refill pool names required')
     require(not value.get('backlog_target') or pools, 'Backlog target requires explicit refill pools')
+    if value.get('shadow_policy'):
+        from shadow import policy
+        shadow = policy(value['shadow_policy'])
+        require(all(Path(shadow[k]).resolve() == Path(value[k]).resolve() for k in ('database','repository'))
+                and shadow['target_ref'] == value['target_ref'], 'Shadow coordinator binding mismatch')
     require(Path(value['codex_socket']).is_absolute(), 'Absolute Codex socket required')
     require(Path(value['bun']).is_absolute() and os.access(value['bun'], os.X_OK), 'Installed Bun required')
     return value
@@ -166,7 +172,8 @@ class Coordinator:
             if (not target or pool['name'] not in self.config.get('refill_pools', [])
                     or pool['admission_gate'] != 'open' or pool['occupancy'] != 'observed'):
                 continue
-            tasks = [r for r in snapshot['tasks'] if r['task_pool'] == pool['name']]
+            tasks = [r for r in snapshot['tasks'] if r['task_pool'] == pool['name']
+                     and r.get('purpose') != 'shadow_review']
             independent = sorted(r['task_id'] for r in tasks
                                  if r['queue_state'] == 'pending' and not r['dependencies'])
             if len(independent) >= target:
@@ -187,8 +194,11 @@ class Coordinator:
         units = [r for r in handoff['units'] if r['verified_delivery']]
         attention = [{'task_id': r['task_id'], 'stage': r['stage'], 'task_state': r['task_state'],
                       'hold_reason': r.get('hold_reason'), 'cursor': r['event_cursor']}
-                     for r in snapshot['tasks'] if r['worktree_reserved'] and (r['has_issue'] or r['has_hazard'])]
+                     for r in snapshot['tasks'] if r.get('purpose') != 'shadow_review'
+                     and r['worktree_reserved'] and (r['has_issue'] or r['has_hazard'])]
         for probe in snapshot['native_sessions']:
+            if any(r['task_id'] == probe['task_id'] and r.get('purpose') == 'shadow_review' for r in snapshot['tasks']):
+                continue
             if probe.get('form_count', 0):
                 attention.append({'task_id': probe['task_id'], 'session_id': probe['session_id'],
                                   'pending_forms': probe['form_count']})
@@ -209,9 +219,25 @@ class Coordinator:
                 escalation = value
                 keys.append(key)
         fresh = sorted(set(keys) - set(self.state['seen']))
+        shadows = []
+        if c.get('shadow_policy'):
+            from shadow import policy
+            root = Path(policy(c['shadow_policy'])['root'])
+            for p in sorted(root.glob('case-*.json')):
+                case = read_json(p)
+                shadows.append({k:case.get(k) for k in ('id','source_task','input_hash','kind','stage')})
+                shadows[-1]['reference_recorded'] = bool(case.get('reference'))
+                # Do not expose the shadow judgment to the reference reviewer before its decision is frozen.
+                if case.get('reference') and 'disagreement' in case:
+                    shadows[-1].update(disagreement=case['disagreement'], result=case['result'])
+                    if case['disagreement']:
+                        key = 'shadow-disagreement:' + case['id'] + ':' + case['result_commit']
+                        if key not in self.state['seen']:
+                            fresh.append(key)
         return {'target': handoff['target'], 'units': units, 'attention': attention,
                 'queue': snapshot['counts']['queue'], 'runner': snapshot['runner'], 'keys': fresh, 'escalation': escalation,
                 'replenishment': replenishment, 'dependency_ready': dependency_ready,
+                'shadow_policy': c.get('shadow_policy'), 'shadow_cases': shadows,
                 'meaning': 'Notification inputs only; source correctness and integration remain unapproved.'}
 
     def request_escalation(self, risk, reason, issue=None):
@@ -413,6 +439,13 @@ def run(config):
                 if stopped.is_set() or stop.exists() and read_json(stop).get('attempt') == attempt:
                     break
                 try:
+                    if config.get('shadow_policy'):
+                        try:
+                            from shadow import cycle
+                            cycle(config['shadow_policy'])
+                        except (DispatchError, OSError, ValueError, KeyError, TypeError,
+                                subprocess.CalledProcessError, tarfile.TarError) as error:
+                            coordinator.save(shadow_error=str(error)[:1024])
                     coordinator.tick()
                 except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
                     coordinator.save(status='observation_or_delivery_error', error_type=type(error).__name__, error=str(error)[:1024])
