@@ -1,6 +1,7 @@
 # Unattended operation: current capabilities and delivery milestones
 
-Updated 2026-11-12 for the native coordinator throughput controls. The original
+Updated 2026-11-12 for the native coordinator throughput controls and the
+metered-inference allocation section appended the same day. The original
 2026-11-10 assessment used dispatcher commit
 `d59c11f64eb56f1c9fdf64f858fd0fe1a8585b88`, its tests, the running ledger
 (read-only), and the recent Qwen batches. This replaces the initial Qwen design
@@ -270,6 +271,105 @@ overlap or an agent's commit. Stop when approved useful work runs out.
 Acceptance: duplicate, superseded, blocked and out-of-scope proposals cause no
 dispatch; independent approved work continues. Cap planning calls and queue
 growth. No automatic prompt rewrite, broader audit or indefinite task generation.
+
+## Metered-inference allocation and next work (2026-11-12)
+
+The 2026-11-12 coordinator window spent all fifteen wakes
+(`ledger.sqlite3.coordinator.json`, `max_wakes: 15`): twelve medium turns and
+three xhigh escalations. The escalations were acceptance-level judgments
+(MP08 unit memory safety; MP10 context-port memory safety; smoke-maps source
+ambiguity where an independent counterexample to the candidate was found).
+The medium turns reconciled state, drafted and enqueued follow-up Qwen tasks
+(`coordinator-20261112/backlog-23890/`, `followup-65b9df79/`), drafted
+dependent and repair tasks (`mp10-review-6f8c/`, `maps-repair-ec6e/`,
+`smoke-payload-review-c8d8/`), and ran the safe integration/synchronization/
+renewal commands named in the template. Each metered turn's output still
+needs operator reconciliation, so metered turns are a scarce coordination
+resource, not a labor pool.
+
+**Provable-difference test.** Assign an activity to metered inference only
+when it is (a) an acceptance-level judgment, not labor, (b) about source
+correctness, memory safety, conflicting evidence or scope, not bookkeeping,
+and (c) consequential if wrong and undetectable by the deterministic gates
+downstream (verification, merge-tree preflight, ancestry receipts, operator
+approval). Everything else moves to deterministic code or local Qwen. Qwen's
+marginal cost is about zero — one stream and a fully loaded pool cost the
+same — so while useful work exists the GPU should be running Qwen streams,
+and Qwen work should fill the slots during metered cooldowns.
+
+### Observed-day classification
+
+| Activity on 2026-11-12 | Class | Destination |
+| --- | --- | --- |
+| Three xhigh escalations (memory safety x2; source ambiguity with counterexample) | Judgment; independence is the point | Keep metered; per-issue budget unchanged |
+| State reconciliation inside each turn | Duplicated: `operations.report()` already does it deterministically | Deterministic; drop from wake work |
+| Drafting/enqueueing two-to-three follow-ups per wake (refill, dependent, repair tasks) | Labor: reference lookup, deduplication, bounded prompt writing | Qwen drafting (free); deterministic dedup/eligibility; batched approval |
+| Safe integration/synchronization/renewal commands | Mechanical under verifiable preconditions | Deterministic M3a commands under existing approval receipts |
+| Reviewing routine units (all five unmerged units are `completed_no_changes`/`completed`, no risk flags) | Evidence-versus-contract check; errors detectable | Deterministic preflight + Qwen advisory receipt (no acceptance privilege); operator batch approval; metered only when risk flags are present |
+
+### Next work, in order
+
+1. **Consolidate and clear the genuinely unmerged units.** The read-only
+   handoff against `main` (`batch.py status --review-ready --repository
+   <repo> --ref main`) counts 119 of the 132 ready units
+   `already_integrated`, five `awaiting_review` (mp09-inttest4-rpm,
+   smoke-v3-payload-gate, mp09-oracle-plan-review,
+   smoke-v3-payload-offline-review, smoke-v4-assembly) and eight historical
+   `needs_review` rows. `qwen-ol6-mp09-inttest4-rpm` (final `3e0858ae…`, not
+   in main) is the only unit gating the two `integrated`-dependent pending
+   tasks (mp0910-combined-rpm, inttest4-partial-kit; the other prerequisites
+   mp10-context-port and smoke-descendant-fix are already in main).
+   Integrating that one unit through the existing gate is the single action
+   that unblocks the delivery-graph critical path; the other four are
+   independent.
+2. **Deterministic retirement of already-integrated rows** (the M5
+   "read-only reconciliation of manual merges from actual task/learning
+   ancestry"): a `retire --integrated-at <sha>` receipt for ready rows whose
+   final commit is an ancestor of the named ref. Shrinks the visible backlog
+   from 132 rows to 13, stops the 119 ancestry-verified units from bloating
+   every wake's handoff, and feeds the stop condition. No inference.
+3. **Read-only merge-tree preflight verdicts in the handoff**
+   (clean/conflict/drift against the designated target, plus a combined
+   diff): the preflight exists in `integrate.freeze` but is behind
+   enrollment; extract it read-only into `review_ready` so the five-unit
+   handoff is actionable in one operator pass. No inference.
+4. **M3a deterministic renewal/synchronization** (the rollout's stated next
+   target): removes the recurring safe-command labor from metered turns and
+   enables same-worktree pipelines.
+5. **Restructure M6 refill:** a standing Qwen drafting pipeline
+   (report-only candidate tasks within standing scope), deterministic
+   dedup/eligibility, then one short metered (or operator) batch-approval
+   turn per refill cycle instead of a full coordination turn; preapproved
+   checklist steps go straight to enqueue. Planning caps unchanged.
+6. **Blocked-row housekeeping** (operational, no code):
+   `qwen-ol6-inttest3-regressions-20261112` is `blocked` only because its
+   worktree holds two untracked MP08 probe files (`tests/mp08-probe.*`); its
+   worktree HEAD `6913176` is already in `main` and the commit `8b92a823…`
+   its escalation cited is reachable there. A read-only Qwen diagnostic
+   (dirt classification plus ancestry receipt, no deletion) and retirement
+   per 2 close it without a metered turn. The current coordinator window has
+   spent its wake budget (15/15; deadline 2026-11-13T06:15Z), so any further
+   wakes need a fresh bounded window.
+
+### What stays metered, and why
+
+- Acceptance review of units with non-routine risk flags: independence from
+  the Qwen family that produced the work is the provable difference, and the
+  smoke-maps counterexample is the observed payoff.
+- Budgeted per-issue escalations (unchanged).
+- Batch approval of follow-up candidates in unattended windows: bounded
+  short input; M6's "do not infer authorization from report text" rule
+  unchanged; nothing auto-dispatches.
+- A Qwen advisory receipt never satisfies `integrate.approve` alone: the
+  confirmed-routine plus explicit risk-acknowledgement flow and human
+  approval are unchanged, so quality is gated by the existing receipts
+  regardless of which model wrote the receipt.
+
+Expected effect from the observed pattern: metered turns per window drop from
+about fifteen to about four-to-six (the escalations plus one-to-three batch
+approvals or urgent reviews), all on judgment work; the wake budget lasts
+about two-to-three times longer per window; Qwen streams fill the slots that
+metered labor no longer occupies.
 
 ## Rollout and stopping point
 
