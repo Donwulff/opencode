@@ -288,7 +288,11 @@ with actual paths and an explicit end time. Example shape (replace placeholders)
   "min_ready": 2,
   "max_wait": 180,
   "cooldown": 600,
-  "max_wakes": 3,
+  "max_wakes": 12,
+  "backlog_target": 6,
+  "refill_pools": ["gpu"],
+  "urgent_cooldown": 30,
+  "max_escalations": 4,
   "allow_resume": false,
   "allow_effort_override": false,
   "base_effort": "medium",
@@ -331,11 +335,32 @@ Do not auto-resume a foreground context through the wrong daemon. Default
 dedicated coordinator. Active turns and pending human queue input are never
 interrupted or reordered. Existing approval and quota boundaries still apply.
 
+Queue pressure is opt-in: `backlog_target` defaults to zero, and a nonzero value
+requires explicit `refill_pools`. An open pool with observed occupancy and fewer
+independent pending assignments than that target wakes the coordinator to prepare
+useful authorized follow-ups, even without a new completed unit. Dependent pending
+work is reported separately by the ledger and does not count as independent backlog.
+This is a planning signal, never an admission/resource override. No suitable work
+can be a valid outcome. A stable queue fingerprint admits only one refill wake
+until assignments are added, admitted or completed; clock ticks, learning phases,
+instruction views and the coordinator's own Git changes do not repeat it.
+
+Ready units needed by pending `integrated` prerequisites and backlog shortfalls
+use `urgent_cooldown` (default: ordinary cooldown), bypassing batch-size/wait
+delays. All native idle/human-queue checks, total wake budget and deadline remain.
+This avoids a ten-minute review delay becoming the critical path of minute-long
+worker tasks. Changing a live policy needs an owned notifier handoff; admitted
+worker prompts and existing receipt history stay unchanged.
+
 For a dedicated coordinator, `allow_effort_override:true` controls only its
 future-turn effort, leaving model/permissions unchanged. Routine work defaults
-to medium. Its `escalate --risk RISK --reason EVIDENCE` command accepts only the
-configured Codex thread, reuses `review.RISKS` (high/xhigh), and permits one
-higher-effort continuation within the same wake budget. Known operator-only
+to medium. `escalate --issue TASK_OR_BLOCKER_ID --risk RISK --reason EVIDENCE`
+accepts only the configured Codex thread and reuses `review.RISKS` (high/xhigh).
+The default remains one escalation. An explicit `max_escalations` permits more
+distinct issues within the same total wake budget; existing escalations still
+count, and the same stable issue cannot escalate twice. Requests are journaled
+before updating the pending pointer; an unresolved request cannot be replaced,
+and an interrupted pointer write retains its intent for inspection. Known operator-only
 decisions remain blocked; escalation never provides approval. Qwen reasoning is
 unchanged. No model calls are made just to poll status or repeat historical
 manually accounted checkpoints. New technical task selection remains judgment

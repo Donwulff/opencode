@@ -1,10 +1,33 @@
 # Unattended operation: current capabilities and delivery milestones
 
-Reviewed 2026-11-10 against dispatcher commit
+Updated 2026-11-12 for the native coordinator throughput controls. The original
+2026-11-10 assessment used dispatcher commit
 `d59c11f64eb56f1c9fdf64f858fd0fe1a8585b88`, its tests, the running ledger
 (read-only), and the recent Qwen batches. This replaces the initial Qwen design
 at `64e8d9e656` and its 2026-11-09 amendment; their full rationale remains in Git.
 It is an implementation roadmap, not authorization to change live assignments.
+
+## Operational priority
+
+The objective is completed, verified delivery with an approved backlog ready for
+the GPU, not the fewest coordinator calls. Routine choices within the operator's
+standing correction/release scope belong to the coordinator; they should not
+wait for another human "continue". External inputs, new authorization and
+consequential release/policy choices remain operator decisions. Qwen can provide
+bounded evidence reconciliation, repair and follow-up proposals without gaining
+integration authority. Routine Codex coordination remains medium effort; model
+tiering is an optimization after a dependable flow, not a prerequisite for it.
+
+The concrete bottlenecks observed on November 12 were missing queue-refill
+notifications, a ten-minute review cooldown on short worker tasks, and a single
+escalation already spent when unrelated issues arrived. Opt-in queue-pressure
+wakes, urgent prerequisite reviews and bounded per-issue escalation now address
+those in `coordinator.py`. A stable workset does not create a planning loop.
+All existing task/learning verification, ownership, resource and merge gates stay.
+
+The next useful acceptance test is the live approved delivery graph draining
+through learning, review and dependency admission while new useful work is
+prepared. Do not postpone that behind a bulk importer or a new scheduler.
 
 ## Assessment
 
@@ -29,12 +52,13 @@ units and named blockers. Integration keeps its existing human approval.
 | Queued delivery and observation | `batch.py`: deep frozen backlog, stable task/message IDs, intent before one POST, durable replay, Git verification and assignment-scoped error handling. Recent live batches use it. | Admission deduplication does not prove tool effects happened once. Observer restart reconciles existing intent; it does not resend uncertain work. |
 | Resources and hours | Provider pools enforce capacity, external occupancy, finite admission deadline, quota/rate-limit pauses; learning shares capacity. | No recurring calendar, production-GPU detector, cross-host/provider-alias accounting or enforced container/build leases. Those remain explicit coordinator inputs. |
 | Post-task learning | `lifecycle.py`: once-only disposable fork, Qwen override, existing learn prompt snapshot, optional separate commit, failure/no-change accounting and archival. Live use plus native fixture smoke. | The fork shares the task's filesystem. Keep the worktree reserved through accounting. Pre-admission wait/skip is bounded; an uncertain executing fork cannot simply time out and release ownership. |
-| Dependencies | `dependencies.py`: immutable task-ID edges, `verified` / `integrated` / `approved`, admission proofs, cycle checks and scoped holds. Included in the recorded 159-fixture pass at `d59c11f64e`. | Opt-in schema 6 is implemented; the inspected live ledger is still schema 5 without edges. It was not migrated in this review. |
+| Dependencies | `dependencies.py`: immutable task-ID edges, `verified` / `integrated` / `approved`, admission proofs, cycle checks and scoped holds. Schema 6 was activated for the November 12 approved delivery graph after backing up the stopped ledger. | Native build jobs await reviewed integration of their exact prerequisites; live dependency admission is distinct from fixture coverage. |
 | Interrupted-task continuation | `recovery.py`: checkpoint/effect evidence, approval hash, one durable continuation intent, deliberate model handoff and capacity waiting. Big Pickle quota and Qwen continuation have live operating evidence. | Planning/preparation and quota reopening need explicit approval. No standing retry policy or unattended effects judgment exists. |
 | Review and integration | `review.py` and `integrate.py`: frozen unit/target, merge-tree preflight, structured bounded review, explicit approval and history-preserving merge receipt. | Fixtures cover the mechanics; the live record has 20 deferred integration enrollments because coordination used manual reviewed merges. This is not 20 outstanding unmerged results. No paid end-to-end review is claimed by the fixture pass. |
+| Coordinator throughput | Native Codex wake-ups for ready units, issues and opt-in independent-backlog shortfalls; urgent dependency reviews; durable per-issue escalation within explicit budgets. | The coordinator chooses useful work and performs existing safe integration/renewal commands. The notifier does not select technical work, grant authorization or retry uncertain effects. |
 | Prompts and feedback | Versioned task/learn/continue/review templates; stored hashes and exact submitted payloads; event-linked feedback. Latest task assignments explicitly avoid routine questions. | That instruction currently lives in batch text, not a shared template. No automatic question responder or prompt rewriting exists. |
 
-Version observations: Python 3.14.4, Git 2.53.0, Bun 1.4.4, installed OpenCode CLI
+Original November 10 version observations: Python 3.14.4, Git 2.53.0, Bun 1.4.4, installed OpenCode CLI
 v2.2.2 and Codex CLI 0.167.0. The dedicated host runs the source
 [serve.ts](serve.ts), not necessarily the installed CLI build; preserve its
 existing retained-event contract rather than inferring compatibility from a
@@ -143,7 +167,11 @@ fixtures in `test_runner.py` / `test_operations.py`. No ledger schema change or
 live observer takeover is performed. Adoption needs the documented owned handoff;
 M2 is the next implementation milestone after that operational check.
 
-### M2 — Import a complete approved backlog
+### M2 — Import convenience (not a throughput prerequisite)
+
+The existing enqueue API already populated a seven-task dependency graph in
+live use. A file importer reduces setup work but need not precede automatic
+admission, coordinator-driven refill or useful sequential work.
 
 Add a small validated bulk input to the existing enqueue path, not a persistent
 `controller.py` plan engine. Each item supplies stable task ID, bounded prompt,
@@ -221,17 +249,21 @@ provenance and no automatic acceptance privilege.
 The read-only `status --review-ready` handoff and bounded `coordinator.py`
 notifier implement part of M5: batches can wake one approved persistent Codex
 coordinator through its native queue. Dedicated-context resume and effort control
-are explicit opt-ins with a finite wake/escalation budget. Source correctness
+are explicit opt-ins with finite total wake and per-issue escalation budgets.
+Backlog pressure can trigger replenishment without waiting for another result;
+ready prerequisites use the configured urgent cooldown. Source correctness
 and safe integration still use existing gates. This does not implement automatic
 new-investigation selection or M3 worker reuse. See the README for exact controls
 and the native transport/ownership limits.
 
-### M6 — Optional replenishment proposals
+### M6 — Replenishment within standing scope
 
-Only after M1–M5 reduce routine supervision, let a bounded Qwen task propose
-follow-ups from PLAN and frozen verified evidence. Match known task IDs to avoid
-duplicates and prioritize existing correction/release gates. New proposals are
-drafts for approval; preapproved checklist steps can flow through M2/M3 directly.
+The existing Codex coordinator may select and approve bounded follow-ups within
+the operator's standing delivery scope now, using PLAN and frozen verified
+evidence. It can ask Qwen for proposals or routine repair where useful. Match
+known task IDs to avoid duplicates and prioritize correction/release gates.
+Work outside that scope remains a draft for approval; preapproved checklist
+steps can flow through the existing enqueue/dependency path directly.
 Do not infer authorization from report text, a schema-valid response, path
 overlap or an agent's commit. Stop when approved useful work runs out.
 
@@ -241,11 +273,12 @@ growth. No automatic prompt rewrite, broader audit or indefinite task generation
 
 ## Rollout and stopping point
 
-Ship M1 first, then M2 and a controlled dependency pilot. Defer M3's schema work
-until sequential context reuse is the observed bottleneck. M4 and M5 can then
-be delivered independently under their existing approval boundaries. M6 is
-optional; a finite well-prepared backlog already delivers useful unattended
-work without an autonomous research planner.
+M1, the approved queue/dependencies and native coordinator are operating. First
+trial the throughput controls on the current delivery graph. Next automate the
+repeated synchronization/renewal commands of M3a if they remain the bottleneck;
+current safe manual commands are already available to the coordinator. M3b/M4
+need their own bounded resource/recovery trials. Bulk intake and cheaper-model
+routing can follow measured need. No autonomous research planner is required.
 
 Use a pool-sized disposable pilot before enabling each new mutation path. Stop
 admission outside the approved resource window, at the finite run budget, or
@@ -253,4 +286,5 @@ when no suitable approved task remains; keep observing admitted work to the
 separate drain deadline. A scoped blocker must not become a global stop unless
 it actually consumes a required resource or exposes an infrastructure failure.
 Keep runtime state/reports private; retain technical decisions and evidence links
-in Git. This review changes documentation only.
+in Git. The notifier changes scheduling notifications only; it still cannot
+approve a correction, admit Qwen work, merge branches or create containers.

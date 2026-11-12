@@ -9,6 +9,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest.mock import patch
 
 from coordinator import Coordinator, CodexRPC, load_config, lock, same_input
 from dispatch import DispatchError
@@ -307,6 +308,170 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(effort[-1], {'threadId':'thread-fixture','effort':'xhigh'})
         self.assertTrue(self.coordinator.state['entries'][-1]['escalation'])
         self.assertEqual(self.native.starts, 2)
+
+    def test_low_backlog_wakes_without_completed_units_and_deduplicates_across_restart(self):
+        self.git('branch', 'target')
+        self.enqueue()
+        self.config.update(backlog_target=2, refill_pools=['gpu'])
+        before = self.ledger.read_bytes(), self.git('show-ref'), list(self.api.posts)
+        self.coordinator.tick(at=self.at)
+        entry = self.coordinator.state['entries'][0]
+        handoff = json.loads(Path(entry['handoff']).read_text())
+        self.assertEqual(handoff['units'], [])
+        self.assertEqual(handoff['replenishment'][0]['independent_pending'], 1)
+        self.assertEqual(self.native.starts, 1)
+        self.assertEqual((self.ledger.read_bytes(), self.git('show-ref'), list(self.api.posts)), before)
+        self.native.status = 'idle'
+        self.restart()
+        self.coordinator.tick(at=self.at + timedelta(minutes=5))
+        self.assertEqual(self.native.starts, 1)
+        self.assertEqual(self.coordinator.state['status'], 'no_new_review_work')
+
+    def test_refill_requires_explicit_open_observed_pool_and_independent_shortfall(self):
+        self.config.update(backlog_target=1, refill_pools=['gpu'])
+        pool = {'name':'gpu','until_at':self.until,'admission_gate':'open',
+                'occupancy':'observed','available_slots':0}
+        task = {'task_id':'queued','task_pool':'gpu','queue_state':'pending','dependencies':[]}
+        snapshot = {'pools':[pool], 'tasks':[task]}
+        self.assertEqual(self.coordinator.replenishment(snapshot), [])
+        task['dependencies'] = [{'task':'future','when':'integrated'}]
+        pressure = self.coordinator.replenishment(snapshot)
+        self.assertEqual(pressure[0]['independent_pending'], 0)
+        for key, value in [('admission_gate','paused'),('admission_gate','outside_window'),
+                           ('occupancy','unknown'),('name','unapproved')]:
+            changed = copy.deepcopy(snapshot)
+            changed['pools'][0][key] = value
+            self.assertEqual(self.coordinator.replenishment(changed), [])
+
+    def test_refill_fingerprint_ignores_cursor_learning_and_clock_but_tracks_real_progress(self):
+        self.config.update(backlog_target=2, refill_pools=['gpu'])
+        snapshot = {'pools':[{'name':'gpu','until_at':self.until,'admission_gate':'open',
+                             'occupancy':'observed','available_slots':0}],
+                    'tasks':[{'task_id':'a','task_pool':'gpu','queue_state':'active',
+                              'dependencies':[],'stage':'task','event_cursor':1}]}
+        first = self.coordinator.replenishment(snapshot)[0]['key']
+        snapshot['generated_at'] = 'later'
+        snapshot['tasks'][0].update(stage='learning', event_cursor=200)
+        self.assertEqual(self.coordinator.replenishment(snapshot)[0]['key'], first)
+        snapshot['tasks'][0]['queue_state'] = 'ready'
+        self.assertNotEqual(self.coordinator.replenishment(snapshot)[0]['key'], first)
+
+    def test_ready_integration_prerequisite_bypasses_batch_delay_but_respects_urgent_cooldown(self):
+        self.ready_for_review()
+        self.second_session()
+        self.batch.enqueue('dependent', 'second', 'Review README.', ['README.md'], self.policy,
+                           dependencies=[{'task':'doc-1','when':'integrated','ref':'refs/heads/target'}])
+        self.config.update(min_ready=5, max_wait=3600, cooldown=600, urgent_cooldown=15)
+        handoff = self.coordinator.collect()
+        self.assertEqual(handoff['dependency_ready'], ['doc-1'])
+        self.coordinator.tick(at=self.at, handoff=handoff)
+        self.assertEqual(self.native.starts, 1)
+        self.native.status = 'idle'
+        handoff['keys'] = ['new-result']
+        self.coordinator.tick(at=self.at + timedelta(seconds=10), handoff=handoff)
+        self.assertEqual(self.coordinator.state['status'], 'batching_cooldown')
+        self.coordinator.tick(at=self.at + timedelta(seconds=15), handoff=handoff)
+        self.assertEqual(self.native.starts, 2)
+
+    def test_refill_keeps_wake_budget_human_queue_and_deadline_guards(self):
+        self.git('branch', 'target')
+        self.config.update(backlog_target=3, refill_pools=['gpu'], max_wakes=1)
+        self.native.pending = [{'id':'human','clientUserMessageId':'human','input':[]}]
+        self.coordinator.tick(at=self.at)
+        self.assertEqual(self.native.starts, 0)
+        self.native.pending = []
+        self.coordinator.tick(at=self.at)
+        self.assertEqual(self.native.starts, 1)
+        self.native.status = 'idle'
+        # Real new queue work can require another top-up, never another budget.
+        self.enqueue()
+        self.coordinator.tick(at=self.at + timedelta(minutes=5))
+        self.assertEqual(self.coordinator.state['status'], 'wake_budget_reached')
+        self.coordinator.tick(at=self.at + timedelta(hours=2))
+        self.assertEqual(self.coordinator.state['status'], 'deadline_reached')
+
+    def test_distinct_issues_get_bounded_escalations_without_replaying_one_issue(self):
+        self.git('branch', 'target')
+        self.config.update(allow_effort_override=True, base_effort='medium', max_wakes=5, max_escalations=2)
+        self.restart()
+        with patch.dict(os.environ, CODEX_THREAD_ID='thread-fixture'):
+            first = self.coordinator.request_escalation('memory_safety', 'specific invariant', 'task-a')
+            self.coordinator.tick(at=self.at)
+            self.assertTrue(self.coordinator.state['entries'][-1]['escalation'])
+            self.assertEqual(self.coordinator.state['entries'][-1]['escalation_issue'], 'task-a')
+            with self.assertRaisesRegex(DispatchError, 'already escalated'):
+                self.coordinator.request_escalation('memory_safety', 'retry', 'task-a')
+            second = self.coordinator.request_escalation('conflicting_evidence', 'another unit', 'task-b')
+            self.assertNotEqual(first['id'], second['id'])
+            self.assertEqual(json.loads((self.directory / ('coordinator-escalation-' + first['id'] + '.json')).read_text()), first)
+            self.native.status = 'idle'
+            self.coordinator.tick(at=self.at + timedelta(seconds=1))
+            self.assertEqual(self.native.starts, 2)
+            with self.assertRaisesRegex(DispatchError, 'escalation budget'):
+                self.coordinator.request_escalation('source_ambiguity', 'third', 'task-c')
+
+    def test_pending_escalation_intent_is_not_replaced_and_caller_is_fenced(self):
+        self.config.update(allow_effort_override=True, max_wakes=5, max_escalations=3)
+        self.restart()
+        with patch.dict(os.environ, CODEX_THREAD_ID='wrong-thread'):
+            with self.assertRaisesRegex(DispatchError, 'configured coordinator'):
+                self.coordinator.request_escalation('failed_tests', 'reason', 'task-a')
+        with patch.dict(os.environ, CODEX_THREAD_ID='thread-fixture'):
+            with self.assertRaisesRegex(DispatchError, 'stable --issue'):
+                self.coordinator.request_escalation('failed_tests', 'reason')
+            self.coordinator.request_escalation('failed_tests', 'reason', 'task-a')
+            pending = (self.directory / 'coordinator-escalation.json').read_bytes()
+            with self.assertRaisesRegex(DispatchError, 'still unresolved'):
+                self.coordinator.request_escalation('failed_tests', 'other', 'task-b')
+            self.assertEqual((self.directory / 'coordinator-escalation.json').read_bytes(), pending)
+
+    def test_legacy_escalation_counts_toward_new_explicit_budget(self):
+        self.config.update(allow_effort_override=True, max_wakes=5)
+        self.restart()
+        self.coordinator.state['entries'] = [{'escalation':True}]
+        with patch.dict(os.environ, CODEX_THREAD_ID='thread-fixture'):
+            with self.assertRaisesRegex(DispatchError, 'escalation budget'):
+                self.coordinator.request_escalation('failed_tests', 'new issue', 'task-b')
+            self.config['max_escalations'] = 2
+            self.coordinator.request_escalation('failed_tests', 'new issue', 'task-b')
+
+    def test_interrupted_escalation_pointer_write_retains_intent_without_another_request(self):
+        from runner import write_json
+        self.config.update(allow_effort_override=True, max_wakes=5, max_escalations=3)
+        self.restart()
+        def interrupted(path, value):
+            if path.name == 'coordinator-escalation.json':
+                raise OSError('Interrupted pointer write')
+            write_json(path, value)
+        with patch.dict(os.environ, CODEX_THREAD_ID='thread-fixture'):
+            with patch('coordinator.write_json', side_effect=interrupted), self.assertRaises(OSError):
+                self.coordinator.request_escalation('failed_tests', 'reason', 'task-a')
+            self.assertEqual(len(list(self.directory.glob('coordinator-escalation-*.json'))), 1)
+            with self.assertRaisesRegex(DispatchError, 'already has an escalation intent'):
+                self.coordinator.request_escalation('failed_tests', 'reason', 'task-a')
+        self.assertEqual(self.native.calls, [])
+
+    def test_optional_policy_validation_preserves_legacy_defaults_and_bounds(self):
+        path = self.directory / 'config.json'
+        for settings in ({}, {'backlog_target':-1}, {'backlog_target':2},
+                         {'refill_pools':[{}]}, {'max_escalations':3},
+                         {'backlog_target':2,'refill_pools':['gpu'],'urgent_cooldown':15,'max_escalations':2}):
+            value = dict(self.config, **settings)
+            path.write_text(json.dumps(value))
+            path.chmod(0o600)
+            if not settings or 'urgent_cooldown' in settings:
+                self.assertEqual(load_config(path)['thread_id'], 'thread-fixture')
+            else:
+                with self.assertRaises(DispatchError):
+                    load_config(path)
+
+    def test_parallel_escalation_writers_cannot_replace_the_pending_pointer(self):
+        self.config.update(allow_effort_override=True, max_wakes=5, max_escalations=3)
+        self.restart()
+        with patch.dict(os.environ, CODEX_THREAD_ID='thread-fixture'):
+            with lock(self.directory / 'escalation'), self.assertRaises(DispatchError):
+                self.coordinator.request_escalation('failed_tests', 'reason', 'task-a')
+        self.assertFalse((self.directory / 'coordinator-escalation.json').exists())
 
     def test_foreground_notifier_can_stop_without_touching_agents_and_rejects_duplicate_owner(self):
         self.git('branch', 'target')

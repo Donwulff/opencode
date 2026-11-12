@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import selectors
 import shlex
 import shutil
@@ -111,6 +112,17 @@ def load_config(path):
     require(type(value.get('allow_resume', False)) is bool, 'allow_resume must be an explicit boolean')
     require(type(value.get('allow_effort_override', False)) is bool, 'allow_effort_override must be boolean')
     require(value.get('base_effort', 'medium') in ('medium', 'high', 'xhigh'), 'Invalid base effort')
+    for key, default, high in [('backlog_target', 0, 100), ('urgent_cooldown', value['cooldown'], 3600),
+                               ('max_escalations', 1, value['max_wakes'])]:
+        setting = value.get(key, default)
+        require(type(setting) is int and (1 if key == 'max_escalations' else 0) <= setting <= high,
+                'Invalid coordinator ' + key)
+    pools = value.get('refill_pools', [])
+    require(isinstance(pools, list) and len(pools) <= 16
+            and all(isinstance(p, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', p) for p in pools)
+            and len(set(pools)) == len(pools),
+            'Explicit refill pool names required')
+    require(not value.get('backlog_target') or pools, 'Backlog target requires explicit refill pools')
     require(Path(value['codex_socket']).is_absolute(), 'Absolute Codex socket required')
     require(Path(value['bun']).is_absolute() and os.access(value['bun'], os.X_OK), 'Installed Bun required')
     return value
@@ -146,6 +158,28 @@ class Coordinator:
         self.state.update(fields, heartbeat_at=datetime.now(timezone.utc).isoformat())
         write_json(self.path, self.state)
 
+    def replenishment(self, snapshot):
+        """Read-only queue pressure, not technical task selection or admission."""
+        result = []
+        target = self.config.get('backlog_target', 0)
+        for pool in snapshot['pools']:
+            if (not target or pool['name'] not in self.config.get('refill_pools', [])
+                    or pool['admission_gate'] != 'open' or pool['occupancy'] != 'observed'):
+                continue
+            tasks = [r for r in snapshot['tasks'] if r['task_pool'] == pool['name']]
+            independent = sorted(r['task_id'] for r in tasks
+                                 if r['queue_state'] == 'pending' and not r['dependencies'])
+            if len(independent) >= target:
+                continue
+            # No timestamps, cursors, learning stages or target HEAD: polling,
+            # instruction views and our own documentation commits are not new work.
+            progress = sorted((r['task_id'], r['queue_state']) for r in tasks)
+            key = digest([pool['name'], pool['until_at'], target, progress])
+            result.append({'pool': pool['name'], 'independent_pending': len(independent),
+                           'target': target, 'available_slots': pool['available_slots'], 'key': key,
+                           'meaning': 'Prepare useful authorized backlog; no dispatch or new scope approval.'})
+        return result
+
     def collect(self):
         c = self.config
         snapshot = report(c['database'], live=True, run_dir=c.get('runner_dir'))
@@ -160,6 +194,11 @@ class Coordinator:
                                   'pending_forms': probe['form_count']})
         keys = ['unit:' + r['task_id'] + ':' + str(r['final_commit']) for r in units]
         keys += ['attention:' + digest(r) for r in attention]
+        replenishment = self.replenishment(snapshot)
+        keys += ['backlog:' + r['key'] for r in replenishment]
+        prerequisites = {edge['task'] for r in snapshot['tasks'] if r['queue_state'] == 'pending'
+                         for edge in r['dependencies'] if edge['when'] == 'integrated'}
+        dependency_ready = sorted(r['task_id'] for r in units if r['task_id'] in prerequisites)
         escalation = None
         request = self.root / 'coordinator-escalation.json'
         if request.exists():
@@ -172,7 +211,47 @@ class Coordinator:
         fresh = sorted(set(keys) - set(self.state['seen']))
         return {'target': handoff['target'], 'units': units, 'attention': attention,
                 'queue': snapshot['counts']['queue'], 'runner': snapshot['runner'], 'keys': fresh, 'escalation': escalation,
+                'replenishment': replenishment, 'dependency_ready': dependency_ready,
                 'meaning': 'Notification inputs only; source correctness and integration remain unapproved.'}
+
+    def request_escalation(self, risk, reason, issue=None):
+        # Separate from the notifier's lifetime lock: parallel tool calls may
+        # propose two issues, but must not replace an unconsumed request.
+        with lock(self.root / 'escalation'):
+            if self.path.exists():
+                self.state = Coordinator(self.config).state
+            return self._request_escalation(risk, reason, issue)
+
+    def _request_escalation(self, risk, reason, issue):
+        c, s = self.config, self.state
+        require(c.get('allow_effort_override', False) and risk in RISKS and isinstance(reason, str) and reason.strip()
+                and len(reason.encode()) <= 4096, 'Enabled effort policy, risk and bounded reason required')
+        require(os.environ.get('CODEX_THREAD_ID') == c['thread_id'], 'Only the configured coordinator may request escalation')
+        require(issue is None or isinstance(issue, str) and re.fullmatch(r'[A-Za-z0-9_.:-]{1,120}', issue),
+                'Use a stable task or blocker ID for --issue')
+        maximum = c.get('max_escalations', 1)
+        require(maximum == 1 or issue, 'Multiple escalations require a stable --issue ID')
+        require(len(s['entries']) < c['max_wakes'], 'Coordinator wake budget exhausted')
+        require(sum(bool(e.get('escalation')) for e in s['entries']) < maximum,
+                'Coordinator escalation budget exhausted')
+        require(not issue or not any(e.get('escalation_issue') == issue for e in s['entries']),
+                'Issue already escalated; preserve its result rather than retrying it')
+        path = self.root / 'coordinator-escalation.json'
+        if path.exists():
+            previous = read_json(path)
+            require('escalation:' + previous['id'] in s['seen'], 'An escalation request is still unresolved')
+            require(re.fullmatch(r'[A-Za-z0-9_-]{1,80}', previous['id']), 'Invalid previous escalation ID')
+            archive = self.root / ('coordinator-escalation-' + previous['id'] + '.json')
+            if not archive.exists():
+                write_json(archive, previous)
+        # Keep requests even after the pending pointer advances. An interrupted
+        # pointer write is not permission to create another intent for this issue.
+        for archive in self.root.glob('coordinator-escalation-*.json'):
+            require(not issue or read_json(archive).get('issue') != issue, 'Issue already has an escalation intent')
+        request = {'id': uuid.uuid4().hex, 'thread_id': c['thread_id'], 'risk': risk, 'reason': reason, 'issue': issue}
+        write_json(self.root / ('coordinator-escalation-' + request['id'] + '.json'), request)
+        write_json(path, request)
+        return request
 
     def queue(self, client):
         entries, cursor = [], None
@@ -253,11 +332,13 @@ class Coordinator:
                 self.save(status='wake_budget_reached')
                 return
             last = s['entries'][-1]['at'] if s['entries'] else None
-            if last and not handoff.get('escalation') and (at - timestamp(last)).total_seconds() < c['cooldown']:
+            urgent = bool(handoff.get('replenishment') or handoff.get('dependency_ready'))
+            cooldown = min(c['cooldown'], c.get('urgent_cooldown', c['cooldown'])) if urgent else c['cooldown']
+            if last and not handoff.get('escalation') and (at - timestamp(last)).total_seconds() < cooldown:
                 self.save(status='batching_cooldown')
                 return
             drained = not (handoff['queue'].get('active', 0) or handoff['queue'].get('pending', 0))
-            if (len(handoff['units']) < c['min_ready'] and not handoff['attention'] and not drained
+            if (not urgent and len(handoff['units']) < c['min_ready'] and not handoff['attention'] and not drained
                     and not handoff.get('escalation')
                     and (at - timestamp(s['first_pending'])).total_seconds() < c['max_wait']):
                 self.save(status='batching_results')
@@ -299,6 +380,7 @@ class Coordinator:
                      'handoff': str(path), 'template_hash': digest(template),
                      'effort': effort if c.get('allow_effort_override', False) else 'inherited',
                      'escalation': bool(escalation),
+                     'escalation_issue': escalation.get('issue') if escalation else None,
                      'input': [{'type': 'text', 'text': prompt, 'text_elements': []}]}
             s['entries'].append(entry)
             s['seen'] = sorted(set(s['seen']) | set(handoff['keys']))
@@ -348,6 +430,7 @@ def main():
     parser.add_argument('--wake-id')
     parser.add_argument('--reason')
     parser.add_argument('--risk', choices=sorted(RISKS))
+    parser.add_argument('--issue', help='Stable task/blocker ID; at most one higher-effort turn per issue')
     args = parser.parse_args()
     try:
         config = load_config(args.config)
@@ -376,14 +459,8 @@ def main():
                 time.sleep(0.05)
             raise DispatchError('Notifier launch unconfirmed; inspect status before retrying')
         elif args.command == 'escalate':
-            require(config.get('allow_effort_override', False) and args.risk and args.reason, 'Enabled effort policy, risk and reason required')
-            require(os.environ.get('CODEX_THREAD_ID') == config['thread_id'], 'Only the configured coordinator may request escalation')
-            require(len(args.reason.encode()) <= 4096, 'Narrow the escalation evidence')
             coordinator = Coordinator(config)
-            require(not any(e.get('escalation') for e in coordinator.state['entries']), 'One escalation per bounded coordinator window')
-            path = root / 'coordinator-escalation.json'
-            require(not path.exists(), 'An escalation request already exists; inspect its receipt')
-            write_json(path, {'id': uuid.uuid4().hex, 'thread_id': config['thread_id'], 'risk': args.risk, 'reason': args.reason})
+            coordinator.request_escalation(args.risk, args.reason, args.issue)
             print('Escalation requested. Finish this turn without deciding the affected integration; independent approved jobs continue.')
         elif args.command == 'account':
             require(args.wake_id and args.reason, 'Explicit wake ID and accounting reason required')
