@@ -262,6 +262,82 @@ preapproved tasks as capacity permits. `ready` means a reviewable integration
 unit, **not** source correctness, passing runtime tests or an integrated branch.
 Use `review.py` for a separate bounded structured review; merging remains manual.
 
+### Bounded coordinator wake-ups
+
+`coordinator.py` is an optional notifier for the same ledger, not another
+dispatcher. It batches unmerged verified units or current holds/forms and wakes
+one approved Codex thread through the **existing daemon**. Batch/Lifecycle still
+own Qwen admission, learning, reservations and verification. The notifier never
+merges, chooses technical work or grants permissions; its maintained instruction
+is `templates/coordinator.txt`.
+
+Create a private configuration directory/file outside worktrees (0700/0600),
+with actual paths and an explicit end time. Example shape (replace placeholders):
+
+```json
+{
+  "version": 1,
+  "database": "/private/dispatcher/ledger.sqlite3",
+  "repository": "/path/to/project",
+  "target_ref": "main",
+  "thread_id": "APPROVED_COORDINATOR_THREAD_ID",
+  "codex_socket": "/home/USER/.codex/app-server-control/app-server-control.sock",
+  "bun": "/absolute/path/to/bun",
+  "deadline": "EXPLICIT_ISO8601_END_TIME_WITH_TIMEZONE",
+  "interval": 15,
+  "min_ready": 2,
+  "max_wait": 180,
+  "cooldown": 600,
+  "max_wakes": 3,
+  "allow_resume": false,
+  "allow_effort_override": false,
+  "base_effort": "medium",
+  "protected_worktrees": ["/path/to/reserved-investigation"]
+}
+```
+
+```sh
+python3 coordinator.py --config /private/coordinator/config.json start
+python3 coordinator.py --config /private/coordinator/config.json status
+python3 coordinator.py --config /private/coordinator/config.json stop
+```
+
+The single-notifier lock and durable receipt are beside the ledger, using
+`.coordinator.lock` and `.coordinator.json` suffixes. Another config directory
+cannot create a second owner or reset spent budget. Handoffs/logs stay in the
+configuration directory. Restart retains target, seen events and uncertain
+admissions; stop affects only the notifier, never Codex/OpenCode execution.
+To account for an unresolved wake, stop the notifier, inspect native queue/history
+and actual Git, then use `account --wake-id ID --reason 'evidence reviewed'`.
+Accounting never resends, resets spent budget or certifies effects.
+
+The bridge uses already-installed Bun's `ws` compatibility over the existing
+Unix WebSocket, with owned socket/private-parent checks; the daemon's symlink
+route is supported. No new server, Python package, nested `codex exec` or direct
+inference API is used. The [Codex protocol](https://developers.openai.com/codex/app-server)
+and schemas generated from the running binary define the API. Local 0.167.2
+queue add/list/delete probes ran without generation: duplicate pending client
+IDs leave one row, but its internal queue ID can change. That does not prove
+safe replay after consumption. Durable pre-send intent, native queue/history
+reconciliation and no blind retry cover lost admission/start acknowledgments.
+A start receipt proves admission, not tool effects or verified Git results.
+
+A stored thread reporting `notLoaded` may be active on another app-server.
+Do not auto-resume a foreground context through the wrong daemon. Default
+`allow_resume:false` waits for a loaded owner; enable it only for a deliberately
+dedicated coordinator. Active turns and pending human queue input are never
+interrupted or reordered. Existing approval and quota boundaries still apply.
+
+For a dedicated coordinator, `allow_effort_override:true` controls only its
+future-turn effort, leaving model/permissions unchanged. Routine work defaults
+to medium. Its `escalate --risk RISK --reason EVIDENCE` command accepts only the
+configured Codex thread, reuses `review.RISKS` (high/xhigh), and permits one
+higher-effort continuation within the same wake budget. Known operator-only
+decisions remain blocked; escalation never provides approval. Qwen reasoning is
+unchanged. No model calls are made just to poll status or repeat historical
+manually accounted checkpoints. New technical task selection remains judgment
+inside the approved roadmap; no autonomous vulnerability-discovery loop is added.
+
 ### Operational status and bounded observer
 
 Milestone 1 adds a read-only operational view and a process wrapper around the

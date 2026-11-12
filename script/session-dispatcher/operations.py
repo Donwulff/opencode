@@ -195,9 +195,9 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
         db.close()
 
 
-def review_ready(database, repository, ref='HEAD'):
+def review_ready(database, repository, ref='HEAD', *, snapshot=None):
     """Compare historical receipts to one frozen target, without recertifying a worktree."""
-    snapshot = report(database)
+    snapshot = report(database) if snapshot is None else snapshot
     repository = Path(repository).resolve(strict=True)
     common = git(repository, 'rev-parse', '--path-format=absolute', '--git-common-dir').decode().strip()
     target = git(repository, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}').decode().strip()

@@ -106,8 +106,8 @@ schema-version check on new connections. Do not migrate merely to update a plan.
 ## Delivery milestones
 
 Each milestone should be a separately reviewable change with disposable Git/API
-fixtures. Keep the live Qwen limit at **three including learning**, Big Pickle
-serial, production GPU priority, existing reservations and human integration
+fixtures. Preserve the operator-configured Qwen limit **including learning**
+(currently four), Big Pickle serial, production GPU priority, existing reservations and human integration
 approval. DeepSeek PoC contexts stay outside this short-task pipeline.
 Admission deadlines need drain headroom; they do not guarantee a GPU finish time.
 
@@ -217,6 +217,14 @@ does not itself approve merging; lost Git/hook outcomes stay uncertain. Test a
 paid review once from an approved ordinary shell before calling that path live
 validated. A Qwen advisory review fallback is optional later, with explicit
 provenance and no automatic acceptance privilege.
+
+The read-only `status --review-ready` handoff and bounded `coordinator.py`
+notifier implement part of M5: batches can wake one approved persistent Codex
+coordinator through its native queue. Dedicated-context resume and effort control
+are explicit opt-ins with a finite wake/escalation budget. Source correctness
+and safe integration still use existing gates. This does not implement automatic
+new-investigation selection or M3 worker reuse. See the README for exact controls
+and the native transport/ownership limits.
 
 ### M6 — Optional replenishment proposals
 
