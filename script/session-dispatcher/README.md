@@ -430,6 +430,34 @@ unchanged. No model calls are made just to poll status or repeat historical
 manually accounted checkpoints. New technical task selection remains judgment
 inside the approved roadmap; no autonomous vulnerability-discovery loop is added.
 
+### Worktree activity before reconciliation or synchronization
+
+An empty active list on the dispatcher host does not establish that a worktree
+is idle: another OpenCode server can own a running session in the same directory.
+Before changing a worktree or branch, check every known host:
+
+```sh
+python3 worktree_guard.py --db /private/ledger.sqlite3 --worktree /path/to/worktree
+```
+
+This read-only command combines all registry/pool connection files with managed
+`service.json` and `service-*.json` registrations under `$XDG_STATE_HOME/opencode`
+(default `~/.local/state/opencode`). Add `--connection /private/connection.json`
+for unregistered standalone hosts, `--service-state DIR` for another state root,
+and repeat `--worktree` for an inventory. It uses metadata GETs only, including
+sessions outside the dispatcher registry, and resolves nested/symlinked session
+directories. It never submits input, changes models, stops servers or edits Git.
+
+Exit 0 means all selected directories have a clear session-activity snapshot;
+exit 1 means blocked or unknown. A failed host probe is unknown, except an
+unreachable managed registration whose Linux owner PID is definitely absent.
+Even an old registration is probed before that exception. This is not complete
+discovery of arbitrary unregistered servers, a filesystem lease, Git cleanliness
+validation or ledger approval. Apply existing reservation/input/learning guards
+and recheck immediately before writing. CPU-inference worktrees especially must
+remain unchanged while their agents run; a routine sync request does not override
+their ownership. This preflight does not replace or hot-reload the live observer.
+
 ### Operational status and bounded observer
 
 Milestone 1 adds a read-only operational view and a process wrapper around the
