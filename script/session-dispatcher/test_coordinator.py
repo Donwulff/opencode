@@ -10,7 +10,7 @@ import sys
 import time
 import unittest
 
-from coordinator import Coordinator, CodexRPC, load_config, lock
+from coordinator import Coordinator, CodexRPC, load_config, lock, same_input
 from dispatch import DispatchError
 import test_batch
 import test_operations
@@ -20,6 +20,7 @@ class Native:
     def __init__(self, cwd):
         self.cwd, self.status, self.pending, self.history = str(cwd), 'idle', [], []
         self.calls, self.starts, self.fail = [], 0, None
+        self.auto_start = False
 
     def call(self, method, params):
         self.calls.append((method, copy.deepcopy(params)))
@@ -39,7 +40,14 @@ class Native:
                 self.fail = None
                 raise OSError('Lost before admission')
             entry = dict(id='submission-1', clientUserMessageId=params['clientUserMessageId'], input=params['input'])
+            for part in entry['input']:
+                part.setdefault('text_elements', [])
             self.pending = [entry]
+            if self.auto_start:
+                self.starts += 1
+                self.history += [{'turnId':'turn-fixture','item':{'type':'userMessage','id':'user-fixture','clientId':entry['clientUserMessageId']}}]
+                self.pending = []
+                self.status = 'active'
             if self.fail == 'add_after':
                 self.fail = None
                 raise OSError('Lost admission reply')
@@ -49,7 +57,7 @@ class Native:
                 self.fail = None
                 raise OSError('Lost before start')
             self.starts += 1
-            self.history += [{'type': 'userMessage', 'clientId': self.pending[0]['clientUserMessageId']}]
+            self.history += [{'turnId':'turn-fixture','item':{'type':'userMessage','id':'user-fixture','clientId':self.pending[0]['clientUserMessageId']}}]
             self.pending = []
             self.status = 'active'
             if self.fail == 'start_after':
@@ -103,6 +111,30 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(self.native.starts, 1)
         self.assertEqual((self.ledger.read_bytes(), self.git('show-ref'), list(self.api.posts)), before)
         self.assertNotIn('assessment', e)  # A wake receipt never certifies source/Git success.
+
+    def test_native_auto_start_during_admission_is_reconciled_without_explicit_start(self):
+        self.ready_for_review()
+        self.native.auto_start = True
+        self.coordinator.tick(at=self.at)
+        entry = self.coordinator.state['entries'][0]
+        self.assertEqual(entry['stage'], 'observed_started')
+        self.assertEqual(entry['turn_id'], 'turn-fixture')
+        self.assertEqual(self.native.starts, 1)
+        self.assertFalse(any(m == 'thread/queue/start' for m, _ in self.native.calls))
+
+    def test_actual_native_envelope_and_empty_text_metadata(self):
+        fixture = json.loads(Path(__file__).with_name('fixtures').joinpath('codex-queue-native-01672.json').read_text())
+        original = [{'type':'text','text':'sanitized coordinator wake'}]
+        self.assertTrue(same_input(fixture['queue_add']['queuedSubmission']['input'], original))
+        different = copy.deepcopy(original)
+        different[0]['text'] += ' changed'
+        self.assertFalse(same_input(fixture['queue_add']['queuedSubmission']['input'], different))
+        self.native.history = fixture['history']['data']
+        result = self.coordinator.consumed(self.native, 'fixture-client-id')
+        self.assertEqual(result, {'turn_id':'fixture-turn-id','user_message_id':'fixture-user-id'})
+        self.native.history = [{'type':'userMessage','clientId':'fixture-client-id'}]
+        with self.assertRaisesRegex(DispatchError, 'Unsupported native history envelope'):
+            self.coordinator.consumed(self.native, 'fixture-client-id')
 
     def test_active_context_and_pending_human_input_prevent_admission(self):
         self.ready_for_review()
@@ -191,7 +223,7 @@ class CoordinatorTests(unittest.TestCase):
         with self.assertRaises(OSError):
             self.coordinator.tick(at=self.at)
         e = self.coordinator.state['entries'][0]
-        self.native.history = [{'type': 'userMessage', 'clientId': e['id']}]
+        self.native.history = [{'turnId':'turn-fixture','item':{'type':'userMessage','id':'user-fixture','clientId':e['id']}}]
         self.native.pending = []
         self.native.status = 'active'
         self.restart()

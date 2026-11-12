@@ -27,6 +27,13 @@ from runner import process_identity, read_json, validate_directory, write_json
 from review import RISKS
 
 
+def same_input(actual, expected):
+    # The native API serializes omitted text_elements as an empty array.
+    # Preserve every other field and all text bytes in the equality check.
+    return ([dict(item, text_elements=item.get('text_elements', [])) for item in actual]
+            == [dict(item, text_elements=item.get('text_elements', [])) for item in expected])
+
+
 class CodexRPC:
     """Bun's installed WebSocket client bridges the existing Unix listener; no server spawn."""
     def __init__(self, config):
@@ -184,8 +191,12 @@ class Coordinator:
             result = client.call('thread/items/list', {'threadId': self.config['thread_id'], 'limit': 20,
                                                       'sortDirection': 'desc',
                                                       **({'cursor': cursor} if cursor else {})})
-            if any(r.get('type') == 'userMessage' and r.get('clientId') == message_id for r in result['data']):
-                return True
+            for entry in result['data']:
+                require(isinstance(entry.get('item'), dict) and entry.get('turnId'),
+                        'Unsupported native history envelope; do not infer absent input')
+                item = entry['item']
+                if item.get('type') == 'userMessage' and item.get('clientId') == message_id:
+                    return {'turn_id': entry['turnId'], 'user_message_id': item['id']}
             cursor = result.get('nextCursor')
             if not cursor:
                 break
@@ -197,12 +208,13 @@ class Coordinator:
 
     def observe_delivery(self, client, entry, status, pending):
         own = next((r for r in pending if r['clientUserMessageId'] == entry['id']), None)
-        if self.consumed(client, entry['id']):
-            self.remember(entry, 'observed_started', meaning='Native user input observed; no Git/effect success claim')
+        observed = self.consumed(client, entry['id'])
+        if observed:
+            self.remember(entry, 'observed_started', **observed, meaning='Native user input observed; no Git/effect success claim')
             return
         if entry['stage'] == 'admitting':
             if own:
-                require(own['input'] == entry['input'], 'Native message ID has different input')
+                require(same_input(own['input'], entry['input']), 'Native message ID has different input')
                 self.remember(entry, 'admitted', submission=own['id'])
             else:
                 self.remember(entry, 'uncertain', reason='Lost admission response; neither queue nor bounded history resolves it')
@@ -287,16 +299,18 @@ class Coordinator:
                      'handoff': str(path), 'template_hash': digest(template),
                      'effort': effort if c.get('allow_effort_override', False) else 'inherited',
                      'escalation': bool(escalation),
-                     'input': [{'type': 'text', 'text': prompt}]}
+                     'input': [{'type': 'text', 'text': prompt, 'text_elements': []}]}
             s['entries'].append(entry)
             s['seen'] = sorted(set(s['seen']) | set(handoff['keys']))
             self.save(first_pending=None)
             result = client.call('thread/queue/add', {'threadId': c['thread_id'],
                                                      'clientUserMessageId': message_id, 'input': entry['input']})
             queued = result['queuedSubmission']
-            require(queued['clientUserMessageId'] == message_id and queued['input'] == entry['input'],
+            require(queued['clientUserMessageId'] == message_id and same_input(queued['input'], entry['input']),
                     'Native admission response disagrees with frozen wake input')
             self.remember(entry, 'admitted', submission=queued['id'])
+            # An idle native queue can auto-start during queue/add itself.
+            status = client.call('thread/read', {'threadId': c['thread_id']})['thread']['status']['type']
             self.observe_delivery(client, entry, status, self.queue(client))
         finally:
             client.close()
@@ -319,7 +333,7 @@ def run(config):
                 try:
                     coordinator.tick()
                 except (DispatchError, OSError, ValueError, KeyError, TypeError) as error:
-                    coordinator.save(status='observation_or_delivery_error', error_type=type(error).__name__)
+                    coordinator.save(status='observation_or_delivery_error', error_type=type(error).__name__, error=str(error)[:1024])
                 stopped.wait(config['interval'])
         finally:
             for sig, handler in old.items():

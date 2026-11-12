@@ -316,9 +316,12 @@ Unix WebSocket, with owned socket/private-parent checks; the daemon's symlink
 route is supported. No new server, Python package, nested `codex exec` or direct
 inference API is used. The [Codex protocol](https://developers.openai.com/codex/app-server)
 and schemas generated from the running binary define the API. Local 0.167.2
-queue add/list/delete probes ran without generation: duplicate pending client
-IDs leave one row, but its internal queue ID can change. That does not prove
-safe replay after consumption. Durable pre-send intent, native queue/history
+queue probes showed that adding to an idle queue can start generation before
+an explicit start RPC. A fixture was interrupted by archival; its retained
+history has no tool item, which is not a general no-effect proof. Internal queue
+IDs can change, so a one-row snapshot does not prove deduplication across
+consumption or safe replay. History uses `ThreadItemEntry` wrappers and adds
+empty `text_elements`; the sanitized actual-record fixture covers both. Durable pre-send intent, native queue/history
 reconciliation and no blind retry cover lost admission/start acknowledgments.
 A start receipt proves admission, not tool effects or verified Git results.
 

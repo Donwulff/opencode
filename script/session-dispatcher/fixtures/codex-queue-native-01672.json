@@ -1,0 +1,46 @@
+{
+  "provenance": {
+    "source": "native Codex daemon 0.167.2, Unix WebSocket probe 2026-11-12",
+    "observation": "First real coordinator wake automatically started during queue admission; native history wraps item with turnId. Identifiers/text/timestamps sanitized; field structure retained.",
+    "raw_record": "private session-dispatcher/coordinator-20261112 receipt and native thread/items/list response",
+    "claims": "Fixture validates parsing/admission metadata only, not model completion or Git effects."
+  },
+  "queue_add": {
+    "queuedSubmission": {
+      "id": "fixture-queue-id",
+      "clientUserMessageId": "fixture-client-id",
+      "input": [
+        {
+          "type": "text",
+          "text": "sanitized coordinator wake",
+          "text_elements": []
+        }
+      ]
+    }
+  },
+  "history": {
+    "data": [
+      {
+        "turnId": "fixture-turn-id",
+        "item": {
+          "type": "userMessage",
+          "id": "fixture-user-id",
+          "clientId": "fixture-client-id",
+          "content": [
+            {
+              "type": "text",
+              "text": "sanitized coordinator wake",
+              "text_elements": []
+            }
+          ],
+          "startedAtMs": 1,
+          "completedAtMs": 2
+        },
+        "startedAtMs": 1,
+        "completedAtMs": 2
+      }
+    ],
+    "nextCursor": null,
+    "backwardsCursor": null
+  }
+}
