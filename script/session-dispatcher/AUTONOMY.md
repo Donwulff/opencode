@@ -1,7 +1,8 @@
 # Unattended operation: current capabilities and delivery milestones
 
-Updated 2026-11-12 for the native coordinator throughput controls and the
-metered-inference allocation section appended the same day. The original
+Updated 2026-11-12 for the native coordinator throughput controls, the
+metered-inference allocation appended the same day, and the adversarial
+review corrections plus shadow-review experiment evaluation below. The original
 2026-11-10 assessment used dispatcher commit
 `d59c11f64eb56f1c9fdf64f858fd0fe1a8585b88`, its tests, the running ledger
 (read-only), and the recent Qwen batches. This replaces the initial Qwen design
@@ -274,6 +275,10 @@ growth. No automatic prompt rewrite, broader audit or indefinite task generation
 
 ## Metered-inference allocation and next work (2026-11-12)
 
+Corrected in place after the adversarial review below; the "Expected
+effect" paragraph and the routine-review row of the classification table
+are retracted or requalified where they failed scrutiny.
+
 The 2026-11-12 coordinator window spent all fifteen wakes
 (`ledger.sqlite3.coordinator.json`, `max_wakes: 15`): twelve medium turns and
 three xhigh escalations. The escalations were acceptance-level judgments
@@ -294,8 +299,11 @@ and (c) consequential if wrong and undetectable by the deterministic gates
 downstream (verification, merge-tree preflight, ancestry receipts, operator
 approval). Everything else moves to deterministic code or local Qwen. Qwen's
 marginal cost is about zero — one stream and a fully loaded pool cost the
-same — so while useful work exists the GPU should be running Qwen streams,
-and Qwen work should fill the slots during metered cooldowns.
+same — so while useful work exists *and a pool window is open* the GPU should
+be running Qwen streams, and Qwen work should fill the slots during metered
+cooldowns. (Windows are explicit operator inputs; e.g. `qwen-dedicated`
+closes 2026-11-13T05:15Z and quota re-enablement is explicit by rule, so
+this bound does not hold across window boundaries.)
 
 ### Observed-day classification
 
@@ -305,29 +313,47 @@ and Qwen work should fill the slots during metered cooldowns.
 | State reconciliation inside each turn | Duplicated: `operations.report()` already does it deterministically | Deterministic; drop from wake work |
 | Drafting/enqueueing two-to-three follow-ups per wake (refill, dependent, repair tasks) | Labor: reference lookup, deduplication, bounded prompt writing | Qwen drafting (free); deterministic dedup/eligibility; batched approval |
 | Safe integration/synchronization/renewal commands | Mechanical under verifiable preconditions | Deterministic M3a commands under existing approval receipts |
-| Reviewing routine units (all five unmerged units are `completed_no_changes`/`completed`, no risk flags) | Evidence-versus-contract check; errors detectable | Deterministic preflight + Qwen advisory receipt (no acceptance privilege); operator batch approval; metered only when risk flags are present |
+| Reviewing routine units (all five unmerged units are `completed_no_changes`/`completed`) | **Corrected:** "no risk flags" was vacuous — none of the five has ever been enrolled or reviewed, and risk flags are caller-supplied at enrollment (`integrate.py:60-61`), a judgment made *before* delivery, not a property of it. Deterministic gates detect contract-shape errors only; these units are content-bearing (evidence, arithmetic, assembled kits), and content errors pass every deterministic check. | Hold the existing gate (Codex review or operator merge) until the shadow-review calibration below measures parity on this project's actual review corpus; reviewer must be a fresh session, never a fork of the author session (`lifecycle.py:131-132` forks the author) |
 
 ### Next work, in order
 
 1. **Consolidate and clear the genuinely unmerged units.** The read-only
    handoff against `main` (`batch.py status --review-ready --repository
    <repo> --ref main`) counts 119 of the 132 ready units
-   `already_integrated`, five `awaiting_review` (mp09-inttest4-rpm,
-   smoke-v3-payload-gate, mp09-oracle-plan-review,
-   smoke-v3-payload-offline-review, smoke-v4-assembly) and eight historical
-   `needs_review` rows. `qwen-ol6-mp09-inttest4-rpm` (final `3e0858ae…`, not
-   in main) is the only unit gating the two `integrated`-dependent pending
-   tasks (mp0910-combined-rpm, inttest4-partial-kit; the other prerequisites
-   mp10-context-port and smoke-descendant-fix are already in main).
-   Integrating that one unit through the existing gate is the single action
-   that unblocks the delivery-graph critical path; the other four are
+   `already_integrated` — an ancestry fact, **not** a current-content
+   claim: 51 of the 119 have their own delivery paths modified in main
+   since the unit's final commit (35 AGENTS.md-only learning churn; 16
+   substantive, e.g. later correction tasks replacing an earlier unit's
+   `httputil.py`/artifact hashes). Five units are `awaiting_review`
+   (mp09-inttest4-rpm, smoke-v3-payload-gate, mp09-oracle-plan-review,
+   smoke-v3-payload-offline-review, smoke-v4-assembly) and eight are
+   historical `needs_review` rows (manual/accounted; retirement cannot
+   clear them). `qwen-ol6-mp09-inttest4-rpm` (final `3e0858ae…`, not in
+   main) is the only unit gating the two `integrated`-dependent pending
+   tasks (mp0910-combined-rpm, inttest4-partial-kit; the other
+   prerequisites mp10-context-port and smoke-descendant-fix are already in
+   main). **Corrected:** "through the existing gate" overstates
+   determinism — `integrate.decision` (`integrate.py:155-162`) accepts only
+   a `review` table row produced by the Codex-only `review.run`, so a
+   routine unit reaches the gate either via one metered review or via the
+   operator's out-of-gate manual merge (the practice behind the 119). The
+   *dependency* unblocks on ancestry alone (`dependencies.py:110-124`
+   checks `final_commit` against `refs/heads/main`): any merge path that
+   puts `3e0858ae…` in main admits both pending tasks on the next tick
+   (verified: worktrees clean and on-base, registry snapshots matching,
+   pool window open until 2026-11-13T05:15Z); the other four units are
    independent.
 2. **Deterministic retirement of already-integrated rows** (the M5
    "read-only reconciliation of manual merges from actual task/learning
    ancestry"): a `retire --integrated-at <sha>` receipt for ready rows whose
-   final commit is an ancestor of the named ref. Shrinks the visible backlog
-   from 132 rows to 13, stops the 119 ancestry-verified units from bloating
-   every wake's handoff, and feeds the stop condition. No inference.
+   final commit is an ancestor of the named ref. The receipt must be worded
+   as the historical fact it is ("final commit reachable from ref at
+   target_commit", matching the pinned semantics of
+   `test_ready_receipt_is_historical_without_a_fresh_git_claim`), since the
+   drift scan above shows 43% of such units' paths were later modified.
+   Shrinks the visible backlog from 132 rows to 13, stops the 119
+   ancestry-verified units from bloating every wake's handoff, and feeds
+   the stop condition. No inference.
 3. **Read-only merge-tree preflight verdicts in the handoff**
    (clean/conflict/drift against the designated target, plus a combined
    diff): the preflight exists in `integrate.freeze` but is behind
@@ -355,8 +381,17 @@ and Qwen work should fill the slots during metered cooldowns.
 
 - Acceptance review of units with non-routine risk flags: independence from
   the Qwen family that produced the work is the provable difference, and the
-  smoke-maps counterexample is the observed payoff.
+  smoke-maps counterexample is the observed payoff (provenance verified:
+  the counterexample commit `a3d71c6` postdates the Qwen task's
+  verification and its learning commit by minutes, sits on a path matching
+  no ledger task ID, and is outside learning scope — it was committed by
+  the coordinator turn, 51 s before the escalation).
 - Budgeted per-issue escalations (unchanged).
+- Any Qwen reviewer (advisory or shadow) must be a **fresh session**
+  consuming only the frozen evidence, never a fork of the author session —
+  the only fork machinery in the codebase (`lifecycle.py:131-132`) forks
+  the author and inherits its context, which would make the "independent"
+  review a self-review.
 - Batch approval of follow-up candidates in unattended windows: bounded
   short input; M6's "do not infer authorization from report text" rule
   unchanged; nothing auto-dispatches.
@@ -365,11 +400,161 @@ and Qwen work should fill the slots during metered cooldowns.
   approval are unchanged, so quality is gated by the existing receipts
   regardless of which model wrote the receipt.
 
-Expected effect from the observed pattern: metered turns per window drop from
-about fifteen to about four-to-six (the escalations plus one-to-three batch
-approvals or urgent reviews), all on judgment work; the wake budget lasts
-about two-to-three times longer per window; Qwen streams fill the slots that
-metered labor no longer occupies.
+**Expected effect — retracted as stated.** The "fifteen to four-to-six
+turns, wake budget two-to-three times longer" projection failed the
+adversarial review: every Qwen-tier task that delivers a commit becomes a
+verified task + ready unit, and `coordinator.collect()`
+(`coordinator.py:187,195`) turns every such unit into a `unit:` wake key.
+The Qwen tier therefore *feeds* the wake stream at its own output rate
+(today: ~15 verifications per 14 h; 30 seen keys across 15 wakes), and the
+132-row backlog is the empirical accumulation pattern (119 units needed
+manual merging; none were ever retired — no `retire` command exists). The
+projection holds only if Qwen-tier outputs use a non-unit receipt channel
+(ledger rows or run-dir files, not task deliveries) — which this plan does
+not yet define. The projection also rests on one observed window. What
+survives: metered turns concentrate on judgment work, and Qwen streams fill
+slots that metered labor no longer occupies *inside open pool windows*.
+
+## Adversarial review of the allocation plan (2026-11-12)
+
+A same-day adversarial pass attempted to disprove each claim of the
+allocation section using code, ledger state and Git provenance (read-only).
+Verdicts, with the evidence that decided each:
+
+| Claim | Verdict | Deciding evidence |
+| --- | --- | --- |
+| Integration bottleneck: one unit gates both pending tasks | **Survived** four disproof attempts | `queue_dependency` edges all target `refs/heads/main`; both pending worktrees clean and exactly on-base (0 commits ahead, 0 dirt); registry snapshots match specs; `batch.py:266-290` admits on tick once `dependencies.states()` is satisfied; only `3e0858ae…` is absent from main. Fragilities (not refutations): shared worktrees (19-23 other ready rows each) can stale the base; pool window closes 2026-11-13T05:15Z |
+| 119/132 "already integrated" | **Survived as historical fact, refuted as current-content claim** | Independent re-scan: 119/132 ancestry-verified, but 51/119 have their own paths modified in main since (35 AGENTS.md-only; 16 substantive). Pinned fixture `test_ready_receipt_is_historical_without_a_fresh_git_claim` already encodes the historical semantic |
+| Smoke-maps counterexample = Codex payoff | **Survived** | Qwen task verified 15:22:21Z; learning commit 15:24:38Z; counterexample `a3d71c6` at 15:28:13Z (51 s before the 15:29:04Z escalation), on a path matching no task ID, outside learning scope |
+| Risk classification supports the routine/non-routine tier | **Refuted** | Flags are caller-supplied at enrollment (`integrate.py:60-61`, CLI `--risk`); only auto-flag is `unexpected_diff` (`review.py:43-44`); the tier key is an absence of labels assigned before delivery. Contract-shape errors are deterministic-detectable; content errors (arithmetic, patch semantics) are not, and this project's units are content-bearing. A routine-enrolled unit with a semantic defect passes every deterministic gate and a same-family advisory receipt |
+| Qwen advisory review is "independent" | **Refuted as specified** | Unspecified reviewer provenance; the only fork machinery forks the author session (`lifecycle.py:131-132`, provenance-pinned), which inherits the author's context — structurally the weakest reviewer. Fresh-session requirement now added above |
+| Gate offers a non-metered path for routine units | **Refuted** | `integrate.decision` (`integrate.py:155-162`) requires a `review` row from the Codex-only `review.run` (`review.py:62`, `shutil.which("codex")`); no human-review path exists; advisory receipts are explicitly denied acceptance privilege. The gate's review leg is metered by construction |
+| Wake savings "15 to 4-6 turns, budget 2-3x" | **Refuted quantitatively** | Qwen-tier deliveries create `unit:` wake keys (`coordinator.py:187,195`); at today's rate (~1/56 min) a standing pipeline keeps the wake stream saturated and the 15-wake budget is consumed by batch approvals of Qwen output; 132-row backlog is the accumulation evidence; n=1 window |
+| Unattended operation | **Qualified** | Every unattended night needs a fresh coordinator window (explicit deadline; current window spent 15/15, deadline 2026-11-13T06:15Z), pool re-windowing (explicit by rule), and an approval pass (human or metered) the section omitted |
+
+Operational note from the review: Git log dates display in local time
+(UTC+2) while the ledger stores UTC. A first read made the counterexample
+commit appear to postdate its escalation by three hours; normalized, the
+ledger and Git agree to the second (queue `updated 16:00:02.14Z` == commit
+`18:00:02` local). Any tool correlating the two sources must normalize, or
+it will manufacture false integrity alarms.
+
+Claims that also survived: the coordinator mechanism (30 fixtures in
+`test_coordinator.py` pin budget/batching/dedup/escalation fencing —
+verified properties, not intentions); the blocked-row characterization
+(dirt = exactly two untracked MP08 probe files; HEAD `6913176` in main;
+cited commit `8b92a823…` reachable).
+
+## Shadow-review calibration experiment (proposed, not authorized)
+
+Purpose: convert the two refuted premises (risk-tier safety, same-family
+review independence) from argument into measurement. Fresh, independent
+Qwen sessions review the same frozen evidence and decisions currently
+handled by metered turns; judgments, material disagreements, missed errors
+and costs are compared. No additional Codex calls are made in either mode.
+
+### Corpus facts (decide feasibility)
+
+- The live ledger has **no `review` table**: zero paid `review.run`
+  reviews have ever run here (the gate was bypassed by manual merges; M5
+  already warns "No paid end-to-end review is claimed"). A bounded-review
+  replay corpus therefore **does not exist**.
+- What does exist and is recoverable: the 15 stored wake handoffs
+  (`coordinator-20261112/handoff-*.json`, exact wake inputs), the 3
+  escalation requests (risk/reason/issue JSON), the working dirs holding
+  routine review/repair briefs (`mp10-review-6f8c/`,
+  `smoke-payload-review-c8d8/`, `followup-65b9df79/`, …), and the actual
+  outcomes (ledger + Git). Pinned main HEADs at each escalation time are
+  recoverable (`git rev-list -1 --before=<t> main` → `8fbcc54`, `15ea469`,
+  `a3d71c6`), so disposable cold-replay worktrees are possible.
+- Coordinator *turn* decisions are only partially recoverable: effects
+  (commits, enqueues, sync receipts) are in Git/ledger; the thread's
+  reasoning is not, and the thread's accumulated context cannot be
+  reconstructed. Bounded `review.run` reviews, by contrast, are fully
+  replayable (the saved plan carries `unit_hash`/`evidence_hash`/
+  `integration_hash`, so a recomputed frozen assignment is
+  hash-verifiable before use) — but there are none to replay yet.
+
+### Design (two modes, both zero additional Codex calls)
+
+1. **Seed cold replay (offline, starts with what exists).** For the 3
+   escalation cases plus 2-3 recoverable routine verifications: pin a
+   disposable worktree at the then-main HEAD; give a **fresh Qwen session**
+   (not a fork) only the frozen input (handoff/escalation brief, unit
+   receipts, diffs) with the same untrusted-data framing as
+   `templates/review.txt`; require a bounded structured judgment
+   (integrate/hold/escalate + named evidence). Compare with the
+   recoverable actual outcome; adjudicate every disagreement with the
+   operator (ground truth exists for these cases: what happened next, e.g.
+   maps held-then-amended `61ef7c4`, MP10 integrated, MP08 kept on hold).
+2. **Forward shadow (additive, from the next coordinator window).** For
+   each metered wake, enqueue a Qwen shadow task carrying the *same*
+   handoff JSON as a fresh session, producing the same bounded judgment
+   without seeing the metered turn's actions; join against actual effects
+   after the fact. Shadow tasks run on idle pool slots only — never
+   displacing delivery work, and never counted against `backlog_target`.
+
+### Metrics, and what each one can and cannot prove
+
+- **Classification agreement** (integrate/hold/escalate/draft): measures
+  Qwen-vs-Codex divergence on real decisions. Agreement is *not* joint
+  correctness — correlated failure modes (shared training, same plausibility
+  biases, same arithmetic weaknesses) make "both agree" compatible with
+  "both wrong". It is a lower bound on nothing; it is a triage signal.
+- **Material disagreements**: the interesting output. Each becomes an
+  adjudicated case (operator or later event decides who was right). This is
+  the only part that accumulates ground truth, and it will be slow.
+- **Missed errors**: cannot be measured at this sample size. The one
+  known caught-defect case (smoke-maps) calibrates nothing statistically.
+  Planted-defect fixtures can test attention/format reliability separately,
+  but synthetic misses do not estimate real-world miss rate.
+- **Cost**: Qwen wall-clock per shadow (marginal $0, but real GPU minutes);
+  Codex metered cost per shadowed turn, for ROI. Record model IDs/versions
+  per case — the calibration decays on model updates.
+
+### Limitations, stated up front
+
+- **Selection bias, in the unhelpful direction.** The recoverable corpus is
+  exactly what metered turns did: hard escalations and safe
+  integration/review labor. The population the tiering actually wants to
+  offload — routine, unflagged unit reviews — has *no metered reference to
+  shadow*, because routine units never get Codex reviews today. Shadow
+  calibration therefore cannot, by itself, authorize moving routine units
+  to Qwen; it can only bound the judgment-tier question. Seeding a routine
+  reference corpus would require deliberately metered reviews of routine
+  units — a small, explicit cost, an operator decision.
+- **Cold-vs-warm confound, both directions.** A fresh Qwen session lacks
+  the coordinator thread's accumulated context, so a shadow "loss" may be
+  a context deficit, not a model deficit; a shadow "win" on frozen inputs
+  may not transfer to a warm thread. Report both and do not collapse them.
+- **Same-family correlation.** The shadow is Qwen reviewing Qwen-produced
+  work: independence is from the *session*, not the family. A negative
+  result (Qwen misses what Codex caught) does not prove Codex uniquely
+  correct — only that cross-family review added value in those cases.
+- **Power.** At observed review rates the corpus grows by single digits per
+  week; expect directional evidence and a handful of adjudicated cases, not
+  error-rate estimates, for months.
+- **Scope discipline.** This is calibration, not a subsystem: run dirs,
+  receipt files, one report script. No new tables beyond a shadow-receipt
+  store if one is even needed; removable when the decision is made.
+
+### Stopping rule and verdict
+
+Stop after **10 shadowed turns or 3 material disagreements, whichever
+first**, then write a one-page decision memo (tiering evidence, not
+authorization) and dismantle the shadow path.
+
+**Verdict.** Run the **seed cold replay**: it is nearly free (offline,
+disposable worktrees, frozen inputs, zero metered calls), it directly
+tests the two refuted premises on this project's actual decisions, and its
+adjudicated cases are worth having regardless. Do **not** gate the
+tiering rollout on the experiment — the human approval and existing gates
+stand meanwhile, and the experiment's population bias means it cannot
+authorize the routine-tier move on its own. Do **not** build the forward
+shadow as standing infrastructure before the seed replay justifies it; the
+current integration loop (manual merges) is the de facto reference, and
+forward shadowing only becomes valuable once metered reviews are actually
+happening at a rate worth calibrating.
 
 ## Rollout and stopping point
 
