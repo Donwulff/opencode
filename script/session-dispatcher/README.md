@@ -285,7 +285,10 @@ adjudication; these are not automatically labelled material errors. Existing
 cases keep observing and delivery continues. Agreement is not ground truth.
 Missing references remain unpaired; Git ancestry never invents a reference verdict.
 Frozen references cannot be overwritten. The bounded closure can lack context;
-target-only instructions, raw archives and copied reference files are evidence,
+referenced files absent from the author tree fall back to the frozen pre-decision
+target, with per-file origin commits recorded. The original task/dependency scope
+is included; a deleted changed file is never revived by that fallback.
+Target-only instructions, raw archives and copied reference files are evidence,
 not fresh runtime success or standing authorization. Private state stays out of Git.
 
 ## Bounded unattended queue

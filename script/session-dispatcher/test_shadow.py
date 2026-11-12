@@ -67,6 +67,8 @@ class ShadowTests(unittest.TestCase):
         self.assertEqual(digest(body),case['input_hash'])
         self.assertNotEqual(case['session_id'],'ses_fixture')
         self.assertNotIn('parentID',self.api.creates[0]);self.assertNotIn('reference',body)
+        self.assertEqual(body['file_origins']['README.md'],body['receipt']['final_commit'])
+        self.assertEqual(body['original_assignment'],'Change pending to verified.')
         self.assertEqual(self.api.forks,0)
         self.assertEqual(Shadow(self.dispatcher,self.config).capture('doc-1'),case)
         self.assertEqual(len(self.api.creates),1)
@@ -138,6 +140,25 @@ class ShadowTests(unittest.TestCase):
             with self.assertRaisesRegex(DispatchError,'Another shadow writer'):
                 self.shadow.reference(case['id'],case['input_hash'],'routine','decision')
         self.assertNotIn('reference',self.shadow.cases()[0])
+
+    def test_dependency_reference_missing_from_author_tree_uses_pinned_target(self):
+        self.api.session(self.repo,'ses_second')
+        self.approve('writer','ses_second',self.repo)
+        self.configure(state='available')
+        self.batch.enqueue('doc-2','writer','Add a context link.',['README.md'],self.policy)
+        self.batch.tick(self.at)
+        (self.repo/'README.md').write_text('[Context](context.md)\n')
+        self.git('add','README.md');self.git('commit','-m','Context reference','-m','OpenCode-Task: doc-2')
+        self.api.finish('ses_second');self.configure(state='paused');self.batch.tick(self.at)
+        target=self.root/'frozen-target';self.git('worktree','add',str(target),'target')
+        (target/'context.md').write_text('Dependency integrated after the author base.\n')
+        subprocess.run(['git','-C',str(target),'add','context.md'],check=True)
+        subprocess.run(['git','-C',str(target),'commit','-m','Integrated dependency'],check=True,capture_output=True)
+        tip=subprocess.check_output(['git','-C',str(target),'rev-parse','HEAD'],text=True).strip()
+        case=self.shadow.capture('doc-2');body=json.loads((Path(case['directory'])/'input.json').read_text())
+        self.assertEqual(body['file_origins']['context.md'],tip)
+        self.assertEqual((Path(case['directory'])/'evidence/context.md').read_text(),(target/'context.md').read_text())
+        self.assertFalse((self.repo/'context.md').exists())
 
 
 if __name__=='__main__':unittest.main()

@@ -443,6 +443,7 @@ def run(config):
                         try:
                             from shadow import cycle
                             cycle(config['shadow_policy'])
+                            coordinator.save(shadow_error=None)
                         except (DispatchError, OSError, ValueError, KeyError, TypeError,
                                 subprocess.CalledProcessError, tarfile.TarError) as error:
                             coordinator.save(shadow_error=str(error)[:1024])

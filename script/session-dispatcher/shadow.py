@@ -87,7 +87,7 @@ class Shadow:
                 'stage':'preparing', 'advisory_only':True}
         self.save(case)  # Durable intent BEFORE local preparation and the one native session-create POST.
         directory.mkdir(mode=0o700)
-        total, pins, exported = 0, {}, set()
+        total, pins, exported, origins = 0, {}, set(), {}
         def put(name, data):
             nonlocal total
             rel = PurePosixPath(name)
@@ -107,10 +107,18 @@ class Shadow:
             path, depth = pending.pop(0)
             if path in exported: continue
             require(len(exported) < 256, 'Narrow the shadow reference closure')
-            result = subprocess.run(['git','-C',repo,'show',receipt['final_commit']+':'+path], capture_output=True)
+            origin = receipt['final_commit']
+            result = subprocess.run(['git','-C',repo,'show',origin+':'+path], capture_output=True)
+            if result.returncode and path not in paths:
+                # Dependency records can be integrated after the task base without
+                # being copied into the author's reserved worktree. Freeze the
+                # pre-decision target copy and identify its different provenance.
+                origin = target
+                result = subprocess.run(['git','-C',repo,'show',origin+':'+path],capture_output=True)
             if result.returncode:
                 missing.append(path); continue
             exported.add(path)
+            origins[path] = origin
             put('evidence/'+path,result.stdout)
             if path.endswith('.md') and depth < 1:
                 for link in re.findall(r'\]\(([^)#]+)(?:#[^)]*)?\)', result.stdout.decode(errors='replace')):
@@ -132,7 +140,11 @@ class Shadow:
             if r.returncode == 0: put('target/'+name,r.stdout)
         put('AGENTS.md',b'Advisory shadow repository. Inspect only frozen local inputs.\nWrite result.json and review.md, then run python3 finish.py.\nNo network, containers, historical command execution or live author state.\nNo acceptance authority. Dispatcher owns separate learning.\n')
         put('finish.py',Path(__file__).with_name('shadow_finish.py').read_bytes())
+        queued = self.d.db.execute('SELECT spec FROM queued WHERE task_id=?',(task_id,)).fetchone()
+        assignment = json.loads(queued[0]) if queued else {}
         body = {'receipt':receipt,'target_commit':target,'kind':kind,'shadow_task':task,'risks':list(RISKS),'files':pins,
+                'file_origins':origins,'original_assignment':assignment.get('text'),
+                'declared_dependencies':assignment.get('dependencies',[]),
                 'missing_reference_paths':sorted(set(missing)), 'scope':'Integrating this unit as a record is distinct from release approval.',
                 'limits':'Bounded frozen reference closure; state missing context. Reference judgment is excluded.'}
         write_json(directory/'input.json',body)
