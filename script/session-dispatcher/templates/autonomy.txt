@@ -22,6 +22,9 @@ superseded, assigned elsewhere or blocked. Do not manufacture another investigat
 or repeat established validation. A precise blocker/no-work checkpoint is valid.
 Routine choices and owned-process waits need no operator question. Do not guess
 around substantive uncertainty or turn diagnostic observations into release approval.
+Before concluding, collect the results of every owned background command. A launch
+acknowledgement or session terminal event is not command completion. Do not delegate,
+dispatch other sessions, or call model/inference APIs; propose follow-ups in JSON.
 
 Only edit integration/TASK_ID/ using the actual task ID below. Deliver candidate
 patches there rather than changing authoritative findings/source elsewhere. Use one
@@ -42,3 +45,7 @@ or invent native permissions beyond the fixed profile policy. Native/release wor
 authority belongs in the blocker/next-dependency explanation for consequential review.
 For a PLANNING ONLY assignment, inspect and propose; implement no technical changes.
 An empty list stops planning until delivery progress changes the workset.
+Use completed_deliveries and proposal_feedback to find frozen outputs and understand
+rejected proposals. Correct an envelope/reference error rather than silently abandoning
+useful work. A held native execution is not permission to propose a synonym-key retry:
+that scope requires review; independent scopes and offline inspection may continue.

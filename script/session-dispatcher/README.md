@@ -17,7 +17,8 @@ discovers, starts, replaces, or interrupts a managed service or live session.
 The opt-in bounded queue below drains approved assignments through the same
 ledger and lifecycle, with provider capacity, availability and quota gates.
 The broader [resource admission design](RESOURCE_CONTROL.md) remains partly
-unimplemented: no task selection, tool/container leases or automatic retries.
+unimplemented: tool/container leases and automatic retries are still absent;
+proposal intake below supplies only policy-bound work selection.
 The [unattended-operation roadmap](AUTONOMY.md) separates live capabilities,
 fixture-tested extensions and staged implementation work; it changes no behavior. Explicit
 checkpointed continuation and model handoff are described below.
@@ -329,6 +330,10 @@ The shared task template is `templates/autonomy.txt`; already queued text is imm
 Tasks output `{"tasks":[],"reason":"..."}` in their scoped `followups.json` when done.
 Prerequisites use existing task IDs and `verified`, `integrated` or `approved`;
 automatic intake never grants approval or treats a committed blocker as technical success.
+References can also resolve through verified dependency receipts, with each file's
+origin commit retained. Planning inputs include completed-output pins, allowed recipe
+names and proposal rejection feedback. Unresolved native effects fence new native
+proposals in that scope while unrelated scopes and offline inspection can continue.
 
 Only idle, clean, unreserved existing contexts at the explicit base are reused.
 Unintegrated results keep their exact branch heads for the existing integration gate.

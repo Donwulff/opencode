@@ -81,12 +81,29 @@ class Autonomy:
 
     def add(self, value, source):
         value = proposal(value, self.c)
+        if value['kind'] in self.c.get('native_profiles', {}):
+            held = self.d.db.execute("""SELECT a.task_id FROM autonomy_item a JOIN queued q ON q.task_id=a.task_id
+                JOIN task t ON t.id=q.task_id WHERE a.policy=? AND json_extract(a.payload,'$.scope')=?
+                AND q.state IN ('blocked','continuing')
+                AND (t.hazard IS NOT NULL OR t.issue IS NOT NULL OR q.issue IS NOT NULL) LIMIT 1""",
+                (self.c['id'],value['scope'])).fetchone()
+            require(not held, 'Native effects in this scope require review before another execution proposal')
         commits = [self.c['base']]
-        parent = self.d.db.execute("SELECT u.detail,t.registry FROM unit u JOIN task t ON t.id=u.task_id WHERE u.task_id=? AND u.stage='ready' AND t.state='verified'", (source,)).fetchone()
-        if parent:
-            require(json.loads(parent['registry'])['common'] == git(self.c['repository'],'rev-parse','--path-format=absolute','--git-common-dir').decode().strip(),
+        pending, visited = [source], set()
+        common = git(self.c['repository'],'rev-parse','--path-format=absolute','--git-common-dir').decode().strip()
+        while pending:
+            source_id = pending.pop(0)
+            if source_id in visited: continue
+            require(len(visited)<32, 'Narrow oversized dependency reference closure')
+            visited.add(source_id)
+            parent = self.d.db.execute("SELECT u.detail,t.registry FROM unit u JOIN task t ON t.id=u.task_id WHERE u.task_id=? AND u.stage='ready' AND t.state='verified'", (source_id,)).fetchone()
+            if not parent: continue
+            require(json.loads(parent['registry'])['common'] == common,
                     'Parent input belongs to another repository')
             commits.append(json.loads(parent['detail'])['final_commit'])
+            queued = self.d.db.execute('SELECT spec FROM queued WHERE task_id=?',(source_id,)).fetchone()
+            if queued:
+                pending.extend(edge['task'] for edge in json.loads(queued[0]).get('dependencies',[]))
         origins = {}
         for path in value['references']:
             for commit in commits:
@@ -201,6 +218,14 @@ class Autonomy:
             context['parent_delivery'] = next((r for r in report(self.d.path)['ready_receipts'] if r['task_id']==source), None)
         boundary = self.c.get('native_profiles', {}).get(item['kind'], 'OFFLINE ONLY: no container/socket/network/native execution or package/source/environment changes. fixture permits host-only tests after confirming all external/native effects are mocked.')
         context['current_assignments'] = [{k:t.get(k) for k in ('task_id','queue_state','worktree','dependencies')} for t in report(self.d.path)['tasks'] if t['queue_state'] in ('active','pending','blocked','continuing')]
+        context['proposal_feedback'] = [{'task':r['task_id'],**json.loads(r['detail'])} for r in self.d.db.execute(
+            'SELECT task_id,detail FROM autonomy_seen WHERE policy=? ORDER BY rowid DESC LIMIT 20',(self.c['id'],))]
+        own = {r[0] for r in self.d.db.execute('SELECT task_id FROM autonomy_item WHERE policy=?',(self.c['id'],))}
+        context['completed_deliveries'] = [{'task':r['task_id'],'commit':r['final_commit'],
+            'record':'integration/'+r['task_id']+'/'} for r in report(self.d.path)['ready_receipts']
+            if r['task_id'] in own][-32:]
+        context['available_followup_recipes'] = ['offline','fixture',*self.c.get('native_profiles',{})]
+        context['native_recipe_scopes'] = self.c.get('native_scopes',[])
         return template.replace('$EXECUTION_BOUNDARY',boundary).replace('TASK_ID',task) + '\nOperator-policy-bound task data:\n' + json.dumps(context, indent=2)
 
     def tick(self):

@@ -184,5 +184,35 @@ class AutonomyTests(unittest.TestCase):
         self.assertIn('whack-auto-fixture',prompt)
         self.assertNotIn('TASK_ID',prompt)
 
+    def test_uncertain_native_scope_cannot_be_retried_under_another_key(self):
+        self.c['native_profiles']={'ol8-tests':'Only an accepted payload in a new isolated worker.'}
+        self.c['scopes']['other']='A different existing correction.'
+        self.c['native_scopes']=['tests','other']
+        value=self.item('native-first');value['kind']='ol8-tests'
+        self.auto.add(value,'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        task=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='native-first'").fetchone()[0]
+        binding=json.loads(self.dispatcher.task(task)['registry'])
+        self.api.finish(binding['session_id'],terminal=None)
+        self.api.append(binding['session_id'],'session.execution.failed')
+        self.batch.tick(self.at)
+        retry={**value,'key':'native-first-with-a-new-name'}
+        with self.assertRaisesRegex(DispatchError,'Native effects in this scope'):self.auto.add(retry,task)
+        self.auto.add(self.item('offline-inspection'),'operator-policy')
+        independent={**value,'key':'native-other-scope','scope':'other'}
+        self.auto.add(independent,'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        other=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='native-other-scope'").fetchone()[0]
+        self.assertEqual(self.dispatcher.task(other)['state'],'admitted')
+
+    def test_verified_dependency_artifact_is_pinned_through_a_review_parent(self):
+        self.auto.add(self.item('original-export'),'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        first=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='original-export'").fetchone()[0]
+        review=self.item('independent-review',[{'task':first,'when':'verified'}])
+        tree,tip=self.finish(first,[review]);self.auto.tick();self.batch.tick(self.at)
+        second=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='independent-review'").fetchone()[0]
+        child=self.item('consume-reviewed-export');child['references']=['integration/'+first+'/README.md']
+        self.finish(second,[child]);self.auto.tick()
+        row=self.dispatcher.db.execute("SELECT detail FROM autonomy_item WHERE key='consume-reviewed-export'").fetchone()
+        self.assertEqual(json.loads(row[0])['reference_origins'],{child['references'][0]:tip})
+
 
 if __name__=='__main__':unittest.main()
