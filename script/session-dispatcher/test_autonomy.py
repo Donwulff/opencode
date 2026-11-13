@@ -101,6 +101,16 @@ class AutonomyTests(unittest.TestCase):
         self.finish(task,[]);self.auto.tick();self.auto.tick()
         self.assertEqual(self.dispatcher.db.execute("SELECT count(*) FROM autonomy_item WHERE source='planner'").fetchone()[0],1)
 
+    def test_followup_can_pin_a_new_artifact_in_its_verified_parent(self):
+        self.auto.add(self.item(),'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        task=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='fix-test-one'").fetchone()[0]
+        child=self.item('validate-new-artifact');child['references']=['integration/'+task+'/README.md']
+        tree,tip=self.finish(task,[child]);self.auto.tick()
+        row=self.dispatcher.db.execute("SELECT detail,payload FROM autonomy_item WHERE key='validate-new-artifact'").fetchone()
+        self.assertEqual(json.loads(row[0])['reference_origins'],{child['references'][0]:tip})
+        missing=self.item('missing-parent-file');missing['references']=['integration/not-a-real-file']
+        with self.assertRaisesRegex(DispatchError,'Reference missing'):self.auto.add(missing,task)
+
     def test_lost_create_reply_is_held_and_never_replayed(self):
         self.c['workers']=[];self.api.lose_create=True
         self.auto.add(self.item(),'operator-policy');self.auto.tick()

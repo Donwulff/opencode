@@ -81,8 +81,20 @@ class Autonomy:
 
     def add(self, value, source):
         value = proposal(value, self.c)
+        commits = [self.c['base']]
+        parent = self.d.db.execute("SELECT u.detail,t.registry FROM unit u JOIN task t ON t.id=u.task_id WHERE u.task_id=? AND u.stage='ready' AND t.state='verified'", (source,)).fetchone()
+        if parent:
+            require(json.loads(parent['registry'])['common'] == git(self.c['repository'],'rev-parse','--path-format=absolute','--git-common-dir').decode().strip(),
+                    'Parent input belongs to another repository')
+            commits.append(json.loads(parent['detail'])['final_commit'])
+        origins = {}
         for path in value['references']:
-            git(self.c['repository'], 'cat-file', '-e', self.c['base'] + ':' + path)
+            for commit in commits:
+                result = subprocess.run(['git','-C',self.c['repository'],'cat-file','-e',commit+':'+path],capture_output=True)
+                if result.returncode == 0:
+                    origins[path] = commit
+                    break
+            require(path in origins, 'Reference missing from frozen base and verified parent')
         for dep in value['dependencies']:
             require(self.d.db.execute('SELECT 1 FROM queued WHERE task_id=?', (dep['task'],)).fetchone(),
                     'Prerequisite must already exist; no guessed task IDs')
@@ -93,8 +105,8 @@ class Autonomy:
             return False
         n = self.d.db.execute('SELECT count(*) FROM autonomy_item WHERE policy=?', (self.c['id'],)).fetchone()[0]
         require(n < self.c['max_tasks'], 'Autonomy task budget reached')
-        self.d.db.execute('INSERT INTO autonomy_item VALUES (?,?,?,\'pending\',NULL,?,\'{}\',?)',
-                          (self.c['id'], value['key'], encoded(value), source, now()))
+        self.d.db.execute('INSERT INTO autonomy_item VALUES (?,?,?,\'pending\',NULL,?,?,?)',
+                          (self.c['id'], value['key'], encoded(value), source, encoded({'reference_origins':origins}), now()))
         return True
 
     def consume(self, snapshot):
@@ -183,6 +195,8 @@ class Autonomy:
                    'recipe': item['kind'], 'objective': item['objective'], 'references': item['references'],
                    'allowed_scopes': self.c['scopes'], 'task': task}
         context['known_work'] = [dict(r) for r in self.d.db.execute('SELECT key,state,task_id FROM autonomy_item WHERE policy=?', (self.c['id'],))]
+        row = self.d.db.execute('SELECT detail FROM autonomy_item WHERE policy=? AND key=?',(self.c['id'],item['key'])).fetchone()
+        context['reference_origins'] = json.loads(row[0]).get('reference_origins',{}) if row else {}
         if source not in ('planner','operator-policy'):
             context['parent_delivery'] = next((r for r in report(self.d.path)['ready_receipts'] if r['task_id']==source), None)
         boundary = self.c.get('native_profiles', {}).get(item['kind'], 'OFFLINE ONLY: no container/socket/network/native execution or package/source/environment changes. fixture permits host-only tests after confirming all external/native effects are mocked.')
