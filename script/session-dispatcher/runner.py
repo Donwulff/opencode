@@ -217,11 +217,18 @@ def run(database, *, run_dir=None, seconds=None, interval=None, until=None, auto
                         state['autonomy'] = automatic.tick()
                     result = batch.tick()  # Existing recovery/reconciliation precedes pending admission.
                     if (automatic and automatic.c.get('reuse_only')
-                            and state['autonomy'].get('state') == 'observing'
-                            and state['autonomy'].get('items', {}).get('pending', 0)
+                            and state['autonomy'].get('state') in ('observing', 'awaiting_proposals')
                             and result['phase'] in ('complete', 'blocked')):
-                        result = {**result, 'batch_phase': result['phase'], 'phase': 'waiting',
-                                  'autonomy_wait': 'approved_worktree_unavailable'}
+                        # Reconciliation can publish a result after intake's snapshot.
+                        fresh = dispatcher.db.execute('''SELECT 1 FROM autonomy_item a
+                            JOIN unit u ON u.task_id=a.task_id JOIN task t ON t.id=a.task_id
+                            LEFT JOIN autonomy_seen s ON s.policy=a.policy AND s.task_id=a.task_id
+                            WHERE a.policy=? AND u.stage='ready' AND t.state='verified'
+                            AND s.task_id IS NULL LIMIT 1''', (automatic.c['id'],)).fetchone()
+                        if (state['autonomy'].get('items', {}).get('pending', 0) or fresh
+                                or state['autonomy']['state'] == 'awaiting_proposals'):
+                            result = {**result, 'batch_phase': result['phase'], 'phase': 'waiting',
+                                      'autonomy_wait': 'intake_reconciliation_or_worker_reuse'}
                 except Exception as error:
                     state['error_type'] = type(error).__name__
                     code, reason = 1, 'observer_error_effects_not_retried'

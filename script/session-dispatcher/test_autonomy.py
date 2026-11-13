@@ -208,6 +208,30 @@ class AutonomyTests(unittest.TestCase):
         state=json.loads((self.root/'reuse-cutoff/state.json').read_text())
         self.assertEqual(state['exit_reason'],'batch_outside_window')
 
+    def test_last_planner_completion_gets_another_intake_pass(self):
+        self.c.update(reuse_only=True,reuse_ref='refs/heads/fixture')
+        path=self.aroot/'policy.json';path.write_text(json.dumps(self.c));path.chmod(0o600)
+        snapshots=[{'state':'awaiting_proposals'}, {'state':'observing','items':{'pending':1}}]
+        with patch('autonomy.Autonomy.tick',side_effect=snapshots) as intake, patch('batch.Batch.tick',return_value={'phase':'blocked'}):
+            self.assertEqual(run(self.ledger,run_dir=self.root/'last-planner',seconds=2,interval=1,autonomy=str(path)),2)
+        self.assertEqual(intake.call_count,2)
+        self.assertEqual(json.loads((self.root/'last-planner/state.json').read_text())['exit_reason'],'observer_deadline')
+
+    def test_fresh_verified_result_is_consumed_before_stopping(self):
+        self.auto.add(self.item(),'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        task=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='fix-test-one'").fetchone()[0]
+        self.finish(task,[])
+        self.c.update(reuse_only=True,reuse_ref='refs/heads/fixture')
+        path=self.aroot/'policy.json';path.write_text(json.dumps(self.c));path.chmod(0o600)
+        snapshot={'state':'observing','items':{'queued':1}}
+        with patch('autonomy.Autonomy.tick',return_value=snapshot), patch('batch.Batch.tick',return_value={'phase':'blocked'}):
+            self.assertEqual(run(self.ledger,run_dir=self.root/'fresh-result',seconds=1,interval=1,autonomy=str(path)),2)
+        self.auto.consume(report(self.ledger))
+        with patch('autonomy.Autonomy.tick',return_value=snapshot), patch('batch.Batch.tick',return_value={'phase':'blocked'}):
+            self.assertEqual(run(self.ledger,run_dir=self.root/'consumed-result',seconds=1,autonomy=str(path)),1)
+        self.assertEqual(json.loads((self.root/'consumed-result/state.json').read_text())['exit_reason'],'batch_blocked')
+        self.assertEqual(len(self.api.posts),1)  # No retry of the completed assignment.
+
     def test_policy_hash_is_frozen_on_observer_restart(self):
         path=self.aroot/'policy.json';path.write_text(json.dumps(self.c));path.chmod(0o600)
         run(self.ledger,run_dir=self.root/'policy-run',seconds=0,autonomy=str(path))
