@@ -216,6 +216,12 @@ def run(database, *, run_dir=None, seconds=None, interval=None, until=None, auto
                     if automatic:
                         state['autonomy'] = automatic.tick()
                     result = batch.tick()  # Existing recovery/reconciliation precedes pending admission.
+                    if (automatic and automatic.c.get('reuse_only')
+                            and state['autonomy'].get('state') == 'observing'
+                            and state['autonomy'].get('items', {}).get('pending', 0)
+                            and result['phase'] in ('complete', 'blocked')):
+                        result = {**result, 'batch_phase': result['phase'], 'phase': 'waiting',
+                                  'autonomy_wait': 'approved_worktree_unavailable'}
                 except Exception as error:
                     state['error_type'] = type(error).__name__
                     code, reason = 1, 'observer_error_effects_not_retried'

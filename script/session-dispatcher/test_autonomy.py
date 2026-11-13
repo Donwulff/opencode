@@ -195,6 +195,19 @@ class AutonomyTests(unittest.TestCase):
         with self.assertRaises(DispatchError):
             run(self.ledger,run_dir=self.root/'too-long',until=(self.at+timedelta(days=8)).isoformat())
 
+    def test_reuse_intake_wait_survives_batch_holds_but_not_resource_cutoff(self):
+        self.c.update(reuse_only=True,reuse_ref='refs/heads/fixture')
+        path=self.aroot/'policy.json';path.write_text(json.dumps(self.c));path.chmod(0o600)
+        waiting={'state':'observing','items':{'pending':1}}
+        with patch('autonomy.Autonomy.tick',return_value=waiting), patch('batch.Batch.tick',return_value={'phase':'blocked'}):
+            self.assertEqual(run(self.ledger,run_dir=self.root/'reuse-wait',seconds=1,interval=1,autonomy=str(path)),2)
+        state=json.loads((self.root/'reuse-wait/state.json').read_text())
+        self.assertEqual(state['exit_reason'],'observer_deadline')
+        with patch('autonomy.Autonomy.tick',return_value=waiting), patch('batch.Batch.tick',return_value={'phase':'outside_window'}):
+            self.assertEqual(run(self.ledger,run_dir=self.root/'reuse-cutoff',seconds=1,autonomy=str(path)),2)
+        state=json.loads((self.root/'reuse-cutoff/state.json').read_text())
+        self.assertEqual(state['exit_reason'],'batch_outside_window')
+
     def test_policy_hash_is_frozen_on_observer_restart(self):
         path=self.aroot/'policy.json';path.write_text(json.dumps(self.c));path.chmod(0o600)
         run(self.ledger,run_dir=self.root/'policy-run',seconds=0,autonomy=str(path))
