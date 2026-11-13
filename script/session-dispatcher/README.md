@@ -313,6 +313,16 @@ The private version-1 policy requires `id`, `root` (existing0700), `database`,
 `repository`, full frozen `base`, `connection`, `model`, `pool`, `service_state`,
 `workers` (existing approved registry names), `protected_worktrees`, `learning`,
 `until`, `backlog`, `max_tasks`, `max_worktrees`, `scopes`, and optional `seeds`.
+Set `reuse_only: true` with `reuse_ref: "refs/heads/main"` for a fixed worker pool.
+No new task worktree/session is created; intake waits when every listed worker is
+active, reserved, dirty or has unintegrated work. After explicit review/integration
+and cross-server-safe synchronization, an existing worker exactly at that branch
+head can be reapproved for its next assignment. Branch identity and history remain
+intact. Frozen reference pins still use `base`/verified parents; this is not input
+retargeting or automatic synchronization. Without this option, bounded provisioning
+retains its original behavior. Shadow review repositories are separate disposable
+report fixtures, not investigation worktrees.
+
 Each seed/proposal has exactly:
 
 ```json

@@ -60,6 +60,35 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(self.auto.batch.life.unit(task)['stage'],'ready')
         return tree,tip
 
+    def test_reuse_only_waits_for_integration_then_reuses_the_same_worker(self):
+        self.git('branch','main',self.c['base'])
+        self.c.update(reuse_only=True,reuse_ref='refs/heads/main')
+        self.auto.add(self.item(),'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        task=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='fix-test-one'").fetchone()[0]
+        tree,tip=self.finish(task,[self.item('next-existing-worker')])
+        self.auto.tick()
+        row=self.dispatcher.db.execute("SELECT state,detail FROM autonomy_item WHERE key='next-existing-worker'").fetchone()
+        self.assertEqual(row['state'],'pending')
+        self.assertEqual(json.loads(row['detail'])['wait'],'approved_worktree_unavailable')
+        self.assertEqual(len(self.api.creates),0)
+        self.git('update-ref','refs/heads/main',tip,self.c['base'])  # Fixture integration.
+        self.auto.tick();self.batch.tick(self.at)
+        second=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='next-existing-worker'").fetchone()[0]
+        self.assertEqual(self.dispatcher.task(second)['worktree'],str(self.repo))
+        self.assertEqual(len(self.api.creates),0)
+        self.assertEqual(self.git('branch','--show-current'),'fixture')
+        self.assertEqual(self.git('rev-parse','HEAD'),tip)
+
+    def test_reuse_only_never_allocates_a_replacement_for_a_protected_worker(self):
+        self.git('branch','main',self.c['base'])
+        self.c.update(reuse_only=True,reuse_ref='refs/heads/main',protected_worktrees=[str(self.repo)])
+        self.auto.add(self.item(),'operator-policy');self.auto.tick();self.auto.tick()
+        self.assertEqual(len(self.api.creates),0)
+        self.assertEqual(len(self.api.posts),0)
+        self.assertEqual(self.dispatcher.db.execute("SELECT state FROM autonomy_item WHERE key='fix-test-one'").fetchone()[0],'pending')
+        with self.assertRaisesRegex(DispatchError,'forbids creating'):
+            self.auto.new_worker('unexpected','auto-forbidden')
+
     def test_three_completion_cycles_refill_without_a_planning_operator(self):
         self.auto.add(self.item(),'operator-policy')
         original=[]

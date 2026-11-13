@@ -28,6 +28,12 @@ def policy(path):
         require(type(c[key]) is int and low <= c[key] <= high, 'Invalid ' + key)
     require(c['scopes'] and isinstance(c['scopes'], dict), 'Explicit authorized scopes required')
     require(timestamp(c['until']).tzinfo is not None, 'Explicit autonomy deadline required')
+    require(type(c.get('reuse_only', False)) is bool, 'reuse_only must be boolean')
+    if c.get('reuse_only'):
+        ref = c.get('reuse_ref')
+        require(isinstance(ref, str) and ref.startswith('refs/heads/')
+                and subprocess.run(['git', 'check-ref-format', ref], capture_output=True).returncode == 0,
+                'Reuse requires an explicit local integration branch')
     root = Path(c['root']).resolve(strict=True)
     require(not root.stat().st_mode & 0o077 and not root.is_relative_to(Path(c['repository']).resolve()),
             'Keep autonomy state private and outside the project')
@@ -162,6 +168,7 @@ class Autonomy:
     def worker(self, snapshot):
         busy = {t['worktree'] for t in snapshot['tasks'] if t['worktree_reserved']}
         receipts = snapshot['ready_receipts']
+        reusable_base = git(self.c['repository'], 'rev-parse', self.c['reuse_ref'] + '^{commit}').decode().strip() if self.c.get('reuse_only') else self.c['base']
         for name in self.c['workers']:
             row = self.d.db.execute('SELECT snapshot FROM registry WHERE name=?', (name,)).fetchone()
             if not row: continue
@@ -174,9 +181,9 @@ class Autonomy:
                 client = self.d.client_factory(reg['connection'])
                 self.d.check_binding(reg, client)
                 require(client.idle(reg['session_id']), 'Native session busy')
-                require(local['head'] == self.c['base'], 'Automatic reuse requires the explicit pinned base')
+                require(local['head'] == reusable_base, 'Reuse requires the approved base or synchronized integration head')
                 # Never advance a delivered unit's branch before content review.
-                require(all(subprocess.run(['git', '-C', root, 'merge-base', '--is-ancestor', r['final_commit'], self.c['base']],
+                require(all(subprocess.run(['git', '-C', root, 'merge-base', '--is-ancestor', r['final_commit'], reusable_base],
                                            capture_output=True).returncode == 0
                             for r in receipts if any(t['task_id']==r['task_id'] and t['worktree']==root for t in snapshot['tasks'])), 'Unintegrated deliverable retains its branch')
                 require(reg['model'] == self.c['model'], 'Model drift')
@@ -186,6 +193,7 @@ class Autonomy:
         return None
 
     def new_worker(self, key, task):
+        require(not self.c.get('reuse_only'), 'Reuse-only policy forbids creating worktrees')
         used = self.d.db.execute("SELECT count(*) FROM autonomy_item WHERE policy=? AND json_extract(detail,'$.new_worktree') IS NOT NULL",
                                  (self.c['id'],)).fetchone()[0]
         require(used < self.c['max_worktrees'], 'Unreviewed-worktree capacity reached; integration required')
@@ -297,6 +305,9 @@ class Autonomy:
                     self.d.approve(name,reg['session_id'],reg['worktree'],reg['connection'])
                     reg=json.loads(self.d.db.execute('SELECT snapshot FROM registry WHERE name=?',(name,)).fetchone()[0])
                 else:
+                    if self.c.get('reuse_only'):
+                        self.save(row['key'], 'pending', {'wait':'approved_worktree_unavailable'})
+                        break  # Preserve intake; integration/sync can make an existing worker eligible.
                     name,reg,detail=self.new_worker(row['key'],task)
                 item=json.loads(row['payload'])
                 learning={**self.c['learning'],'model':self.c['model']}
