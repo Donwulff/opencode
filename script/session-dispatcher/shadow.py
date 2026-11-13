@@ -12,7 +12,8 @@ import re
 import subprocess
 import tarfile
 
-from batch import Batch
+from batch import Batch, timestamp
+from datetime import datetime, timezone
 from dispatch import Dispatcher, DispatchError, digest, git, require
 from operations import report, review_ready
 from review import RISKS
@@ -23,8 +24,11 @@ def policy(path):
     p = Path(path).resolve(strict=True)
     require(not p.stat().st_mode & 0o077, 'Shadow policy must be private')
     c = read_json(p)
-    require(c.get('version') == 1 and type(c['max_cases']) is int and 1 <= c['max_cases'] <= 10
+    require(c.get('version') == 1 and type(c['max_cases']) is int and 1 <= c['max_cases'] <= (10000 if c.get('continuous') else 10)
             and type(c['max_disagreements']) is int and 1 <= c['max_disagreements'] <= 3, 'Bounded shadow trial required')
+    require(type(c.get('continuous', False)) is bool, 'Explicit continuous flag required')
+    if c.get('continuous'):
+        require(timestamp(c['until']).tzinfo is not None, 'Bound continuous comparisons by the approved window')
     root = Path(c['root']).resolve(strict=True)
     validate_directory(c['database'], root)
     require(not root.stat().st_mode & 0o077 and not root.is_relative_to(Path(c['repository']).resolve()),
@@ -68,16 +72,17 @@ class Shadow:
     def _capture(self, task_id, *, target=None, kind='forward'):
         require(kind in ('forward', 'cold_replay'), 'Unknown shadow mode')
         receipt = next((r for r in report(self.c['database'])['ready_receipts'] if r['task_id'] == task_id), None)
-        require(receipt and receipt.get('purpose') != 'shadow_review' and receipt['verified_delivery']
+        require(receipt and receipt.get('purpose') not in ('shadow_review','planning') and receipt['verified_delivery']
                 and receipt['proof_kind'] == 'git_scope', 'Verified delivery required; never shadow a shadow')
         require(receipt['common'] == git(self.c['repository'],'rev-parse','--path-format=absolute','--git-common-dir').decode().strip(),
                 'Shadow receipt belongs to another project')
-        case_id = digest([task_id, receipt['final_commit']])[:24]
+        case_id = digest(([self.c['campaign']] if self.c.get('campaign') else []) + [task_id, receipt['final_commit']])[:24]
         existing = next((x for x in self.cases() if x['id'] == case_id), None)
         if existing:
             return existing  # Interrupted setup stays held: no filesystem/native-effect replay.
         require(len(self.cases()) < self.c['max_cases'], 'Shadow case budget reached')
-        require(sum(bool(x.get('disagreement')) for x in self.cases()) < self.c['max_disagreements'], 'Shadow disagreement stop reached')
+        require(not self.c.get('continuous') or datetime.now(timezone.utc) < timestamp(self.c['until']), 'Shadow window closed')
+        require(self.c.get('continuous') or sum(bool(x.get('disagreement')) for x in self.cases()) < self.c['max_disagreements'], 'Shadow disagreement stop reached')
         repo = self.c['repository']
         target = git(repo, 'rev-parse', '--verify', (target or self.c['target_ref']) + '^{commit}').decode().strip()
         sid, task = 'ses_shadow' + case_id, 'shadow-' + case_id
@@ -195,8 +200,13 @@ class Shadow:
             if not row or row[0]!='ready': continue
             unit = self.d.db.execute('SELECT detail FROM unit WHERE task_id=?',(case['shadow_task'],)).fetchone()
             task = self.d.task(case['shadow_task']);proof = json.loads(task['verification']);tip = proof['commit']
-            value = assessment(json.loads(git(case['directory'],'show',tip+':result.json')))
-            require(digest(json.loads(git(case['directory'],'show',proof['base']+':input.json')))==case['input_hash'], 'Input drift')
+            try:
+                value = assessment(json.loads(git(case['directory'],'show',tip+':result.json')))
+                require(digest(json.loads(git(case['directory'],'show',proof['base']+':input.json')))==case['input_hash'], 'Input drift')
+            except (DispatchError, ValueError, KeyError, TypeError) as error:
+                case.update(stage='needs_review',error=str(error)[:500])
+                self.save(case)
+                continue  # An invalid advisory result never stops unrelated delivery/refill.
             case.update(stage='complete',result=value,result_commit=tip,learning=json.loads(unit[0]).get('learning'),
                         model=json.loads(task['registry'])['model'])
             if case.get('reference'):
@@ -210,7 +220,7 @@ def cycle(path):
     c = policy(path);d = Dispatcher(c['database'])
     try:
         s = Shadow(d,c);s.collect()
-        if len(s.cases())<c['max_cases'] and sum(bool(x.get('disagreement')) for x in s.cases())<c['max_disagreements']:
+        if len(s.cases())<c['max_cases'] and (c.get('continuous') or sum(bool(x.get('disagreement')) for x in s.cases())<c['max_disagreements']):
             for unit in review_ready(c['database'],c['repository'],c['target_ref'])['units']:
                 if unit['state']=='awaiting_review' and not any(x['source_task']==unit['task_id'] for x in s.cases()):
                     s.capture(unit['task_id']);break

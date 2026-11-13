@@ -188,6 +188,8 @@ def report(database, *, live=False, run_dir=None, at=None, client_factory=Client
                              'Issue bodies, prompts, tool output and connection credentials are omitted.']}
         if inference_url is not None:
             result['inference'] = inference_status(inference_url)
+        if 'autonomy_item' in tables:
+            result['autonomy'] = [dict(r) for r in db.execute('SELECT policy,state,count(*) AS count FROM autonomy_item GROUP BY policy,state')]
         if 'integration' in tables:
             result['integration_counts'] = dict(db.execute('SELECT stage,count(*) FROM integration GROUP BY stage'))
         return result
@@ -203,7 +205,7 @@ def review_ready(database, repository, ref='HEAD', *, snapshot=None):
     target = git(repository, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}').decode().strip()
     counts, units = Counter(), []
     for receipt in snapshot['ready_receipts']:
-        if receipt.get('purpose') == 'shadow_review':
+        if receipt.get('purpose') in ('shadow_review', 'planning'):
             continue  # Advisory calibration cannot become an integration unit or spawn another review.
         if receipt['common'] != common:
             continue

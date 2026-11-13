@@ -1,5 +1,15 @@
 # Unattended operation: current capabilities and delivery milestones
 
+**2026-11-13 implementation update:** the opt-in observer now supports policy-bound
+Qwen proposal intake and automatic backlog replenishment (`autonomy.py`), continued
+shadow collection with admission fairness, and explicit weekend observation windows.
+The [README workflow](README.md#policy-bound-automatic-replenishment) owns the current
+contract. These supersede the historical missing-selector/refill and three-disagreement
+stop descriptions below only when the new policy is explicitly enabled. Integration,
+substantive acceptance and prerequisite approvals remain separate. A settled held task
+can release inference capacity while retaining every worktree/evidence lease. No model
+judgment grants itself broader execution authority or merges a branch.
+
 Updated 2026-11-12 for the native coordinator throughput controls, the
 metered-inference allocation appended the same day, and the adversarial
 review corrections plus shadow-review experiment evaluation below, independently

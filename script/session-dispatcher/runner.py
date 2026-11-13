@@ -140,7 +140,7 @@ def request_stop(database, run_dir=None):
     return {'requested': value['attempt'], 'effect': 'stop observation at a tick boundary; agents and pools unchanged'}
 
 
-def run(database, *, run_dir=None, seconds=None, interval=None):
+def run(database, *, run_dir=None, seconds=None, interval=None, until=None, autonomy=None):
     from batch import Batch, timestamp
     from dispatch import Dispatcher
     root = directory(database, run_dir)
@@ -158,18 +158,35 @@ def run(database, *, run_dir=None, seconds=None, interval=None):
                 require(config.get('kind') == 'dispatcher-observer' and config.get('version') == 1,
                         'Unrecognized run directory')
                 require(config['database'] == str(Path(database).absolute()), 'Run directory belongs to another ledger')
-                require(seconds is None and (interval is None or interval == config['interval']),
+                require(seconds is None and until is None and (autonomy is None or autonomy == config.get('autonomy_policy')) and (interval is None or interval == config['interval']),
                         'Restart retains the original deadline/interval; omit --seconds or use a new run directory')
             else:
-                require(type(seconds) is int and 0 <= seconds <= 86400, 'New run requires --seconds 0..86400')
+                require(until is None or seconds is None, 'Choose seconds or an absolute deadline')
+                if until is None:
+                    require(type(seconds) is int and 0 <= seconds <= 86400, 'New run requires --seconds 0..86400')
+                    end = datetime.now(timezone.utc) + timedelta(seconds=seconds)
+                else:
+                    end = timestamp(until)
+                    require(0 <= (end-datetime.now(timezone.utc)).total_seconds() <= 7*86400,
+                            'Explicit absolute observation window must end within seven days')
                 interval = 5 if interval is None else interval
                 require(type(interval) is int and 1 <= interval <= 60, 'Interval must be 1..60 seconds')
                 config = {'kind': 'dispatcher-observer', 'version': 1,
                           'database': str(Path(database).absolute()), 'interval': interval,
-                          'deadline': (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()}
+                          'deadline': end.isoformat()}
+                if autonomy:
+                    config.update(autonomy_policy=str(Path(autonomy).resolve(strict=True)),
+                                  autonomy_hash=hashlib.sha256(Path(autonomy).read_bytes()).hexdigest())
                 write_json(config_path, config)
             dispatcher = Dispatcher(database)
             batch = Batch(dispatcher)
+            automatic = None
+            if config.get('autonomy_policy'):
+                from autonomy import Autonomy, policy
+                require(hashlib.sha256(Path(config['autonomy_policy']).read_bytes()).hexdigest() == config['autonomy_hash'],
+                        'Autonomy policy changed; use an explicitly renewed run')
+                automatic = Autonomy(dispatcher, policy(config['autonomy_policy']))
+                batch.fair_shadow = True
             attempt = uuid.uuid4().hex
             state = {**config, 'attempt': attempt, 'owner': process_identity(), 'code': code_identity(),
                      'runtime': {'python': sys.version, 'executable': sys.executable},
@@ -196,6 +213,8 @@ def run(database, *, run_dir=None, seconds=None, interval=None):
                 state.update(status='observing', heartbeat_at=now(), tick_started_at=now())
                 save()
                 try:
+                    if automatic:
+                        state['autonomy'] = automatic.tick()
                     result = batch.tick()  # Existing recovery/reconciliation precedes pending admission.
                 except Exception as error:
                     state['error_type'] = type(error).__name__
@@ -220,7 +239,7 @@ def run(database, *, run_dir=None, seconds=None, interval=None):
             signal.signal(sig, handler)
 
 
-def start(database, *, run_dir=None, seconds=None, interval=None):
+def start(database, *, run_dir=None, seconds=None, interval=None, until=None, autonomy=None):
     root = directory(database, run_dir)
     validate_directory(database, root)
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -229,7 +248,7 @@ def start(database, *, run_dir=None, seconds=None, interval=None):
     old = read_json(state_path).get('attempt') if state_path.exists() else None
     args = [sys.executable, str(Path(__file__).resolve()), '--db', str(Path(database).absolute()),
             'run', '--run-dir', str(root)]
-    for name, value in (('--seconds', seconds), ('--interval', interval)):
+    for name, value in (('--seconds', seconds), ('--interval', interval), ('--until', until), ('--autonomy', autonomy)):
         if value is not None:
             args += [name, str(value)]
     fd = os.open(root / 'observer.log', os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
@@ -254,6 +273,8 @@ def text_report(value):
     runner = value['runner']
     lines = [f"Observer: {runner['state']} (last successful tick: {runner.get('last_successful_tick_at') or 'unknown'})",
              'Queue: ' + ', '.join(f'{k}={v}' for k, v in sorted(value['counts']['queue'].items()))]
+    if value.get('autonomy'):
+        lines.append('Automatic backlog: ' + ', '.join(str(r['policy']) + '/' + r['state'] + '=' + str(r['count']) for r in value['autonomy']))
     if 'inference' in value:
         probe = value['inference']
         lines.append('Inference: ' + probe['state'] + '; models=' + json.dumps(probe['models']))
@@ -296,6 +317,8 @@ def main():
         command.add_argument('--run-dir')
         if name in ('run', 'start'):
             command.add_argument('--seconds', type=int)
+            command.add_argument('--until', help='Explicit timezone-aware observation deadline, at most seven days')
+            command.add_argument('--autonomy', help='Private operator-approved refill policy')
             command.add_argument('--interval', type=int)
         if name == 'status':
             command.add_argument('--live', action='store_true')
@@ -304,9 +327,9 @@ def main():
     args = parser.parse_args()
     try:
         if args.command == 'run':
-            return run(args.db, run_dir=args.run_dir, seconds=args.seconds, interval=args.interval)
+            return run(args.db, run_dir=args.run_dir, seconds=args.seconds, interval=args.interval, until=args.until, autonomy=args.autonomy)
         if args.command == 'start':
-            result = start(args.db, run_dir=args.run_dir, seconds=args.seconds, interval=args.interval)
+            result = start(args.db, run_dir=args.run_dir, seconds=args.seconds, interval=args.interval, until=args.until, autonomy=args.autonomy)
         elif args.command == 'stop':
             result = request_stop(args.db, args.run_dir)
         else:

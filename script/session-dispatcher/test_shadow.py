@@ -160,5 +160,33 @@ class ShadowTests(unittest.TestCase):
         self.assertEqual((Path(case['directory'])/'evidence/context.md').read_text(),(target/'context.md').read_text())
         self.assertFalse((self.repo/'context.md').exists())
 
+    def test_continuous_collection_keeps_disagreements_without_stopping(self):
+        from datetime import timedelta
+        self.config.update(continuous=True,until=(self.at+timedelta(hours=1)).isoformat(),campaign='feedback-v2')
+        first=self.capture()
+        self.shadow.reference(first['id'],first['input_hash'],'blocked','Independent reference before shadow.')
+        self.finish(first,'routine')
+        self.config['max_disagreements']=1
+        receipt=next(r for r in report(self.ledger)['ready_receipts'] if r['task_id']=='doc-1')
+        receipt={**receipt,'task_id':'second-ready'}
+        with patch('shadow.report',return_value={'ready_receipts':[receipt]}):
+            second=self.shadow.capture('second-ready')
+        self.assertNotEqual(first['id'],second['id'])
+        self.assertEqual(sum(bool(c.get('disagreement')) for c in self.shadow.cases()),1)
+        self.assertEqual(second['stage'],'queued')
+
+    def test_fair_admission_prevents_shadows_starving_behind_a_delivery_backlog(self):
+        case=self.capture()
+        for name in ['second','third']:
+            self.second_session(name,'ses_'+name)
+            self.batch.enqueue('work-'+name,name,'Review the frozen fixture.',['README.md'],self.policy)
+        self.configure(capacity=2);self.batch.tick(self.at)
+        # Source doc-1 plus these two admissions are three consecutive delivery admissions.
+        self.second_session('fourth','ses_fourth')
+        self.batch.enqueue('work-fourth','fourth','Another independent fixture.',['README.md'],self.policy)
+        self.configure(capacity=3);self.batch.fair_shadow=True;self.batch.tick(self.at)
+        self.assertIsNotNone(self.dispatcher.db.execute('SELECT 1 FROM task WHERE id=?',(case['shadow_task'],)).fetchone())
+        self.assertIsNone(self.dispatcher.db.execute("SELECT 1 FROM task WHERE id='work-fourth'").fetchone())
+
 
 if __name__=='__main__':unittest.main()

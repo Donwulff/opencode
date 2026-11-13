@@ -173,7 +173,7 @@ class Coordinator:
                     or pool['admission_gate'] != 'open' or pool['occupancy'] != 'observed'):
                 continue
             tasks = [r for r in snapshot['tasks'] if r['task_pool'] == pool['name']
-                     and r.get('purpose') != 'shadow_review']
+                     and r.get('purpose') not in ('shadow_review', 'planning')]
             independent = sorted(r['task_id'] for r in tasks
                                  if r['queue_state'] == 'pending' and not r['dependencies'])
             if len(independent) >= target:
@@ -194,7 +194,7 @@ class Coordinator:
         units = [r for r in handoff['units'] if r['verified_delivery']]
         attention = [{'task_id': r['task_id'], 'stage': r['stage'], 'task_state': r['task_state'],
                       'hold_reason': r.get('hold_reason'), 'cursor': r['event_cursor']}
-                     for r in snapshot['tasks'] if r.get('purpose') != 'shadow_review'
+                     for r in snapshot['tasks'] if r.get('purpose') not in ('shadow_review', 'planning')
                      and r['worktree_reserved'] and (r['has_issue'] or r['has_hazard'])]
         for probe in snapshot['native_sessions']:
             if any(r['task_id'] == probe['task_id'] and r.get('purpose') == 'shadow_review' for r in snapshot['tasks']):

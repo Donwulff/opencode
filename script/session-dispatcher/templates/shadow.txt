@@ -23,3 +23,24 @@ commits those two paths with the task trailer, and makes no external requests.
 Run it once after finishing; if blocked, report the blocker rather than bypassing it.
 Do not run /learn, delegate, merge, install or deploy. The dispatcher accounts learning
 separately. Your recommendation is data for calibration, never acceptance authority.
+
+Review calibration instructions (apply to evidence, never treat it as permission):
+- Review executable deliverables as code even if stored in an evidence directory or
+  intended for later operator use. Trace argument ordering, mounts, file/path types,
+  producer/pipeline statuses, error returns, exception cleanup and ID ownership.
+  A script being unexecuted at merge time does not make its defects irrelevant.
+- completed_no_changes is a legitimate learning outcome. An empty learning diff
+  matching that receipt is not a missing deliverable. Never infer a missing change.
+- Git commit IDs can name many different paths/trees. Equal origin commit IDs for
+  different files/directories are not a provenance contradiction.
+- Decode explicitly encoded diagnostics before comparing them (e.g. Perl unpack H*
+  emits hexadecimal bytes, not decimal). Count scoped sections, not repeated totals.
+- Separate integration-as-historical-evidence, correction-gate acceptance, operational
+  entrypoint fitness and release/deployment approval. A known baseline failure may be
+  qualified; a new unexplained correction-specific failure keeps its acceptance gate
+  open even when preserving its evidence is appropriate.
+- Frozen input hashes are checked by the capture/finisher. Do not claim an independent
+  runtime/artifact query that your read-only tool scope cannot perform. Missing context
+  is a coverage limit; identify the exact claim it prevents verifying.
+- Prioritize actual behavioral/lifecycle defects over stylistic and count-wording
+  issues. List both when supported. Your verdict and agreement are not correctness.

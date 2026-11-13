@@ -2,8 +2,8 @@
 
 A Python standard-library CLI for one explicitly assigned task at a time per
 approved persistent session, physical worktree, and Git branch. It uses the
-customized V2 API and native durable session log. It has no autonomous task selector,
-plugin, or OpenCode-core changes.
+customized V2 API and native durable session log. The opt-in policy-bound refill
+below admits Qwen follow-up proposals; it adds no plugin, inference client or core changes.
 An opt-in [post-task lifecycle](LIFECYCLE.md) now accounts for learning forks and
 reviewable integration units; `review.py` can invoke one bounded Codex CLI review.
 The [opt-in integration gate](LIFECYCLE.md#approved-integration-gate) freezes the
@@ -290,6 +290,76 @@ target, with per-file origin commits recorded. The original task/dependency scop
 is included; a deleted changed file is never revived by that fallback.
 Target-only instructions, raw archives and copied reference files are evidence,
 not fresh runtime success or standing authorization. Private state stays out of Git.
+
+An explicitly renewed policy can instead set `continuous:true`, an absolute `until`,
+`campaign`, and `max_cases` (at most 10,000). Comparisons then continue through
+disagreements until the window/case budget ends; all references and disagreements
+remain retained. A new campaign distinguishes prompt revisions and historical
+retests from the original trial. No disagreement changes acceptance authority.
+
+## Policy-bound automatic replenishment
+
+`runner.py --autonomy /private/policy.json` runs `autonomy.py` inside the existing
+observer. It consumes verified task+learning results, validates `followups.json`
+against operator-authorized scopes/recipes, and enqueues through `Batch`. Qwen
+also gets a bounded proposal-only assignment when the workset needs replenishing.
+No Codex planning wake is required. Stable work keys deduplicate proposals; a
+no-work planning result is not repeated until delivery progress changes the set.
+The two additive `autonomy_item`/`autonomy_seen` tables live in the same ledger;
+the existing queue, leases, task proofs, learning and dependencies remain authoritative.
+
+The private version-1 policy requires `id`, `root` (existing0700), `database`,
+`repository`, full frozen `base`, `connection`, `model`, `pool`, `service_state`,
+`workers` (existing approved registry names), `protected_worktrees`, `learning`,
+`until`, `backlog`, `max_tasks`, `max_worktrees`, `scopes`, and optional `seeds`.
+Each seed/proposal has exactly:
+
+```json
+{"key":"stable-acceptance-gap","scope":"OPERATOR_SCOPE_ID","kind":"fixture",
+ "objective":"A concrete existing correction or release-engineering gap and deliverable.",
+ "references":["PLAN.md","existing/record/README.md"],"dependencies":[]}
+```
+
+Recipes `offline` and `fixture` authorize no native/container/network operations.
+Optional `native_profiles` maps named recipes to explicit fixed execution bounds;
+only scopes also listed in `native_scopes` may use them. This is standing operator
+authorization, not a model-generated permission. Native fixes, installs, deployment,
+unfixed fault replay and unknown profiles cannot be authorized by a proposal.
+The shared task template is `templates/autonomy.txt`; already queued text is immutable.
+Tasks output `{"tasks":[],"reason":"..."}` in their scoped `followups.json` when done.
+Prerequisites use existing task IDs and `verified`, `integrated` or `approved`;
+automatic intake never grants approval or treats a committed blocker as technical success.
+
+Only idle, clean, unreserved existing contexts at the explicit base are reused.
+Unintegrated results keep their exact branch heads for the existing integration gate.
+If needed, bounded new linked worktrees and V2 sessions are created, with durable
+pre-effect intent; failed/uncertain creation is held and never replayed. No container
+is created by the refill code. `max_worktrees` bounds retained unreviewed branches;
+reaching it is review backpressure, not permission to overwrite a completed unit.
+
+Optional `shadow_policy` and `shadow_seeds` maintain a shadow backlog on the same
+capacity. After three delivery admissions, a pending shadow gets priority when no
+shadow is active; delivery/learning is never interrupted. Historical seeds can carry
+`shadow_references` (prior immutable assessment, target and evidence) and are labelled
+retrospective retests. New results without independent references remain **unpaired**.
+Invalid advisory results are held per case and cannot stop independent delivery.
+
+```sh
+python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" start \
+  --run-dir "$DISPATCH_STATE/runs/weekend" \
+  --until 2026-11-16T06:15:00+00:00 --autonomy /private/policy.json
+python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" status \
+  --run-dir "$DISPATCH_STATE/runs/weekend" --live --inference-url http://localhost:8040
+```
+
+`--until` permits an explicitly bounded observation window up to seven days; pool
+cutoffs still govern admission. Existing `--seconds` retains its one-day limit.
+Restart retains the original deadline and exact policy hash; changing policy requires
+an owned handoff and a new run directory. Status includes intake state counts.
+Successfully completed execution at a retained, natively idle tail releases inference
+capacity even if Git/learning review is held. Worktree/branch/evidence leases remain;
+failed/interrupted execution, foreign input, missing retention and unknown outcomes
+continue to reserve inference conservatively. No automatic retry or merge is added.
 
 ## Bounded unattended queue
 

@@ -34,6 +34,14 @@ def inference_held(db, row, client):
     # planning). Missing any of that evidence keeps the conservative reservation. This
     # releases inference capacity only; it never releases the worktree/branch/session
     # guards.
+    if (row['terminal'] == 'succeeded' and row['enqueued'] and row['delivered']
+            and row['issue'] is None and row['hazard'] is None):
+        try:
+            if client.idle(row['session_id']):
+                client.viewed_suffix(row['session_id'], row['cursor'])
+                return False  # Settled inference only; Git/unit/branch leases are untouched.
+        except DispatchError:
+            pass  # Missing retention, foreign input or uncertainty retains capacity.
     queued = db.execute("SELECT state FROM queued WHERE task_id=?", (row["id"],)).fetchone()
     if queued is None or queued["state"] != "deferred":
         return True
@@ -71,6 +79,10 @@ def capacity_members(db, pool, client, *, owner=None):
     for row in db.execute("""SELECT u.*,t.registry FROM unit u JOIN task t ON t.id=u.task_id
                            WHERE u.stage IN ('forking','configuring','learning','accounting','needs_review')"""):
         policy, binding = json.loads(row["config"]), json.loads(row["registry"])
+        if row['stage'] == 'needs_review' and row['child_id']:
+            child = db.execute('SELECT * FROM task WHERE id=?', (row['child_id'],)).fetchone()
+            if child and not inference_held(db, child, client):
+                continue  # Settled learning keeps its review/branch lease, not a phantom GPU slot.
         if (row["stage"] != "needs_review" or row["fork_id"]) and binding["connection"] == pool["connection"] \
                 and policy["model"]["providerID"] == pool["provider"]:
             add(row["fork_id"] or row["task_id"], "learning_unit", row["task_id"], row["stage"])
@@ -82,6 +94,7 @@ class Batch:
         self.d = dispatcher
         self.life = Lifecycle(dispatcher)
         self.dependencies = Dependencies(dispatcher)
+        self.fair_shadow = False
         # Opt-in only: ordinary dispatch/lifecycle use does not migrate a live ledger.
         with self.lock(), self.d.atomic():
             self.d.db.execute("""CREATE TABLE IF NOT EXISTS pool (
@@ -135,7 +148,7 @@ class Batch:
         require(text.strip() and len(text.encode()) <= 65536, "Task text must contain 1..65536 bytes")
         paths = allowed_paths(paths)
         assignment = {"name": name, "text": text, "paths": paths, "learning": learning}
-        require(purpose in ('delivery', 'shadow_review'), 'Unknown assignment purpose')
+        require(purpose in ('delivery', 'shadow_review', 'planning'), 'Unknown assignment purpose')
         if purpose != 'delivery':
             assignment['purpose'] = purpose  # Legacy frozen assignments/hashes stay byte-identical.
         dependencies = normalize([] if dependencies is None else dependencies)
@@ -265,7 +278,13 @@ class Batch:
                     self.save(task_id, "blocked", str(error))
             reasons = {}
             waiting_dependencies = False
-            for row in self.d.db.execute("SELECT * FROM queued WHERE state='pending' ORDER BY coalesce(json_extract(spec,'$.purpose'),'delivery')='shadow_review',created,task_id").fetchall():
+            pending_rows = self.d.db.execute("SELECT * FROM queued WHERE state='pending' ORDER BY coalesce(json_extract(spec,'$.purpose'),'delivery')='shadow_review',created,task_id").fetchall()
+            if self.fair_shadow:
+                recent = self.d.db.execute("SELECT coalesce(json_extract(q.spec,'$.purpose'),'delivery') FROM queued q JOIN task t ON t.id=q.task_id ORDER BY t.created DESC,t.id DESC LIMIT 3").fetchall()
+                shadow_active = self.d.db.execute("SELECT 1 FROM queued WHERE state='active' AND json_extract(spec,'$.purpose')='shadow_review'").fetchone()
+                if len(recent) == 3 and all(r[0] != 'shadow_review' for r in recent) and not shadow_active:
+                    pending_rows.sort(key=lambda r: json.loads(r['spec']).get('purpose') != 'shadow_review')
+            for row in pending_rows:
                 task_id, spec = row["task_id"], json.loads(row["spec"])
                 try:
                     dependencies = self.dependencies.states(task_id)
