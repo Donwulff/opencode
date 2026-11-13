@@ -16,6 +16,12 @@ does not require discarding that work. Stop if other unexpected changes appear.
 Original assignment:
 $assignment
 
+Continue noninteractively within the original authorization. Do not use the question
+tool to report progress, ask permission to continue, or wait for an owned background
+command. Use its recorded identity and completion/status mechanism, then collect the
+result without replaying it. If a substantive missing input or approval blocks safe
+completion, preserve work and report the blocker instead of guessing or assuming consent.
+
 Inspect existing work first. If an existing commit already completes the task,
 verify/report it and stop; do not recreate it. Otherwise finish only the remaining
 work. Preserve every prior commit and artifact. Additional commits must be normal

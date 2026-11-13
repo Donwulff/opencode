@@ -189,6 +189,24 @@ class DispatcherTests(unittest.TestCase):
         with self.assertRaisesRegex(DispatchError, 'different assignment'):
             self.submit(text='Different assignment')
 
+    def test_question_feedback_is_passive_and_replay_deduplicated(self):
+        self.submit()
+        event = self.api.append('ses_fixture', 'session.tool.input.started',
+                                id='call-question', name='question', assistantMessageID='msg-question')
+        self.dispatcher.reconcile('doc-1')
+        before = self.dispatcher.task('doc-1')
+        self.dispatcher.event('doc-1', event)
+        self.dispatcher.reconcile('doc-1')
+        rows = list(self.dispatcher.db.execute("SELECT * FROM feedback WHERE category='question_invoked'"))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]['event_id'], event['id'])
+        self.assertEqual(rows[0]['template_hash'], json.loads(before['payload'])['metadata']['template_hash'])
+        after = self.dispatcher.task('doc-1')
+        self.assertEqual({k:v for k,v in after.items() if k != 'updated'},
+                         {k:v for k,v in before.items() if k != 'updated'})
+        self.assertIsNone(before['verification'])
+        self.assertEqual(len(self.api.posts), 1)  # No answer, new prompt or execution retry.
+
     def test_duplicate_assignment_same_session_is_rejected(self):
         self.submit()
         with self.assertRaisesRegex(DispatchError, 'unresolved'):

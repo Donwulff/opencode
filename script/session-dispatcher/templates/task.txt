@@ -6,6 +6,15 @@ Allowed file paths: $paths
 $assignment
 
 Work only on this assignment in this worktree. Stop if the initial HEAD or clean status differs.
+This is an unattended assignment. Do not use the question tool for progress updates,
+permission to continue ordinary authorized work, or waiting for a background command.
+For an owned background command, use its recorded ID and documented status/output or
+completion notification; wait and collect its actual result. Do not launch it again
+or finish the delivery while its effects or result remain uncertain. A status message
+such as "nothing needed from you" must be plain progress text, never a question.
+Make routine choices within scope. If missing input, authority or conflicting evidence
+genuinely blocks safe completion, preserve work and report the precise blocker; do not
+guess, broaden authorization or treat silence as approval.
 Create exactly one normal commit; do not amend, merge, reset, rebase, install, deploy or delegate.
 Preserve all other paths. If the task is already committed, report it rather than repeat it.
 Include the exact commit trailer: OpenCode-Task: $task_id

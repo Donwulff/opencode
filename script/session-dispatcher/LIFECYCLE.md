@@ -249,7 +249,21 @@ Already submitted payloads and learning snapshots never change. Native failure
 events produce category counts, task/event references and template hashes only,
 not raw error bodies. These are keyword-based feedback signals, not causal
 security classifications. Use recurring groups to review a template change;
-agent output never rewrites templates automatically.
+agent output never rewrites templates automatically. `question_invoked` records each
+native question invocation once by task/event/template hash, without its question or
+answer body; it is an observation, not proof of a blocker or an inappropriate request.
+
+Unattended task/continuation/learning templates prohibit progress and background-wait
+confirmation questions. This is prompt guidance, not enforced noninteractive mode.
+The installed CLI already cancels questions with feedback in
+`packages/cli/src/run/noninteractive.ts`; direct dispatcher API delivery does not run
+that client-side handler. The V2 API supports `DELETE
+/api/session/SESSION/form/FORM?message=FEEDBACK`: unlike plain dismissal, a question
+cancelled with feedback returns model-facing tool failure and permits continuation.
+A future opt-in handler can reuse this boundary without manufacturing an answer or
+approval; it must act only on owned question forms and report genuine missing authority
+as a blocker. Permission requests and non-question forms remain separate gates. No
+automatic answering/cancellation or second-model approval is enabled by this change.
 
 **Dedicated-edit enforcement is incomplete at the API boundary.** The native
 `edit`, `write` and `patch` tools all use permission action `edit`. Exact-file

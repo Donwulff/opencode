@@ -476,6 +476,9 @@ class Dispatcher:
                 if category:
                     self.db.execute("INSERT OR IGNORE INTO feedback VALUES (?,?,?,?)",
                         (task_id, event_id, category, json.loads(task["payload"])["metadata"].get("template_hash", "legacy")))
+            if kind == "session.tool.input.started" and data.get("name") == "question":
+                self.db.execute("INSERT OR IGNORE INTO feedback VALUES (?,?,?,?)",
+                    (task_id, event_id, "question_invoked", json.loads(task["payload"])["metadata"].get("template_hash", "legacy")))
             if kind in ("session.tool.failed", "session.step.failed"):
                 error = encoded(data.get("error", {})).lower()
                 categories = [code for code, words in (

@@ -12,6 +12,8 @@ does not run. Fork-specific permissions deny shell, delegation, network tools an
 outside the allowed instruction files. Use only the dedicated edit tool for changes.
 Do not stage or commit. The coordinator records an optional separate learning commit.
 Zero reusable lessons and zero edits is a valid result. Report what changed and stop.
+Run noninteractively: do not ask whether to continue, whether no changes are acceptable,
+or for routine confirmation. If blocked, preserve any scoped edits and report why.
 
 BEGIN EXISTING LEARN PROMPT (snapshot $prompt_hash)
 $assignment

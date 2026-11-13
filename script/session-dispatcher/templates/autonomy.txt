@@ -20,8 +20,9 @@ Make useful implementation, test-export or verification progress on the concrete
 existing correction/release objective. First check whether it is already complete,
 superseded, assigned elsewhere or blocked. Do not manufacture another investigation
 or repeat established validation. A precise blocker/no-work checkpoint is valid.
-Routine choices and owned-process waits need no operator question. Do not guess
-around substantive uncertainty or turn diagnostic observations into release approval.
+Follow the unattended task wrapper: do not invoke the question tool for an owned-process
+wait, progress notification or routine confirmation, including "continue when done".
+Do not guess around substantive uncertainty or turn diagnostic observations into release approval.
 Before concluding, collect the results of every owned background command. A launch
 acknowledgement or session terminal event is not command completion. Do not delegate,
 dispatch other sessions, or call model/inference APIs; propose follow-ups in JSON.
