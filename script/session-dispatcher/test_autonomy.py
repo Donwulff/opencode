@@ -214,5 +214,15 @@ class AutonomyTests(unittest.TestCase):
         row=self.dispatcher.db.execute("SELECT detail FROM autonomy_item WHERE key='consume-reviewed-export'").fetchone()
         self.assertEqual(json.loads(row[0])['reference_origins'],{child['references'][0]:tip})
 
+    def test_planner_can_reference_a_declared_verified_dependency_output(self):
+        self.auto.add(self.item('export-first'),'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        first=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='export-first'").fetchone()[0]
+        tree,tip=self.finish(first,[])
+        child=self.item('planner-consumes-output',[{'task':first,'when':'verified'}])
+        child['references']=['integration/'+first+'/README.md']
+        self.auto.add(child,'planner')
+        row=self.dispatcher.db.execute("SELECT detail FROM autonomy_item WHERE key='planner-consumes-output'").fetchone()
+        self.assertEqual(json.loads(row[0])['reference_origins'],{child['references'][0]:tip})
+
 
 if __name__=='__main__':unittest.main()

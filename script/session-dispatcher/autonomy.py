@@ -89,7 +89,7 @@ class Autonomy:
                 (self.c['id'],value['scope'])).fetchone()
             require(not held, 'Native effects in this scope require review before another execution proposal')
         commits = [self.c['base']]
-        pending, visited = [source], set()
+        pending, visited = [source, *(edge['task'] for edge in value['dependencies'])], set()
         common = git(self.c['repository'],'rev-parse','--path-format=absolute','--git-common-dir').decode().strip()
         while pending:
             source_id = pending.pop(0)
