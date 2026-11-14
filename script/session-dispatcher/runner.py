@@ -141,7 +141,7 @@ def request_stop(database, run_dir=None):
 
 
 def run(database, *, run_dir=None, seconds=None, interval=None, until=None, autonomy=None):
-    from batch import Batch, timestamp
+    from batch import Batch, QueueBusy, timestamp
     from dispatch import Dispatcher
     root = directory(database, run_dir)
     validate_directory(database, root)
@@ -229,10 +229,21 @@ def run(database, *, run_dir=None, seconds=None, interval=None, until=None, auto
                                 or state['autonomy']['state'] == 'awaiting_proposals'):
                             result = {**result, 'batch_phase': result['phase'], 'phase': 'waiting',
                                       'autonomy_wait': 'intake_reconciliation_or_worker_reuse'}
+                except QueueBusy:
+                    # Only a failed pre-operation lock acquisition is retryable.
+                    # Earlier completed phases retain their durable once-only intents.
+                    state.update(status='waiting', heartbeat_at=now(), phase='waiting',
+                                 wait_reason='ledger_writer_busy',
+                                 writer_contentions=state.get('writer_contentions', 0) + 1)
+                    save()
+                    stopped.wait(min(config['interval'], max(0, deadline - time.monotonic())))
+                    continue
                 except Exception as error:
                     state['error_type'] = type(error).__name__
+                    state['error_message'] = str(error)[:1024]
                     code, reason = 1, 'observer_error_effects_not_retried'
                     break
+                state.pop('wait_reason', None)
                 state.update(heartbeat_at=now(), last_successful_tick_at=now(), phase=result['phase'],
                              ticks=state['ticks'] + 1, status='waiting')
                 save()

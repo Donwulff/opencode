@@ -16,6 +16,11 @@ from lifecycle import Lifecycle, snapshot_policy
 from dependencies import Dependencies, normalize
 
 
+class QueueBusy(DispatchError):
+    """The queue writer lock was unavailable; the protected operation did not start."""
+    pass
+
+
 def timestamp(value):
     stamp = datetime.fromisoformat(value)
     require(stamp.tzinfo is not None, "Availability needs an explicit UTC offset")
@@ -112,7 +117,7 @@ class Batch:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
-                raise DispatchError("Another lifecycle/queue writer holds the ledger") from None
+                raise QueueBusy("Another lifecycle/queue writer holds the ledger") from None
             yield
 
     def pool(self, name):

@@ -617,6 +617,11 @@ python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" stop --run-dir "$DISPATC
 python3 runner.py --db "$DISPATCH_STATE/ledger.sqlite3" start --run-dir "$DISPATCH_RUN"
 ```
 
+A busy queue-writer lock defers the tick to the next existing interval; it does
+not resend work or extend deadlines. Other errors still stop observation and
+retain their type plus a bounded message in the private state receipt. Inspect
+that receipt before restarting an exited observer.
+
 `run` is the foreground equivalent of `start`, suitable for an existing process
 supervisor. `start` detaches with a new POSIX session and a private `observer.log`;
 fixtures verify it survives its launcher. It does not install supervision or

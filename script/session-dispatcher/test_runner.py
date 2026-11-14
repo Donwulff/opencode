@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import unittest
+from unittest import mock
 
 from dispatch import Dispatcher, DispatchError
 from runner import inspect_run, observer_lock, request_stop, run
@@ -171,6 +172,35 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(DispatchError, 'Another observer'):
                 with observer_lock(alias / self.ledger.name):
                     self.fail('Duplicate owner admitted through an alias')
+
+    def test_ledger_writer_contention_waits_then_observes_without_resending(self):
+        self.enqueue()
+        child = self.spawn('--seconds', '30', '--interval', '1')
+        self.wait_for(lambda: self.state().get('ticks', 0) >= 1 and len(self.api.posts) == 1)
+        with self.batch.lock():
+            self.wait_for(lambda: self.state().get('wait_reason') == 'ledger_writer_busy'
+                          or self.state().get('status') == 'exited')
+            self.assertNotEqual(self.state()['status'], 'exited')
+            self.assertIsNone(child.poll())
+            self.assertEqual(len(self.api.posts), 1)
+        self.commit()
+        self.api.finish()
+        self.wait_for(lambda: self.life.unit('doc-1')['stage'] == 'ready')
+        self.assertEqual(child.wait(timeout=15), 0)
+        self.assertEqual(len(self.api.posts), 1)
+        self.assertEqual(self.state()['exit_reason'], 'batch_complete')
+        self.assertGreaterEqual(self.state()['writer_contentions'], 1)
+        self.assertNotIn('wait_reason', self.state())
+
+    def test_non_contention_error_stops_and_retains_reason_without_retry(self):
+        self.enqueue()
+        with mock.patch('batch.Batch.tick', side_effect=DispatchError('fixture uncertain effects')) as tick:
+            self.assertEqual(run(self.ledger, run_dir=self.run_dir, seconds=5, interval=1), 1)
+        self.assertEqual(tick.call_count, 1)
+        self.assertEqual(self.state()['error_type'], 'DispatchError')
+        self.assertEqual(self.state()['error_message'], 'fixture uncertain effects')
+        self.assertEqual(self.state()['exit_reason'], 'observer_error_effects_not_retried')
+        self.assertEqual(self.api.posts, [])
 
     def test_independent_work_drains_around_a_held_assignment(self):
         self.configure(capacity=2)
