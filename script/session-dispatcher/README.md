@@ -318,8 +318,9 @@ No new task worktree/session is created; intake waits when every listed worker i
 active, reserved, dirty or has unintegrated work. After explicit review/integration
 and cross-server-safe synchronization, an existing worker exactly at that branch
 head can be reapproved for its next assignment. Branch identity and history remain
-intact. Frozen reference pins still use `base`/verified parents; this is not input
-retargeting or automatic synchronization. Without this option, bounded provisioning
+intact. Frozen reference pins still use `base`/verified parents; synchronization never
+retargets inputs. It remains manual unless `sync_integrated_workers` is explicitly
+enabled as described below. Without reuse-only, bounded provisioning
 retains its original behavior. Shadow review repositories are separate disposable
 report fixtures, not investigation worktrees.
 
@@ -936,3 +937,14 @@ private config and restart that notifier; spent wakes, per-issue escalations,
 thread binding and the absolute deadline remain intact. It never renews itself.
 Batch routine reviews with `min_ready`, `max_wait` and `cooldown`; extending the
 budget does not authorize additional technical scope or guaranteed Codex quota.
+
+For a reuse-only approved worker pool, `sync_integrated_workers: true` enables
+bounded automatic `git merge --ff-only` to `reuse_ref` before the next assignment.
+It never integrates a task into main: every frozen task/learning tip for that worker
+must already be reachable from the reviewed main. It preserves branch/session
+identity and checks reservations, all-server activity, unfinished Git operations,
+HEAD/status drift and ignored-file collisions immediately before writing. Protected
+CPU/GLM/benchmark contexts are excluded. A successful synchronization is recorded in
+the next item's existing ledger detail as `worker_sync`. Dirty, active, divergent or
+uncertain workers stay untouched. Default is disabled; enable it only in a new
+immutable policy/run snapshot, preserving already admitted assignments.

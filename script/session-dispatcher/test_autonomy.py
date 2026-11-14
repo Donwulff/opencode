@@ -7,7 +7,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from autonomy import Autonomy, proposal
+from autonomy import Autonomy, proposal, policy
 from dispatch import DispatchError, digest
 from operations import report
 from runner import run
@@ -93,6 +93,107 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(len(self.api.creates),0)
         self.assertEqual(self.git('branch','--show-current'),'fixture')
         self.assertEqual(self.git('rev-parse','HEAD'),tip)
+
+    def integrated_worker_behind_main(self):
+        self.git('branch','main',self.c['base'])
+        self.c.update(reuse_only=True,reuse_ref='refs/heads/main',sync_integrated_workers=True)
+        self.auto.add(self.item(),'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        task=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='fix-test-one'").fetchone()[0]
+        tree,tip=self.finish(task,[self.item('after-integrated-work')])
+        self.git('update-ref','refs/heads/main',tip,self.c['base'])
+        self.git('checkout','main')
+        (self.repo/'coordination.txt').write_text('Later reviewed coordinator update.\n')
+        self.git('add','coordination.txt');self.git('commit','-m','Coordinator update')
+        target=self.git('rev-parse','HEAD');self.git('checkout','fixture')
+        return tip,target,len(self.api.posts)
+
+    def test_opt_in_sync_reuses_integrated_worker_after_coordinator_advance(self):
+        tip,target,posts=self.integrated_worker_behind_main()
+        self.assertEqual(self.git('rev-parse','HEAD'),tip)
+        self.auto.tick();self.batch.tick(self.at)
+        self.assertEqual(self.git('rev-parse','HEAD'),target)
+        self.assertEqual(self.git('branch','--show-current'),'fixture')
+        self.assertEqual(len(self.api.posts),posts+1)
+        self.assertEqual(self.api.creates,[])
+        row=self.dispatcher.db.execute("SELECT detail FROM autonomy_item WHERE key='after-integrated-work'").fetchone()
+        receipt=json.loads(row[0])['worker_sync']
+        self.assertEqual((receipt['from'],receipt['to']),(tip,target))
+
+    def test_opt_in_sync_preserves_dirty_and_ignored_artifacts(self):
+        for kind in ('untracked','ignored_collision'):
+            with self.subTest(kind=kind):
+                if kind=='untracked':
+                    tip,target,posts=self.integrated_worker_behind_main()
+                    artifact=self.repo/'private-artifact'
+                else:
+                    (self.repo/'private-artifact').unlink()
+                    artifact=self.repo/'coordination.txt'
+                    (self.repo/'.git/info/exclude').write_text('coordination.txt\n')
+                artifact.write_text('Preserve original bytes.\n')
+                self.auto.tick();self.batch.tick(self.at)
+                self.assertEqual(self.git('rev-parse','HEAD'),tip)
+                self.assertEqual(artifact.read_text(),'Preserve original bytes.\n')
+                self.assertEqual(len(self.api.posts),posts)
+
+    def test_opt_in_sync_preserves_protected_and_active_workers(self):
+        tip,target,posts=self.integrated_worker_behind_main()
+        self.c['protected_worktrees']=[str(self.repo)]
+        self.auto.tick()
+        self.assertEqual(self.git('rev-parse','HEAD'),tip)
+        self.c['protected_worktrees']=[];self.auto.activity=lambda _:False
+        self.auto.tick()
+        self.assertEqual(self.git('rev-parse','HEAD'),tip)
+        self.assertEqual(len(self.api.posts),posts)
+
+    def test_opt_in_sync_preserves_in_progress_merge_even_when_clean(self):
+        tip,target,posts=self.integrated_worker_behind_main()
+        merge=self.repo/'.git/MERGE_HEAD';merge.write_text(target+'\n')
+        self.auto.tick()
+        self.assertTrue(merge.exists())
+        self.assertEqual(self.git('rev-parse','HEAD'),tip)
+        self.assertEqual(len(self.api.posts),posts)
+
+    def test_sync_refuses_clean_merge_metadata_even_at_current_target(self):
+        tip,target,posts=self.integrated_worker_behind_main()
+        self.git('merge','--ff-only','main')
+        (self.repo/'.git/MERGE_HEAD').write_text(target+'\n')
+        self.auto.tick()
+        self.assertEqual(self.git('rev-parse','HEAD'),target)
+        self.assertEqual(len(self.api.posts),posts)
+
+    def test_sync_rechecks_ignored_artifacts_after_activity_probe(self):
+        tip,target,posts=self.integrated_worker_behind_main()
+        (self.repo/'.git/info/exclude').write_text('coordination.txt\n')
+        calls=[]
+        def idle(root):
+            calls.append(root)
+            if len(calls)==2:
+                (self.repo/'coordination.txt').write_text('Concurrent private artifact.\n')
+            return True
+        self.auto.activity=idle;self.auto.tick()
+        self.assertEqual(self.git('rev-parse','HEAD'),tip)
+        self.assertEqual((self.repo/'coordination.txt').read_text(),'Concurrent private artifact.\n')
+        self.assertEqual(len(self.api.posts),posts)
+
+    def test_opt_in_sync_never_moves_unintegrated_history(self):
+        self.git('branch','main',self.c['base'])
+        self.c.update(reuse_only=True,reuse_ref='refs/heads/main',sync_integrated_workers=True)
+        self.auto.add(self.item(),'operator-policy');self.auto.tick();self.batch.tick(self.at)
+        task=self.dispatcher.db.execute("SELECT task_id FROM autonomy_item WHERE key='fix-test-one'").fetchone()[0]
+        tree,tip=self.finish(task,[self.item('after-integrated-work')])
+        self.auto.tick()
+        self.assertEqual(self.git('rev-parse','HEAD'),tip)
+        self.assertEqual(len(self.api.posts),1)
+
+    def test_sync_policy_requires_explicit_reuse_only_opt_in(self):
+        path=self.aroot/'policy.json'
+        for value in ('yes',True):
+            path.write_text(json.dumps(dict(self.c,sync_integrated_workers=value)))
+            path.chmod(0o600)
+            with self.assertRaises(DispatchError):policy(path)
+        self.git('branch','main',self.c['base'])
+        path.write_text(json.dumps(dict(self.c,reuse_only=True,reuse_ref='refs/heads/main',sync_integrated_workers=True)))
+        self.assertTrue(policy(path)['sync_integrated_workers'])
 
     def test_reuse_only_never_allocates_a_replacement_for_a_protected_worker(self):
         self.git('branch','main',self.c['base'])

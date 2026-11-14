@@ -206,6 +206,13 @@ is unnecessary for this slice.
 
 ### M3 — Reuse completed sessions, worktrees and workers safely
 
+M3a now has an opt-in guarded fast-forward in the existing reuse-only intake
+(`sync_integrated_workers`): verified histories must already be integrated, and
+all-server activity, leases, branch/HEAD/status, unfinished Git state and ignored
+artifacts are rechecked before fresh registry approval. It does not merge results
+into main or supply native-worker/container leases; M3b remains separate. The
+original acceptance requirements below still apply.
+
 Introduce only the missing prospective-assignment intent and cooperative resource
 ownership needed to bind a future approved task after its predecessor settles.
 Do not enqueue it with a guessed base. Freeze its predecessor's task/learning

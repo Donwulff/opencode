@@ -29,6 +29,8 @@ def policy(path):
     require(c['scopes'] and isinstance(c['scopes'], dict), 'Explicit authorized scopes required')
     require(timestamp(c['until']).tzinfo is not None, 'Explicit autonomy deadline required')
     require(type(c.get('reuse_only', False)) is bool, 'reuse_only must be boolean')
+    require(type(c.get('sync_integrated_workers', False)) is bool, 'sync_integrated_workers must be boolean')
+    require(not c.get('sync_integrated_workers') or c.get('reuse_only'), 'Guarded sync requires reuse-only policy')
     if c.get('reuse_only'):
         ref = c.get('reuse_ref')
         require(isinstance(ref, str) and ref.startswith('refs/heads/')
@@ -165,7 +167,49 @@ class Autonomy:
                               (self.c['id'], task, receipt['final_commit'], encoded(detail)))
             self.save(row['key'], 'completed', detail)
 
+    def sync_worker(self, root, local, target, reg, client):
+        """Opt-in fast-forward after integration; no resets, dirty/active adoption or new trees."""
+        metadata = Path(local['git_dir'])
+        def no_operation():
+            return not any((metadata/name).exists() for name in
+                           ('MERGE_HEAD','CHERRY_PICK_HEAD','REVERT_HEAD','rebase-merge','rebase-apply','sequencer'))
+        require(no_operation(), 'Worker has an unfinished Git operation')
+        if local['head'] == target:
+            return
+        require(self.c.get('sync_integrated_workers', False), 'Worker awaits guarded synchronization')
+        require(root not in self.c['protected_worktrees'], 'Protected worker cannot synchronize')
+        require(subprocess.run(['git','-C',root,'merge-base','--is-ancestor',local['head'],target],
+                               capture_output=True).returncode == 0, 'Unintegrated worker history')
+        ignored = git(root,'ls-files','--others','--ignored','--exclude-standard','-z').decode().split('\0')[:-1]
+        incoming = git(root,'diff','--name-only','-z',local['head'],target).decode().split('\0')[:-1]
+        require(not any(p == q or p.startswith(q+'/') or q.startswith(p+'/') for p in ignored for q in incoming),
+                'Incoming files collide with ignored artifacts')
+        # Recheck all owners and both Git identities immediately before the write.
+        fresh = report(self.d.path)
+        require(not any(t['worktree'] == root and t['worktree_reserved'] for t in fresh['tasks']),
+                'Worker became reserved before synchronization')
+        self.d.check_lease(local)
+        self.d.check_binding(reg,client)
+        require(self.activity(root) and client.idle(reg['session_id']), 'Worker became active before synchronization')
+        require(git(root,'ls-files','--others','--ignored','--exclude-standard','-z').decode().split('\0')[:-1] == ignored,
+                'Ignored artifacts changed before synchronization')
+        require(identity(root) == local and no_operation() and
+                git(self.c['repository'],'rev-parse',self.c['reuse_ref']+'^{commit}').decode().strip() == target,
+                'Git state drifted before synchronization')
+        result = subprocess.run(['git','-C',root,'merge','--ff-only',target],capture_output=True,text=True)
+        require(result.returncode == 0, 'Guarded fast-forward failed; preserve worker for review')
+        after = identity(root)
+        require(after['head'] == target and not after['status'] and
+                all(after[k] == local[k] for k in ('worktree','common','git_dir','branch')),
+                'Unexpected post-synchronization state; do not assign')
+        require(all((Path(root)/p).exists() or (Path(root)/p).is_symlink() for p in ignored),
+                'Ignored artifact missing after synchronization')
+        self.worker_sync = {'from':local['head'],'to':target,'worktree':root,
+                            'method':'guarded ff-only after integrated receipt ancestry',
+                            'ignored_artifacts_preserved':len(ignored)}
+
     def worker(self, snapshot):
+        self.worker_sync = None
         busy = {t['worktree'] for t in snapshot['tasks'] if t['worktree_reserved']}
         receipts = snapshot['ready_receipts']
         reusable_base = git(self.c['repository'], 'rev-parse', self.c['reuse_ref'] + '^{commit}').decode().strip() if self.c.get('reuse_only') else self.c['base']
@@ -181,12 +225,15 @@ class Autonomy:
                 client = self.d.client_factory(reg['connection'])
                 self.d.check_binding(reg, client)
                 require(client.idle(reg['session_id']), 'Native session busy')
-                require(local['head'] == reusable_base, 'Reuse requires the approved base or synchronized integration head')
                 # Never advance a delivered unit's branch before content review.
                 require(all(subprocess.run(['git', '-C', root, 'merge-base', '--is-ancestor', r['final_commit'], reusable_base],
                                            capture_output=True).returncode == 0
                             for r in receipts if any(t['task_id']==r['task_id'] and t['worktree']==root for t in snapshot['tasks'])), 'Unintegrated deliverable retains its branch')
                 require(reg['model'] == self.c['model'], 'Model drift')
+                if self.c.get('reuse_only'):
+                    self.sync_worker(root,local,reusable_base,reg,client)
+                else:
+                    require(local['head'] == reusable_base, 'Reuse requires the approved base')
                 return name, reg
             except DispatchError:
                 continue
@@ -301,7 +348,7 @@ class Autonomy:
                 worker=self.worker(snapshot)
                 if worker:
                     name,reg=worker
-                    self.save(row['key'],'approving',{'registry':name},task)
+                    self.save(row['key'],'approving',{'registry':name, **({'worker_sync':self.worker_sync} if self.worker_sync else {})},task)
                     self.d.approve(name,reg['session_id'],reg['worktree'],reg['connection'])
                     reg=json.loads(self.d.db.execute('SELECT snapshot FROM registry WHERE name=?',(name,)).fetchone()[0])
                 else:
