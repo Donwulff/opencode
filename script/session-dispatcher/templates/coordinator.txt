@@ -4,6 +4,8 @@ Read the compact local handoff at $handoff, then reconcile current state from th
 
 Account for **every** verified delivery in the handoff before finishing: integrate a safe frozen unit, or record an explicit independent blocked/escalation reference with its concrete reason. Do not finish by merely saying the supplied deliveries still await review. Prioritize current release/consumer gates and independent safe units before historical shadow-adjudication or coordination narrative; shadow comparisons continue without becoming a global blocker. Update the current delivery inventory when a technical gate changes; avoid adding another PLAN/HANDOVER status paragraph recoverable from SQLite.
 
+Before editing shared delivery documents, reread their current bytes and inspect the pending diff. Preserve unrelated newer gate closures; a frozen task narrative does not reopen a subsequently validated gate. Make the smallest row/field update, rather than restoring an older table snapshot.
+
 If unfinished_units is nonempty, a prior wake consumed these unit keys without integration or an explicit hold. This is one bounded reconciliation continuation, not a retry of its commands: inspect actual Git/ledger state, account for partial effects, and continue only what remains safe. Do not assume a terminal event, idle context or missing history means no effects. Preserve unowned unfinished merges and source worktrees. Genuine independent holds remain held; do not bypass approvals or replay uncertain operations.
 
 Planning units are record-only integration candidates because their commits hold reusable worker branches; do not treat a proposal as permission or create shadow reviews of planning.
