@@ -254,6 +254,38 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(self.coordinator.state['status'], 'deadline_reached')
         self.assertEqual(self.native.starts, 2)
 
+    def test_explicit_budget_extension_preserves_spent_wakes_and_deadline(self):
+        self.ready_for_review()
+        handoff = self.coordinator.collect()
+        self.config['max_wakes'] = 1
+        self.coordinator.tick(at=self.at, handoff=handoff)
+        spent = copy.deepcopy(self.coordinator.state['entries'])
+        self.native.status = 'idle'
+        handoff['keys'] = ['new-independent-result']
+        self.coordinator.tick(at=self.at + timedelta(minutes=2), handoff=handoff)
+        self.assertEqual(self.coordinator.state['status'], 'wake_budget_reached')
+        self.config['max_wakes'] = 64  # Explicit new operator budget, never an automatic reset.
+        self.restart()
+        self.assertEqual(self.coordinator.state['entries'], spent)
+        self.coordinator.tick(at=self.at + timedelta(minutes=3), handoff=handoff)
+        self.assertEqual(self.native.starts, 2)
+        self.assertEqual(self.coordinator.state['entries'][0], spent[0])
+        self.assertEqual(len(self.coordinator.state['entries']), 2)
+        self.coordinator.tick(at=self.at + timedelta(hours=2), handoff=handoff)
+        self.assertEqual(self.coordinator.state['status'], 'deadline_reached')
+        self.assertEqual(self.native.starts, 2)
+
+    def test_long_window_wake_budget_validation_remains_explicit_and_finite(self):
+        path = self.directory / 'config.json'
+        for budget in (20, 64, 512):
+            path.write_text(json.dumps(dict(self.config, max_wakes=budget)))
+            path.chmod(0o600)
+            self.assertEqual(load_config(path)['max_wakes'], budget)
+        for budget in (0, 513, True):
+            path.write_text(json.dumps(dict(self.config, max_wakes=budget)))
+            with self.assertRaisesRegex(DispatchError, 'Invalid coordinator max_wakes'):
+                load_config(path)
+
     def test_manual_historical_closeouts_do_not_trigger_recurring_notifications(self):
         self.git('branch', 'target')
         self.enqueue()

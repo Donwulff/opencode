@@ -928,3 +928,11 @@ v5 compatibility and opt-in v6, cycles, immutable changes, verification/learning
 actual Git ancestry, scoped provider/recovery failures, observer approval pickup,
 crash-before-POST and lost responses. No live schema migration or dependency
 dispatch, model invocation, core/API change or container modification was tested.
+
+A coordinator wake budget is cumulative in its durable receipt, including across
+restarts. Exhaustion stops notifications, not running worker tasks. For an
+explicitly approved longer window, increase `max_wakes` (1..512) in the existing
+private config and restart that notifier; spent wakes, per-issue escalations,
+thread binding and the absolute deadline remain intact. It never renews itself.
+Batch routine reviews with `min_ready`, `max_wait` and `cooldown`; extending the
+budget does not authorize additional technical scope or guaranteed Codex quota.

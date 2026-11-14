@@ -107,7 +107,7 @@ def load_config(path):
     require(Path(value['repository']).resolve().is_dir(), 'Repository missing')
     require(timestamp(value['deadline']).tzinfo is not None, 'Explicit timezone required')
     for key, low, high in [('interval', 5, 60), ('min_ready', 1, 20), ('max_wait', 0, 3600),
-                           ('cooldown', 0, 3600), ('max_wakes', 1, 20)]:
+                           ('cooldown', 0, 3600), ('max_wakes', 1, 512)]:
         require(type(value[key]) is int and low <= value[key] <= high, 'Invalid coordinator ' + key)
     require(value['thread_id'] and value['target_ref'], 'Explicit thread and target ref required')
     require(type(value.get('allow_resume', False)) is bool, 'allow_resume must be an explicit boolean')
