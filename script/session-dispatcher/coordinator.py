@@ -118,6 +118,8 @@ def load_config(path):
         setting = value.get(key, default)
         require(type(setting) is int and (1 if key == 'max_escalations' else 0) <= setting <= high,
                 'Invalid coordinator ' + key)
+    require(type(value.get('max_unfinished_reconciliations', 0)) is int and
+            0 <= value.get('max_unfinished_reconciliations', 0) <= 2, 'Invalid unfinished-review reconciliation bound')
     pools = value.get('refill_pools', [])
     require(isinstance(pools, list) and len(pools) <= 16
             and all(isinstance(p, str) and re.fullmatch(r'[A-Za-z0-9_-]{1,80}', p) for p in pools)
@@ -187,6 +189,21 @@ class Coordinator:
                            'meaning': 'Prepare useful authorized backlog; no dispatch or new scope approval.'})
         return result
 
+    def unfinished(self, units, held):
+        """A consumed wake is not a review result; reconcile once, never replay tools."""
+        limit=self.config.get('max_unfinished_reconciliations',0)
+        values=[]
+        for unit in units:
+            key='unit:'+unit['task_id']+':'+str(unit['final_commit'])
+            if (not limit or unit['state']!='awaiting_review' or key not in self.state['seen'] or key in held
+                    or not any(key in e['keys'] for e in self.state['entries'])):
+                continue
+            spent=sum(key in e.get('reconciled_units',[]) for e in self.state['entries'])
+            if spent < limit:
+                values.append({'task_id':unit['task_id'],'final_commit':unit['final_commit'],
+                               'unit_key':key,'prior_reconciliations':spent})
+        return values
+
     def collect(self):
         c = self.config
         snapshot = report(c['database'], live=True, run_dir=c.get('runner_dir'))
@@ -219,7 +236,7 @@ class Coordinator:
                 escalation = value
                 keys.append(key)
         fresh = sorted(set(keys) - set(self.state['seen']))
-        shadows = []
+        shadows, held = [], set()
         if c.get('shadow_policy'):
             from shadow import policy
             root = Path(policy(c['shadow_policy'])['root'])
@@ -227,6 +244,10 @@ class Coordinator:
                 case = read_json(p)
                 shadows.append({k:case.get(k) for k in ('id','source_task','input_hash','kind','stage')})
                 shadows[-1]['reference_recorded'] = bool(case.get('reference'))
+                ref=case.get('reference',{})
+                if (ref.get('input_hash') and ref.get('input_hash') == case.get('input_hash') and
+                        ref.get('assessment') in ('blocked','needs_escalation')):
+                    held.add('unit:'+case['source_task']+':'+case['source_commit'])
                 # Do not expose the shadow judgment to the reference reviewer before its decision is frozen.
                 if case.get('reference') and 'disagreement' in case:
                     shadows[-1].update(disagreement=case['disagreement'], result=case['result'])
@@ -234,9 +255,13 @@ class Coordinator:
                         key = 'shadow-disagreement:' + case['id'] + ':' + case['result_commit']
                         if key not in self.state['seen']:
                             fresh.append(key)
+        unfinished=self.unfinished(units,held)
+        for unit in unfinished:
+            key='unfinished:'+digest([unit['unit_key'],unit['prior_reconciliations']])
+            if key not in self.state['seen']:fresh.append(key)
         return {'target': handoff['target'], 'units': units, 'attention': attention,
                 'queue': snapshot['counts']['queue'], 'runner': snapshot['runner'], 'keys': fresh, 'escalation': escalation,
-                'replenishment': replenishment, 'dependency_ready': dependency_ready,
+                'replenishment': replenishment, 'dependency_ready': dependency_ready, 'unfinished_units':unfinished,
                 'shadow_policy': c.get('shadow_policy'), 'shadow_cases': shadows,
                 'meaning': 'Notification inputs only; source correctness and integration remain unapproved.'}
 
@@ -407,6 +432,7 @@ class Coordinator:
                      'effort': effort if c.get('allow_effort_override', False) else 'inherited',
                      'escalation': bool(escalation),
                      'escalation_issue': escalation.get('issue') if escalation else None,
+                     'reconciled_units':[u['unit_key'] for u in handoff.get('unfinished_units',[])],
                      'input': [{'type': 'text', 'text': prompt, 'text_elements': []}]}
             s['entries'].append(entry)
             s['seen'] = sorted(set(s['seen']) | set(handoff['keys']))

@@ -948,3 +948,12 @@ CPU/GLM/benchmark contexts are excluded. A successful synchronization is recorde
 the next item's existing ledger detail as `worker_sync`. Dirty, active, divergent or
 uncertain workers stay untouched. Default is disabled; enable it only in a new
 immutable policy/run snapshot, preserving already admitted assignments.
+
+`max_unfinished_reconciliations` (default 0, allowed 0..2) can enable one bounded
+review continuation when a consumed coordinator wake left a verified unit outside
+main without an independent blocked/escalation reference. Actual Git ancestry and
+frozen reference identity decide this; a shadow recommendation never supplies a
+hold or acceptance. The same idle-thread/user-queue checks, cooldown, wake budget
+and deadline apply. Spent continuations stay in existing wake receipts across
+restarts. It never resends an OpenCode assignment or replays a historical command.
+After the bound, an unchanged unaccounted unit remains for explicit attention.

@@ -286,6 +286,64 @@ class CoordinatorTests(unittest.TestCase):
             with self.assertRaisesRegex(DispatchError, 'Invalid coordinator max_wakes'):
                 load_config(path)
 
+    def test_unfinished_review_has_one_durable_reconciliation_without_task_replay(self):
+        base,commit=self.ready_for_review()
+        self.config.update(max_wakes=6,max_unfinished_reconciliations=1)
+        self.restart();self.coordinator.tick(at=self.at)
+        original=copy.deepcopy(self.coordinator.state['entries'][0])
+        posts=len(self.api.posts)
+        self.coordinator.tick(at=self.at+timedelta(minutes=2))
+        self.assertEqual(self.native.starts,1)  # Original reviewer still active.
+        self.native.status='idle';self.restart()
+        self.coordinator.tick(at=self.at+timedelta(minutes=3))
+        self.assertEqual(self.native.starts,2)
+        self.assertEqual(len(self.api.posts),posts)  # Never redispatch the OpenCode task.
+        self.assertEqual(self.coordinator.state['entries'][0],original)
+        self.assertEqual(len(self.coordinator.state['entries'][1]['reconciled_units']),1)
+        self.native.status='idle';self.restart()
+        self.coordinator.tick(at=self.at+timedelta(minutes=5))
+        self.assertEqual(self.native.starts,2)  # Finite, not an unchanged-work loop.
+        self.git('update-ref','refs/heads/target',commit,base)
+        self.assertEqual(self.coordinator.collect()['unfinished_units'],[])
+
+    def test_unfinished_review_respects_independent_holds_not_advisory_verdicts(self):
+        base,commit=self.ready_for_review()
+        self.config.update(max_wakes=6,max_unfinished_reconciliations=1)
+        self.restart();self.coordinator.tick(at=self.at)
+        root=self.root/'shadow-recovery';root.mkdir(mode=0o700)
+        config=root/'policy.json'
+        config.write_text(json.dumps({'version':1,'root':str(root),'database':str(self.ledger),
+            'repository':str(self.repo),'target_ref':'target','max_cases':1,'max_disagreements':1}))
+        config.chmod(0o600);self.config['shadow_policy']=str(config);self.restart()
+        path=root/'case-fixture.json';case={'id':'fixture','source_task':'doc-1','source_commit':commit,
+            'input_hash':'a'*64,'result':{'assessment':'blocked','issues':[],'escalation':[]}}
+        path.write_text(json.dumps(case))
+        self.assertEqual(len(self.coordinator.collect()['unfinished_units']),1)
+        case['reference']={'assessment':'blocked','input_hash':'a'*64};path.write_text(json.dumps(case))
+        self.assertEqual(self.coordinator.collect()['unfinished_units'],[])
+        case['source_commit']='f'*40;path.write_text(json.dumps(case))
+        self.assertEqual(len(self.coordinator.collect()['unfinished_units']),1)
+
+    def test_unfinished_review_keeps_wake_budget_and_deadline(self):
+        self.ready_for_review();self.config.update(max_wakes=1,max_unfinished_reconciliations=1)
+        self.restart();self.coordinator.tick(at=self.at);self.native.status='idle'
+        self.coordinator.tick(at=self.at+timedelta(minutes=3))
+        self.assertEqual(self.coordinator.state['status'],'wake_budget_reached')
+        self.assertEqual(self.native.starts,1)
+        self.coordinator.tick(at=self.at+timedelta(hours=2))
+        self.assertEqual(self.coordinator.state['status'],'deadline_reached')
+
+    def test_unfinished_review_reconciliation_bound_is_explicit(self):
+        path=self.directory/'config.json'
+        for count in (0,1,2):
+            path.write_text(json.dumps(dict(self.config,max_unfinished_reconciliations=count)))
+            path.chmod(0o600)
+            self.assertEqual(load_config(path)['max_unfinished_reconciliations'],count)
+        for count in (-1,3,True):
+            path.write_text(json.dumps(dict(self.config,max_unfinished_reconciliations=count)))
+            with self.assertRaisesRegex(DispatchError,'Invalid unfinished-review'):
+                load_config(path)
+
     def test_manual_historical_closeouts_do_not_trigger_recurring_notifications(self):
         self.git('branch', 'target')
         self.enqueue()
