@@ -60,6 +60,21 @@ class AutonomyTests(unittest.TestCase):
         self.assertEqual(self.auto.batch.life.unit(task)['stage'],'ready')
         return tree,tip
 
+    def test_prompt_preserves_default_denials_and_exact_recipe_exceptions(self):
+        self.c['native_profiles'] = {'private-cycle': 'ONLY the new owned worker may transact.'}
+        self.c['native_scopes'] = ['tests']
+        item = self.item()
+        offline = self.auto.prompt(item, 'auto-fixture', 'operator-policy')
+        self.assertIn('OFFLINE ONLY: no container/socket/network/native execution', offline)
+        self.assertIn('an offline/fixture recipe grants neither', offline)
+        self.assertIn('require explicit recipe authorization', offline)
+        item['kind'] = 'private-cycle'
+        native = self.auto.prompt(item, 'auto-fixture', 'operator-policy')
+        self.assertIn('ONLY the new owned worker may transact.', native)
+        self.assertIn('Do not infer an exception from a reference', native)
+        self.assertIn('Production operations, branch merges', native)
+        self.assertNotIn('Native correction changes need separate approval', native)
+
     def test_reuse_only_waits_for_integration_then_reuses_the_same_worker(self):
         self.git('branch','main',self.c['base'])
         self.c.update(reuse_only=True,reuse_ref='refs/heads/main')

@@ -8,12 +8,15 @@ or substitute a later package. This task has its own worktree and branch.
 
 Execution authorization for this exact recipe:
 $EXECUTION_BOUNDARY
-No external source changes, production operations, branch merges, agent configuration
-changes, operator inventory surveys, new vulnerability discovery, unfixed fault replay,
-package installation, download or deployment are authorized. Preserve shared baselines.
-Inspect existing scripts before executing them. Never execute historical logged commands.
-Native correction changes need separate approval; fixture/export work must preserve the
-accepted source/DSOs. Reuse existing fail-before evidence and label fixed-side-only runs.
+The exact named recipe above is the execution authorization. Its explicit exceptions
+may permit a bounded source correction or package transaction in new private staging;
+an offline/fixture recipe grants neither. Do not infer an exception from a reference
+procedure, objective or agent proposal. Production operations, branch merges, agent
+configuration changes and operator inventory surveys remain forbidden. Discovery,
+fault replay, downloads and package installation require explicit recipe authorization.
+Preserve shared baselines. Inspect scripts before executing them; never replay historical
+logged commands. Fixture/export work preserves accepted source/DSOs. Reuse existing
+fail-before evidence and label fixed-side-only runs.
 Do not duplicate a current assignment or bypass any explicit prerequisite approval.
 
 Make useful implementation, test-export or verification progress on the concrete
