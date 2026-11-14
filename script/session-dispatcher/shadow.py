@@ -12,7 +12,7 @@ import re
 import subprocess
 import tarfile
 
-from batch import Batch, timestamp
+from batch import Batch, QueueBusy, timestamp
 from datetime import datetime, timezone
 from dispatch import Dispatcher, DispatchError, digest, git, require
 from operations import report, review_ready
@@ -45,6 +45,11 @@ def assessment(v):
     return v
 
 
+class ShadowBusy(QueueBusy):
+    """Shadow lock unavailable; its protected operation has not started."""
+    pass
+
+
 class Shadow:
     def __init__(self, dispatcher, config):
         self.d, self.c, self.root = dispatcher, config, Path(config['root'])
@@ -63,7 +68,7 @@ class Shadow:
         with os.fdopen(fd,'r+') as handle:
             require(not os.fstat(handle.fileno()).st_mode & 0o077,'Shadow writer lock must be private')
             try: fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
-            except BlockingIOError: raise DispatchError('Another shadow writer owns the trial') from None
+            except BlockingIOError: raise ShadowBusy('Another shadow writer owns the trial') from None
             yield
 
     def capture(self, task_id, *, target=None, kind='forward'):

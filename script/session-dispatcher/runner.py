@@ -229,11 +229,11 @@ def run(database, *, run_dir=None, seconds=None, interval=None, until=None, auto
                                 or state['autonomy']['state'] == 'awaiting_proposals'):
                             result = {**result, 'batch_phase': result['phase'], 'phase': 'waiting',
                                       'autonomy_wait': 'intake_reconciliation_or_worker_reuse'}
-                except QueueBusy:
+                except QueueBusy as error:
                     # Only a failed pre-operation lock acquisition is retryable.
                     # Earlier completed phases retain their durable once-only intents.
                     state.update(status='waiting', heartbeat_at=now(), phase='waiting',
-                                 wait_reason='ledger_writer_busy',
+                                 wait_reason='ledger_writer_busy', writer_busy_type=type(error).__name__,
                                  writer_contentions=state.get('writer_contentions', 0) + 1)
                     save()
                     stopped.wait(min(config['interval'], max(0, deadline - time.monotonic())))

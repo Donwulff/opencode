@@ -192,6 +192,28 @@ class RunnerTests(unittest.TestCase):
         self.assertGreaterEqual(self.state()['writer_contentions'], 1)
         self.assertNotIn('wait_reason', self.state())
 
+    def test_shadow_reference_lock_contention_waits_without_replaying_effects(self):
+        from shadow import Shadow
+        self.enqueue()
+        root=self.root/'shadow-lock';root.mkdir(mode=0o700)
+        shadow=Shadow(self.dispatcher,{'root':str(root)})
+        calls=[]
+        def tick():
+            calls.append(True)
+            if len(calls)==1:
+                with shadow.lock():
+                    with shadow.lock():
+                        self.fail('Concurrent shadow writer entered protected operation')
+            return {'phase':'complete'}
+        with mock.patch('batch.Batch.tick',side_effect=tick):
+            self.assertEqual(run(self.ledger,run_dir=self.run_dir,seconds=5,interval=1),0)
+        self.assertEqual(len(calls),2)
+        self.assertEqual(self.state()['writer_contentions'],1)
+        self.assertEqual(self.state()['exit_reason'],'batch_complete')
+        self.assertNotIn('error_message',self.state())
+        self.assertEqual(self.api.posts,[])
+        self.assertEqual(self.batch.status()['tasks'][0]['state'],'pending')
+
     def test_non_contention_error_stops_and_retains_reason_without_retry(self):
         self.enqueue()
         with mock.patch('batch.Batch.tick', side_effect=DispatchError('fixture uncertain effects')) as tick:
