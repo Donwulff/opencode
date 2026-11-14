@@ -222,7 +222,7 @@ def cycle(path):
         s = Shadow(d,c);s.collect()
         if len(s.cases())<c['max_cases'] and (c.get('continuous') or sum(bool(x.get('disagreement')) for x in s.cases())<c['max_disagreements']):
             for unit in review_ready(c['database'],c['repository'],c['target_ref'])['units']:
-                if unit['state']=='awaiting_review' and not any(x['source_task']==unit['task_id'] for x in s.cases()):
+                if unit['state']=='awaiting_review' and unit.get('purpose') != 'planning' and not any(x['source_task']==unit['task_id'] for x in s.cases()):
                     s.capture(unit['task_id']);break
         return s.cases()
     finally:d.close()

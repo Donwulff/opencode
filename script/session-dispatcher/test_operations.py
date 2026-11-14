@@ -146,6 +146,22 @@ class OperationsTests(unittest.TestCase):
         self.assertEqual((self.ledger.read_bytes(), self.git('show-ref'), self.git('status', '--porcelain'),
                           (self.repo / '.git/index').read_bytes(), list(self.api.posts)), before)
 
+    def test_planning_branch_gets_review_handoff_but_shadow_does_not(self):
+        base, commit = self.ready_for_review()
+        snapshot = report(self.ledger)
+        receipt = snapshot['ready_receipts'][0]
+        snapshot['ready_receipts'] = [dict(receipt, purpose='planning'),
+                                      dict(receipt, task_id='advisory', purpose='shadow_review')]
+        before = self.ledger.read_bytes(), self.git('show-ref')
+        value = review_ready(self.ledger, self.repo, 'target', snapshot=snapshot)
+        self.assertEqual(value['counts'], {'awaiting_review': 1})
+        self.assertEqual(value['units'][0]['purpose'], 'planning')
+        self.assertEqual(value['units'][0]['final_commit'], commit)
+        self.assertTrue(value['units'][0]['human_review_required'])
+        self.assertEqual((self.ledger.read_bytes(), self.git('show-ref')), before)
+        self.assertEqual(review_ready(self.ledger, self.repo, commit, snapshot=snapshot)['counts'],
+                         {'already_integrated': 1})
+
     def test_review_handoff_keeps_learning_commit_and_outcome_separate(self):
         self.git('branch', 'target')
         self.task_done()

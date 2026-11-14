@@ -205,8 +205,10 @@ def review_ready(database, repository, ref='HEAD', *, snapshot=None):
     target = git(repository, 'rev-parse', '--verify', '--end-of-options', ref + '^{commit}').decode().strip()
     counts, units = Counter(), []
     for receipt in snapshot['ready_receipts']:
-        if receipt.get('purpose') in ('shadow_review', 'planning'):
-            continue  # Advisory calibration cannot become an integration unit or spawn another review.
+        if receipt.get('purpose') == 'shadow_review':
+            continue  # Advisory calibration cannot become an integration unit.
+        # Planning records still advance persistent worker branches. Expose their
+        # frozen commits for record-only integration, or reuse-only pools stall.
         if receipt['common'] != common:
             continue
         item = dict(receipt, state='needs_review', human_review_required=True)
