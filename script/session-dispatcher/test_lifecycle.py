@@ -146,6 +146,19 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(result['detail']['learning'], 'failed_tool_policy')
         self.assertEqual([row['category'] for row in self.life.result('doc-1')['feedback']], ['non_edit_writer_succeeded'])
 
+    def test_local_writer_with_provider_flag_false_is_failed_policy(self):
+        unit = self.learning()
+        self.api.append(unit['fork_id'], 'session.tool.input.started', id='local_writer', name='write')
+        self.api.append(unit['fork_id'], 'session.tool.success', id='local_writer', executed=False,
+                        content=[{'type':'text','text':'local writer completed'}])
+        (self.repo/'AGENTS.md').write_text('Retained local-writer proposal.\n')
+        self.api.finish(unit['fork_id'])
+        result = self.life.advance('doc-1')
+        self.assertEqual(result['stage'], 'ready')
+        self.assertEqual(result['detail']['learning'], 'failed_tool_policy')
+        self.assertEqual([row['category'] for row in self.life.result('doc-1')['feedback']],
+                         ['non_edit_writer_succeeded'])
+
     def test_native_guard_and_edit_feedback_are_deduplicated(self):
         unit = self.learning()
         self.api.append(unit['fork_id'], 'session.tool.failed', error={'message': 'The /learn command may only modify AGENTS.md files.'})

@@ -873,6 +873,10 @@ replaced tasks are not adopted, so this cannot replay a completed replacement.
   a cross-module contract: `dispatch.event` writes it for an attributable
   terminal failure, and `recovery.plan_locked` and `batch.inference_held`
   require it. Rewording it requires updating all three.
+- Native tool events' legacy `executed` bit is the provider's `providerExecuted`
+  flag, not proof that a local tool did or did not run. Any attributable tool
+  activity requires the explicit effects check before continuation. Successful
+  non-edit learning writers are policy failures even when that flag is false.
 - "Settled idle" is proven by `client.idle(session_id)` plus
   `client.tail(session_id) == task["cursor"]`. `Client.tail` requires an
   events-persist host and replays the full retained log, so `Batch.availability`

@@ -174,7 +174,7 @@ class Lifecycle:
                 data = event.get("data", {})
                 if event.get("type") == "session.tool.input.started":
                     names[data["id"]] = data["name"]
-                if (event.get("type") == "session.tool.success" and data.get("executed") is True
+                if (event.get("type") == "session.tool.success"
                         and names.get(data["id"]) in ("write", "patch", "apply_patch")):
                     wrong_writer = True
                     self.d.db.execute("INSERT OR IGNORE INTO feedback VALUES (?,?,?,?)",

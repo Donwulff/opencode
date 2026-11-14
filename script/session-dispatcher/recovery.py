@@ -138,7 +138,8 @@ class Recovery:
             files = checkpoint(task)
         # Executed tools are deliberately not classified from names or command text.
         # Their external/background effects require a checkpoint-specific operator check.
-        effects = bool(files["commits"] or files["status"] or any(tool["executed"] for tool in tools.values()))
+        # Native executed is providerExecuted; false does not exclude local effects.
+        effects = bool(files["commits"] or files["status"] or tools)
         target_pool = self.batch.matching_pool(registration["connection"], model["providerID"])
         if number is None:
             last = self.d.db.execute("SELECT number,state FROM attempt WHERE task_id=? ORDER BY number DESC LIMIT 1", (task_id,)).fetchone()

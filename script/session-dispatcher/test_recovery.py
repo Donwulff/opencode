@@ -61,6 +61,17 @@ class RecoveryTests(unittest.TestCase):
         self.git('commit', '-m', 'Coordinator checkpoint')
         return self.git('rev-parse', 'HEAD')
 
+    def test_local_tool_with_provider_flag_false_still_requires_effect_check(self):
+        self.started()
+        self.tool(executed=False)
+        self.failed()
+        plan = self.recovery.plan('doc-1', self.target)
+        self.assertTrue(plan['effects_check_required'])
+        with self.assertRaisesRegex(DispatchError, 'effects-checked'):
+            self.recovery.prepare('doc-1', self.target, plan['approval_hash'])
+        self.recovery.prepare('doc-1', self.target, plan['approval_hash'], True)
+        self.assertEqual(len(self.api.posts), 1)
+
     def test_explicit_no_tool_baseline_preserves_failed_attempt_and_verifies_delivery(self):
         self.api.sessions['ses_fixture']['info']['model']['providerID'] = 'free'
         self.approve()
