@@ -107,17 +107,26 @@ def load_config(path):
     require(Path(value['repository']).resolve().is_dir(), 'Repository missing')
     require(timestamp(value['deadline']).tzinfo is not None, 'Explicit timezone required')
     for key, low, high in [('interval', 5, 60), ('min_ready', 1, 20), ('max_wait', 0, 3600),
-                           ('cooldown', 0, 3600), ('max_wakes', 1, 512)]:
+                           ('cooldown', 0, 3600)]:
         require(type(value[key]) is int and low <= value[key] <= high, 'Invalid coordinator ' + key)
     require(value['thread_id'] and value['target_ref'], 'Explicit thread and target ref required')
     require(type(value.get('allow_resume', False)) is bool, 'allow_resume must be an explicit boolean')
     require(type(value.get('allow_effort_override', False)) is bool, 'allow_effort_override must be boolean')
     require(value.get('base_effort', 'medium') in ('medium', 'high', 'xhigh'), 'Invalid base effort')
-    for key, default, high in [('backlog_target', 0, 100), ('urgent_cooldown', value['cooldown'], 3600),
-                               ('max_escalations', 1, value['max_wakes'])]:
+    for key, default, high in [('backlog_target', 0, 100), ('urgent_cooldown', value['cooldown'], 3600)]:
         setting = value.get(key, default)
-        require(type(setting) is int and (1 if key == 'max_escalations' else 0) <= setting <= high,
+        require(type(setting) is int and 0 <= setting <= high,
                 'Invalid coordinator ' + key)
+    for key, setting in [('max_wakes', value['max_wakes']),
+                         ('max_escalations', value.get('max_escalations', 1))]:
+        require(setting is None or type(setting) is int and 1 <= setting <= 512,
+                'Invalid coordinator ' + key)
+    wakes, escalations = value['max_wakes'], value.get('max_escalations', 1)
+    require(wakes is None or escalations is None or escalations <= wakes,
+            'Escalation budget exceeds wake budget')
+    if wakes is None or escalations is None:
+        require(value['cooldown'] >= 60 and value.get('urgent_cooldown', value['cooldown']) >= 60,
+                'Uncapped review requires at least 60 seconds between notifications')
     require(type(value.get('max_unfinished_reconciliations', 0)) is int and
             0 <= value.get('max_unfinished_reconciliations', 0) <= 2, 'Invalid unfinished-review reconciliation bound')
     pools = value.get('refill_pools', [])
@@ -282,8 +291,8 @@ class Coordinator:
                 'Use a stable task or blocker ID for --issue')
         maximum = c.get('max_escalations', 1)
         require(maximum == 1 or issue, 'Multiple escalations require a stable --issue ID')
-        require(len(s['entries']) < c['max_wakes'], 'Coordinator wake budget exhausted')
-        require(sum(bool(e.get('escalation')) for e in s['entries']) < maximum,
+        require(c['max_wakes'] is None or len(s['entries']) < c['max_wakes'], 'Coordinator wake budget exhausted')
+        require(maximum is None or sum(bool(e.get('escalation')) for e in s['entries']) < maximum,
                 'Coordinator escalation budget exhausted')
         require(not issue or not any(e.get('escalation_issue') == issue for e in s['entries']),
                 'Issue already escalated; preserve its result rather than retrying it')
@@ -379,13 +388,15 @@ class Coordinator:
                 return
             if s['first_pending'] is None:
                 self.save(first_pending=at.isoformat())
-            if len(s['entries']) >= c['max_wakes']:
+            if c['max_wakes'] is not None and len(s['entries']) >= c['max_wakes']:
                 self.save(status='wake_budget_reached')
                 return
             last = s['entries'][-1]['at'] if s['entries'] else None
-            urgent = bool(handoff.get('replenishment') or handoff.get('dependency_ready'))
+            urgent = bool(handoff.get('replenishment') or handoff.get('dependency_ready')
+                          or handoff.get('escalation') and c.get('max_escalations', 1) is None)
             cooldown = min(c['cooldown'], c.get('urgent_cooldown', c['cooldown'])) if urgent else c['cooldown']
-            if last and not handoff.get('escalation') and (at - timestamp(last)).total_seconds() < cooldown:
+            if (last and (not handoff.get('escalation') or c.get('max_escalations', 1) is None)
+                    and (at - timestamp(last)).total_seconds() < cooldown):
                 self.save(status='batching_cooldown')
                 return
             drained = not (handoff['queue'].get('active', 0) or handoff['queue'].get('pending', 0))

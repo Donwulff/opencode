@@ -934,13 +934,18 @@ actual Git ancestry, scoped provider/recovery failures, observer approval pickup
 crash-before-POST and lost responses. No live schema migration or dependency
 dispatch, model invocation, core/API change or container modification was tested.
 
-A coordinator wake budget is cumulative in its durable receipt, including across
-restarts. Exhaustion stops notifications, not running worker tasks. For an
-explicitly approved longer window, increase `max_wakes` (1..512) in the existing
-private config and restart that notifier; spent wakes, per-issue escalations,
-thread binding and the absolute deadline remain intact. It never renews itself.
-Batch routine reviews with `min_ready`, `max_wait` and `cooldown`; extending the
-budget does not authorize additional technical scope or guaranteed Codex quota.
+A finite coordinator wake budget (1..512) is cumulative across restarts;
+exhaustion stops notifications, not workers. Set `max_wakes: null` and
+`max_escalations: null` in the private config to remove cumulative quotas for
+an approved operating window. Uncapped mode requires both cooldowns to be at
+least 60 seconds, including distinct escalations. Stable message IDs, one
+escalation per issue, unresolved-admission holds, bounded unfinished-review
+continuation, idle-thread/user-queue checks and the absolute deadline still
+apply. Spent history and existing issue holds are never reset. Provider quota
+or authentication failures are not solved by this setting. Defaults remain
+finite; restart only the notifier after an approved configuration change.
+Batch routine reviews with `min_ready`, `max_wait` and `cooldown`; neither
+mode authorizes new technical scope or changes the worker concurrency limit.
 
 For a reuse-only approved worker pool, `sync_integrated_workers: true` enables
 bounded automatic `git merge --ff-only` to `reuse_ref` before the next assignment.

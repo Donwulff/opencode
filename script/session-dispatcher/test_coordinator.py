@@ -286,6 +286,69 @@ class CoordinatorTests(unittest.TestCase):
             with self.assertRaisesRegex(DispatchError, 'Invalid coordinator max_wakes'):
                 load_config(path)
 
+    def test_uncapped_review_configuration_retains_flood_guards(self):
+        path = self.directory / 'config.json'
+        for fields in ({'max_wakes': None}, {'max_escalations': None},
+                       {'max_wakes': None, 'max_escalations': None}):
+            path.write_text(json.dumps(dict(self.config, **fields)))
+            path.chmod(0o600)
+            actual = load_config(path)
+            for key, value in fields.items():
+                self.assertIs(actual[key], value)
+        for fields in ({'cooldown': 0}, {'urgent_cooldown': 15}):
+            path.write_text(json.dumps(dict(self.config, max_wakes=None, **fields)))
+            with self.assertRaisesRegex(DispatchError, 'Uncapped review'):
+                load_config(path)
+
+    def test_uncapped_wakes_keep_history_cooldown_deduplication_and_deadline(self):
+        self.ready_for_review()
+        self.config['max_wakes'] = None
+        handoff = self.coordinator.collect()
+        self.coordinator.tick(at=self.at, handoff=handoff)
+        first = copy.deepcopy(self.coordinator.state['entries'][0])
+        self.native.status = 'idle'
+        handoff['keys'] = ['next-independent-result']
+        self.coordinator.tick(at=self.at + timedelta(seconds=1), handoff=handoff)
+        self.assertEqual(self.coordinator.state['status'], 'batching_cooldown')
+        for index in range(1, 5):
+            self.native.status = 'idle'
+            handoff['keys'] = ['independent-result-' + str(index)]
+            self.coordinator.tick(at=self.at + timedelta(seconds=61 * index), handoff=handoff)
+        self.restart()
+        self.assertEqual(len(self.coordinator.state['entries']), 5)
+        self.assertEqual(self.coordinator.state['entries'][0], first)
+        self.native.status = 'idle'
+        self.coordinator.tick(at=self.at + timedelta(seconds=400), handoff=handoff)
+        self.assertEqual(self.coordinator.state['status'], 'wake_already_observed')
+        handoff['keys'] = ['outside-window']
+        self.coordinator.tick(at=self.at + timedelta(hours=2), handoff=handoff)
+        self.assertEqual(self.coordinator.state['status'], 'deadline_reached')
+        self.assertEqual(self.native.starts, 5)
+
+    def test_uncapped_escalations_are_per_issue_and_rate_limited(self):
+        self.git('branch', 'target')
+        self.config.update(allow_effort_override=True, max_wakes=None,
+                           max_escalations=None, urgent_cooldown=60)
+        self.restart()
+        with patch.dict(os.environ, CODEX_THREAD_ID='thread-fixture'):
+            with self.assertRaisesRegex(DispatchError, 'stable --issue'):
+                self.coordinator.request_escalation('failed_tests', 'reason')
+            self.coordinator.request_escalation('failed_tests', 'reason', 'issue-0')
+            self.coordinator.tick(at=self.at)
+            self.native.status = 'idle'
+            self.coordinator.request_escalation('failed_tests', 'new issue', 'issue-1')
+            self.coordinator.tick(at=self.at + timedelta(seconds=1))
+            self.assertEqual(self.coordinator.state['status'], 'batching_cooldown')
+            self.coordinator.tick(at=self.at + timedelta(seconds=61))
+            for index in range(2, 5):
+                self.native.status = 'idle'
+                self.coordinator.request_escalation('failed_tests', 'new issue', 'issue-' + str(index))
+                self.coordinator.tick(at=self.at + timedelta(seconds=61 * index))
+            with self.assertRaisesRegex(DispatchError, 'already escalated'):
+                self.coordinator.request_escalation('failed_tests', 'retry old issue', 'issue-0')
+        self.assertEqual(self.native.starts, 5)
+        self.assertEqual(len(self.coordinator.state['entries']), 5)
+
     def test_unfinished_review_has_one_durable_reconciliation_without_task_replay(self):
         base,commit=self.ready_for_review()
         self.config.update(max_wakes=6,max_unfinished_reconciliations=1)
