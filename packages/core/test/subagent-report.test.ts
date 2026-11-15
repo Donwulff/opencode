@@ -153,7 +153,7 @@ describe("SubagentReport settlement", () => {
         {
           payload: {
             text: [
-              `<subagent sessionID="${child}" state="completed" description="Background audit">`,
+              `<subagent sessionID="${child}" state="running" description="Background audit">`,
               "Started tests",
               "",
               "Background work still running:",
@@ -162,6 +162,7 @@ describe("SubagentReport settlement", () => {
               `- subagent (subagent, sessionID: ${active}): ${active}`,
               "</subagent>",
             ].join("\n"),
+            metadata: { state: "completed" },
           },
         },
       ])
@@ -431,49 +432,6 @@ describe("SubagentReport settlement", () => {
       if (marker) yield* jobs.completeBackground(marker.notificationID)
     }),
   )
-
-  it.effect("suppresses reports for a silent child and clears its background marker", () =>
-    Effect.gen(function* () {
-      const database = yield* Database.Service
-      const jobs = yield* Job.Service
-      const parent = sessionID("ses_silent_parent")
-      const child = sessionID("ses_silent_child")
-      yield* seedSessions(database, [parent])
-      yield* seedSessions(database, [child], {
-        parent_id: parent,
-        metadata: { "subagent.notify": false },
-      })
-
-      const scope = yield* Scope.make()
-      yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void))
-      const context = yield* buildExecution(scope, () => Effect.void)
-      const execution = Context.get(context, SessionExecution.Service)
-
-      yield* seedAssistant(database, child, 100, "Silent work")
-      yield* execution.wake(child)
-      yield* execution.awaitIdle(child)
-      expect(yield* SessionInbox.list(database.db, parent)).toEqual([])
-
-      const job = yield* jobs.start({
-        id: child,
-        type: "subagent",
-        recovery: {
-          kind: "subagent",
-          parentSessionID: parent,
-          childSessionID: child,
-          agent: "explore",
-          description: "Silent job",
-        },
-        background: true,
-        run: execution.resume(child).pipe(Effect.as("")),
-      })
-      yield* jobs.wait({ id: job.id })
-      expect(yield* SessionInbox.list(database.db, parent)).toEqual([])
-      expect(yield* jobs.pendingBackground).toEqual([])
-      expect(yield* jobs.backgroundJobs).toEqual([])
-      expect(yield* jobs.get(child)).toBeUndefined()
-    }),
-  )
 })
 
 describe("SubagentReport outbox", () => {
@@ -509,8 +467,10 @@ describe("SubagentReport outbox", () => {
       const inbox = yield* SessionInbox.Service
       const parent = sessionID("ses_outbox_parent")
       const child = sessionID("ses_outbox_child")
+      const grandchild = sessionID("ses_outbox_grandchild")
       yield* seedSessions(database, [parent])
       yield* seedSessions(database, [child], { parent_id: parent, agent: "explore", title: "Outbox audit" })
+      yield* seedSessions(database, [grandchild], { parent_id: child, agent: "explore", title: "Check logs" })
       yield* seedAssistant(database, child, 100, "Outbox report")
       yield* store.claim(child)
 
@@ -519,7 +479,7 @@ describe("SubagentReport outbox", () => {
         store,
         jobs,
         inbox,
-        draining: Effect.succeed(new Set()),
+        draining: Effect.succeed(new Set([grandchild])),
         wake: (sessionID) => Effect.sync(() => void wakes.push(sessionID)),
       })
       const job = yield* jobs.start({
@@ -551,6 +511,11 @@ describe("SubagentReport outbox", () => {
           session_id: parent,
           status: "completed",
           output: "Outbox report",
+          recovery: {
+            outstanding: [
+              { kind: "subagent", sessionID: child, childSessionID: grandchild, agent: "explore", description: "Check logs" },
+            ],
+          },
         },
       ])
 
@@ -741,10 +706,7 @@ function buildExecution(scope: Scope.Scope, drain: Drain) {
 }
 
 type SeedValues = Partial<
-  Pick<
-    typeof SessionTable.$inferInsert,
-    "time_suspended" | "resume_attempts" | "parent_id" | "metadata" | "title" | "revert"
-  >
+  Pick<typeof SessionTable.$inferInsert, "time_suspended" | "resume_attempts" | "parent_id" | "title" | "revert">
 > & { readonly agent?: string }
 
 function seedSessions(

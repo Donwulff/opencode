@@ -5,6 +5,7 @@ import { Context } from "effect"
 import type { Config } from "../config.js"
 
 /** The `execute` call a Code Mode program runs under, so extensions can act for its session like a tool does. */
-export class Service extends Context.Service<Service, ToolContext & { readonly config?: Config.Interface }>()(
-  "@opencode/CodeModeExecution",
-) {}
+export class Service extends Context.Service<
+  Service,
+  ToolContext & { readonly config?: Config.Interface; signal: AbortSignal }
+>()("@opencode/CodeModeExecution") {}

@@ -151,7 +151,12 @@ export const create = (
             Effect.onError(() =>
               lock.withPermit(Ref.get(trailing).pipe(Effect.flatMap((pending) => (pending ? publish : Effect.void)))),
             ),
-            Effect.provideService(CodeModeExecution.Service, { ...context, config }),
+            // Readers outlive the fetch call that returned them, up to the end of this program's scope.
+            Effect.provideService(CodeModeExecution.Service, {
+              ...context,
+              config,
+              signal: yield* Effect.abortSignal,
+            }),
             Effect.provideService(Permission.Service, permission),
           )
         const toolCalls = yield* Ref.get(calls)

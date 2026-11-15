@@ -267,13 +267,6 @@ const harness = Effect.fnUntraced(function* (input?: HarnessInput) {
 const outputSessionID = (value: unknown) =>
   Schema.decodeUnknownSync(Schema.Struct({ sessionID: Session.ID }))(value).sessionID
 
-const messageText = (message: SessionMessage.Info) =>
-  message.type === "assistant"
-    ? message.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n\n")
-    : message.type === "synthetic"
-      ? message.text
-      : ""
-
 const deliveredReports = (app: { readonly sessions: Session.Interface }, sessionID: Session.ID) =>
   app.sessions
     .context(sessionID)
@@ -340,6 +333,8 @@ describe("subagent idle reports end to end", () => {
         yield* waitForReports(h, h.parent.id, 1)
         const first = yield* deliveredReports(h, h.parent.id)
         expect(first).toHaveLength(1)
+        expect(first[0]?.text).toContain(`sessionID="${outputSessionID(launched.metadata)}" state="running"`)
+        expect(first[0]?.metadata?.state).toBe("completed")
         expect(first[0]!.text).toContain("Started tests")
         expect(first[0]!.text).toContain("Background work still running:\n- shell (")
         expect(first[0]!.text).toContain(command)
@@ -349,6 +344,8 @@ describe("subagent idle reports end to end", () => {
         const second = yield* deliveredReports(h, h.parent.id)
         expect(second).toHaveLength(2)
         expect(second[1]!.id).not.toBe(first[0]!.id)
+        expect(second[1]?.text).toContain(`sessionID="${outputSessionID(launched.metadata)}" state="completed"`)
+        expect(second[1]?.metadata?.state).toBe("completed")
         expect(second[1]!.text).toContain("Tests green")
         expect(second[1]!.text).not.toContain("Started tests")
         expect(second[1]!.text).not.toContain("Background work still running:")
@@ -362,10 +359,11 @@ describe("subagent idle reports end to end", () => {
     () =>
       Effect.gen(function* () {
         const h = yield* harness()
+        const quote = "The report used this heading:\n\nBackground work still running:\n- shell (sh_1): bun test"
         yield* h.llm.serve(
           script({
             reviewer: [
-              TestLLM.text("first answer", "turn-1"),
+              TestLLM.text(quote, "turn-1"),
               TestLLM.text("second answer", "turn-2"),
               TestLLM.text("third answer", "turn-3"),
             ],
@@ -375,7 +373,15 @@ describe("subagent idle reports end to end", () => {
         const launched = yield* h.call("call-launch")
         const childID = outputSessionID(launched.metadata)
         yield* waitForReports(h, h.parent.id, 1)
-        expect((yield* deliveredReports(h, h.parent.id))[0]!.text).toContain("first answer")
+        const text = `<subagent sessionID="${childID}" state="completed" description="review">\n${quote}\n</subagent>`
+        expect((yield* deliveredReports(h, h.parent.id))[0]).toMatchObject({
+          text,
+          metadata: { source: "subagent", childID, agent: "reviewer", state: "completed" },
+        })
+        const parent = (yield* h.llm.requests()).find((request) => request.model.id === "build")
+        expect(parent?.messages).toContainEqual(
+          expect.objectContaining({ content: expect.arrayContaining([expect.objectContaining({ type: "text", text })]) }),
+        )
         yield* h.sessions.wait(childID)
         yield* h.jobs.wait({ id: childID })
 
@@ -383,7 +389,7 @@ describe("subagent idle reports end to end", () => {
         yield* waitForReports(h, h.parent.id, 2)
         const second = (yield* deliveredReports(h, h.parent.id))[1]!
         expect(second.text).toContain("second answer")
-        expect(second.text).not.toContain("first answer")
+        expect(second.text).not.toContain(quote)
 
         yield* h.sessions.prompt({ sessionID: childID, text: "Follow up again" })
         yield* waitForReports(h, h.parent.id, 3)
@@ -515,54 +521,6 @@ describe("subagent idle reports end to end", () => {
   )
 
   e2e.live(
-    "a silent middle keeps its loud grandchild from skipping a level",
-    () =>
-      Effect.gen(function* () {
-        const h = yield* harness({
-          config: {
-            experimental: { subagent_depth: 2 },
-            permissions: [{ action: "*", resource: "*", effect: "allow" }],
-          },
-        })
-        yield* h.llm.serve(
-          script({
-            reviewer: [
-              TestLLM.toolCall("call-grandchild", SubagentTool.name, {
-                agent: "fallback",
-                description: "grandchild review",
-                prompt: "review the grandchild fixture",
-              }),
-              TestLLM.text("silent child launched grandchild", "child-turn-1"),
-              TestLLM.text("silent child saw grandchild", "child-turn-2"),
-            ],
-            fallback: [TestLLM.text("grandchild answer", "grandchild-turn-1")],
-            build: [TestLLM.text("parent ack", "parent-1")],
-          }),
-        )
-
-        const launched = yield* h.call("call-silent-child", {
-          notify: false,
-          description: "silent child review",
-        })
-        const childID = outputSessionID(launched.metadata)
-        expect((yield* h.sessions.get(childID)).metadata).toEqual({ "subagent.notify": false })
-
-        yield* waitForReports(h, childID, 1)
-        const report = (yield* deliveredReports(h, childID))[0]!
-        const grandchildID = Schema.decodeUnknownSync(Session.ID)(report.metadata?.childID)
-        expect((yield* h.sessions.get(grandchildID)).metadata).toBeUndefined()
-        expect((yield* h.sessions.context(childID)).map(messageText)).toContain("silent child saw grandchild")
-
-        // The grandchild reported to the silent child, and the silent child never reported up.
-        expect(yield* deliveredReports(h, h.parent.id)).toEqual([])
-        expect((yield* h.sessions.inbox(h.parent.id)).filter((item) => item.type === "synthetic")).toEqual([])
-        expect((yield* h.sessions.get(childID)).metadata).toEqual({ "subagent.notify": false })
-        expect(yield* h.jobs.pendingBackground).toEqual([])
-      }),
-    30_000,
-  )
-
-  e2e.live(
     "replays the report committed before a crash without running the child again",
     () =>
       Effect.gen(function* () {
@@ -581,11 +539,11 @@ describe("subagent idle reports end to end", () => {
         yield* h.sessions.wait(childID)
         yield* h.jobs.wait({ id: childID })
 
-        // The terminal transaction released the claim and persisted the formatted report,
+        // The terminal transaction released the claim and persisted the report,
         // but delivery never happened.
         expect((yield* h.sessions.context(h.parent.id)).filter((message) => message.type === "synthetic")).toEqual([])
         expect(yield* h.jobs.pendingBackground).toMatchObject([
-          { id: childID, status: "completed", output: "crash-safe answer" },
+          { id: childID, status: "completed", output: "crash-safe answer", recovery: { outstanding: [] } },
         ])
         expect(yield* claims(h)).toEqual({ [h.parent.id]: false, [childID]: false })
         const requests = yield* h.llm.requests()
