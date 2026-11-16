@@ -144,7 +144,9 @@ const shellPluginSupervisor = makeLocationNode({
     Flag.node,
     Permission.node,
     Session.node,
+    Agent.node,
     Job.node,
+    Model.node,
     Shell.node,
     Shell.daemonNode,
     ShellSelect.node,
@@ -1247,7 +1249,9 @@ describe("ShellTool", () => {
             Flag.node,
             Permission.node,
             Session.node,
+            Agent.node,
             Job.node,
+            Model.node,
             Shell.node,
             Shell.daemonNode,
             ShellSelect.node,
@@ -2146,6 +2150,119 @@ describe("ShellTool", () => {
           expect((yield* shell.get(id)).status).toBe("running")
           expect((yield* shell.list()).map((info) => info.id)).toContain(id)
           yield* shell.remove(id)
+        }),
+      )
+    }),
+  )
+})
+
+describe("ShellTool per-model background", () => {
+  // Registers the session's model (`test/test`) with the given settings.
+  const modelWithSettings = (settings?: Model.Info["settings"]) =>
+    Effect.gen(function* () {
+      const providers = yield* Provider.Service
+      yield* providers.transform((editor) =>
+        editor.add({
+          info: { ...Provider.Info.empty(Provider.ID.make("test")), package: "@opencode/ai/providers/openai" },
+          models: [{ ...Model.Info.default(Provider.ID.make("test"), Model.ID.make("test")), ...(settings ? { settings } : {}) }],
+        }),
+      )
+    })
+
+  const syntheticNotices = () =>
+    Effect.gen(function* () {
+      const bus = yield* Bus.Service
+      const notices = yield* Queue.unbounded<unknown>()
+      yield* bus.subscribe(SessionEvent.InboxEnqueued).pipe(
+        Stream.filter((event) => event.data.sessionID === sessionID && event.data.item.type === "synthetic"),
+        Stream.runForEach((event) => Queue.offer(notices, event.data.item.payload)),
+        Effect.forkScoped({ startImmediately: true }),
+      )
+      return notices
+    })
+
+  it.live("runs a backgrounded call in the foreground when the session's model forbids backgrounding", () =>
+    withTempDir((tmp) => {
+      reset()
+      return withSession(tmp.path, (registry) =>
+        Effect.gen(function* () {
+          yield* modelWithSettings({ shell: { background: false } })
+          const notices = yield* syntheticNotices()
+          const result = yield* executeTool(registry, call({ command: helloCommand, background: true }, "call-forced-foreground"))
+          expect(result.status).toBe("completed")
+          expect(result.metadata).toMatchObject({ status: "completed", exit: 0 })
+          expect(result.metadata).not.toHaveProperty("shellID")
+          expect(result.content).toEqual([{ type: "text", text: "hello" }])
+          const jobs = yield* Job.Service
+          expect(yield* jobs.runningBackground).toEqual([])
+          expect(yield* Queue.size(notices)).toBe(0)
+        }),
+      )
+    }),
+  )
+
+  it.live("stops a backgrounded call when its timeout expires instead of moving it to the background", () =>
+    withTempDir((tmp) => {
+      reset()
+      return withSession(tmp.path, (registry) =>
+        Effect.gen(function* () {
+          yield* modelWithSettings({ shell: { background: false } })
+          const notices = yield* syntheticNotices()
+          const result = yield* executeTool(registry, call({ command: idleCommand, background: true, timeout: 50 }, "call-foreground-timeout"))
+          expect(result.status).toBe("completed")
+          expect(result.metadata).toMatchObject({ status: "completed", timeout: true, truncated: false })
+          expect(result.metadata).not.toHaveProperty("shellID")
+          expect(result.content).toEqual([
+            { type: "text", text: "(no output)" },
+            { type: "text", text: expect.stringContaining("Command timed out after 0.05 seconds") },
+          ])
+          const jobs = yield* Job.Service
+          expect(yield* jobs.runningBackground).toEqual([])
+          expect(yield* Queue.size(notices)).toBe(0)
+        }),
+      )
+    }),
+  )
+
+  it.effect("stops a foreground call at the default timeout when the session's model forbids backgrounding", () =>
+    withTempDir((tmp) => {
+      reset()
+      return withSession(tmp.path, (registry) =>
+        Effect.gen(function* () {
+          yield* modelWithSettings({ shell: { background: false } })
+          const running = yield* executeTool(
+            registry,
+            call({ command: progressOverflowCommand(0, "release"), timeout: 0 }, "call-foreground-default-timeout"),
+          ).pipe(Effect.forkScoped({ startImmediately: true }))
+          // The wait starts only after the command spawns, so keep advancing the clock until the call returns.
+          const result = yield* Fiber.join(running).pipe(
+            Effect.raceFirst(
+              Effect.forever(Effect.promise(() => Bun.sleep(20)).pipe(Effect.andThen(TestClock.adjust("2 minutes")))),
+            ),
+          )
+          expect(result.metadata).toMatchObject({ status: "completed", timeout: true })
+          expect(result.content).toEqual([
+            { type: "text", text: "(no output)" },
+            { type: "text", text: expect.stringContaining("Command timed out after 120 seconds") },
+          ])
+        }),
+      )
+    }),
+  )
+
+  it.live("keeps backgrounding when the session's model has no shell setting", () =>
+    withTempDir((tmp) => {
+      reset()
+      return withSession(tmp.path, (registry) =>
+        Effect.gen(function* () {
+          yield* modelWithSettings()
+          const result = yield* executeTool(registry, call({ command: idleCommand, background: true, timeout: 50 }, "call-default-background"))
+          const shellID = typeof result.metadata?.shellID === "string" ? result.metadata.shellID : undefined
+          expect(result.metadata).toMatchObject({ status: "running", truncated: false })
+          expect(shellID).toStartWith("sh_")
+          const shell = yield* Shell.Service
+          if (!shellID) return
+          expect((yield* shell.wait(ID.make(shellID))).status).toBe("timeout")
         }),
       )
     }),
