@@ -4,6 +4,7 @@ export type { Context, Metadata, Namespace, Options, Result } from "@opencode/sc
 
 import { ToolDefinition, type ToolCall } from "@opencode/ai/effect"
 import type { CodeMode } from "@opencode/codemode"
+import type { Model } from "@opencode/schema/model"
 import { Tool } from "@opencode/schema/tool"
 import { Context, Effect, Layer, Ref, Result, Schema, SchemaIssue, Types } from "effect"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
@@ -65,6 +66,11 @@ export interface CheckInput {
 export interface NormalizedResult extends Tool.Result {
   readonly content: ReadonlyArray<Tool.Content>
 }
+
+/** The resolved catalog identity for a tool call issued by a model request. */
+export const RequestModel = Context.Reference<Model.Ref | undefined>("@opencode/Tool/RequestModel", {
+  defaultValue: () => undefined,
+})
 
 export interface Snapshot {
   readonly definitions: ReadonlyArray<ToolDefinition>

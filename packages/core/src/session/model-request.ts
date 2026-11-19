@@ -444,6 +444,7 @@ export const layer = Layer.effect(
         // plugin tools do.
         executeTool: (call: Parameters<Prepared["executeTool"]>[0]) =>
           tools.execute({ ...call, definitions: hooked }).pipe(
+            Effect.provideService(Tool.RequestModel, model.ref),
             Effect.catchCauseFilter(
               (cause) => {
                 const decline = cause.reasons

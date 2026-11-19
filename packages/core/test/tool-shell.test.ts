@@ -6,6 +6,7 @@ import { describe, expect } from "bun:test"
 import { Cause, Deferred, Duration, Effect, Exit, Fiber, Layer, Queue, Scope, Stream, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import { Money } from "@opencode/schema/money"
+import { OpenAIChat } from "@opencode/ai/protocols"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { makeGlobalNode, makeLocationNode } from "@opencode/util/effect/app-node"
@@ -29,6 +30,9 @@ import { Session } from "@opencode/core/session"
 import { SessionEvent } from "@opencode/core/session/event"
 import { SessionExecution } from "@opencode/core/session/execution"
 import { SessionMessage } from "@opencode/core/session/message"
+import { SessionModelRequest } from "@opencode/core/session/model-request"
+import { SessionModelTransport } from "@opencode/core/session/model-transport"
+import { SessionRunnerModel } from "@opencode/core/session/runner/model"
 import { SessionStore } from "@opencode/core/session/store"
 import { Permission } from "@opencode/core/permission"
 import { PermissionSaved } from "@opencode/core/permission/saved"
@@ -178,7 +182,9 @@ const replacements = [
   ...daemonReplacements,
   PersistentPty.node.replace(disabledPersistentPtyLayer),
 ] satisfies LayerNode.Replacements
-const productionIt = testEffect(AppNodeBuilder.build(nodes, replacements))
+const productionIt = testEffect(
+  AppNodeBuilder.build(LayerNode.group([nodes, SessionModelTransport.node]), replacements),
+)
 const it = testEffect(
   AppNodeBuilder.build(nodes, [...replacements, PluginSupervisor.node.replace(shellPluginSupervisor)]),
 )
@@ -2158,13 +2164,13 @@ describe("ShellTool", () => {
 
 describe("ShellTool per-model background", () => {
   // Registers the session's model (`test/test`) with the given settings.
-  const modelWithSettings = (settings?: Model.Info["settings"]) =>
+  const modelWithSettings = (settings?: Model.Info["settings"], variants: Model.Info["variants"] = []) =>
     Effect.gen(function* () {
       const providers = yield* Provider.Service
       yield* providers.transform((editor) =>
         editor.add({
           info: { ...Provider.Info.empty(Provider.ID.make("test")), package: "@opencode/ai/providers/openai" },
-          models: [{ ...Model.Info.default(Provider.ID.make("test"), Model.ID.make("test")), ...(settings ? { settings } : {}) }],
+          models: [{ ...Model.Info.default(sessionModel.providerID, sessionModel.id), settings, variants }],
         }),
       )
     })
@@ -2219,6 +2225,40 @@ describe("ShellTool per-model background", () => {
           const jobs = yield* Job.Service
           expect(yield* jobs.runningBackground).toEqual([])
           expect(yield* Queue.size(notices)).toBe(0)
+        }),
+      )
+    }),
+  )
+
+  productionIt.live("uses the prepared request's shell settings when its variant differs from the session", () =>
+    withTempDir((tmp) => {
+      reset()
+      return withSession(tmp.path, (registry) =>
+        Effect.gen(function* () {
+          const variant = Model.VariantID.make("foreground")
+          yield* modelWithSettings(undefined, [{ id: variant, settings: { shell: { background: false } } }])
+          const sessions = yield* Session.Service
+          const requests = yield* SessionModelRequest.Service.pipe(Effect.provide(SessionModelRequest.layer))
+          const prepared = yield* requests.primary({
+            session: yield* sessions.get(sessionID),
+            agent: toolIdentity.agent,
+            model: {
+              ...SessionRunnerModel.resolved(OpenAIChat.route.model({ id: "api-model" }), {
+                capabilities: { tools: true, input: ["text"], output: ["text"] },
+                cost: [],
+                limit: { context: 200_000, output: 32_000 },
+              }),
+              ref: Model.Ref.make({ ...sessionModel, variant }),
+            },
+            system: [],
+            messages: [],
+            tools: yield* registry.snapshot(),
+          })
+          const definition = prepared.request.tools.find((tool) => tool.type === "tool" && tool.name === "shell")
+          expect(definition).toBeDefined()
+          expect(definition).not.toHaveProperty("inputSchema.properties.background")
+          const result = yield* prepared.executeTool(call({ command: idleCommand, timeout: 50, background: true }))
+          expect(result.metadata).toMatchObject({ status: "completed", timeout: true })
         }),
       )
     }),

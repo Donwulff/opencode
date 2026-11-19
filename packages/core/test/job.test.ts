@@ -233,6 +233,12 @@ describe("Job", () => {
         type: "other",
         run: Deferred.await(latch).pipe(Effect.as("third")),
       })
+      const foreground = yield* jobs.start({
+        id: "job_foreground",
+        type: "test",
+        canBackground: false,
+        run: Deferred.await(latch).pipe(Effect.as("foreground")),
+      })
       const scope = yield* Scope.Scope
       const firstWait = yield* jobs
         .block({ id: first.id, sessionID: parent })
@@ -243,13 +249,18 @@ describe("Job", () => {
       const thirdWait = yield* jobs
         .block({ id: third.id, sessionID: parent })
         .pipe(Effect.forkIn(scope, { startImmediately: true }))
+      const foregroundWait = yield* jobs
+        .block({ id: foreground.id, sessionID: parent })
+        .pipe(Effect.forkIn(scope, { startImmediately: true }))
 
       expect(yield* jobs.backgroundAll({ sessionID: parent, type: "test" })).toMatchObject([{ id: first.id }])
       expect(yield* Fiber.join(firstWait)).toMatchObject({ type: "backgrounded", info: { id: first.id } })
+      expect(yield* jobs.background(foreground.id)).toBeUndefined()
 
       yield* Deferred.succeed(latch, undefined)
       expect(yield* Fiber.join(secondWait)).toMatchObject({ type: "finished", info: { id: second.id } })
       expect(yield* Fiber.join(thirdWait)).toMatchObject({ type: "finished", info: { id: third.id } })
+      expect(yield* Fiber.join(foregroundWait)).toMatchObject({ type: "finished", info: { id: foreground.id } })
     }),
   )
 

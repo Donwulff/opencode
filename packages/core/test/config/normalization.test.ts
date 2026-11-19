@@ -849,3 +849,19 @@ test("preserves fork security and provider settings through legacy normalization
   })
   expect(info.agents?.plan.plan_reminder).toBe("Custom reminder")
 })
+
+test("keeps shell settings on models under the legacy provider key", () => {
+  const id = "vendor/model:quant"
+  const info = decoded({
+    provider: {
+      local: {
+        npm: "@ai-sdk/openai-compatible",
+        models: { [id]: { settings: { shell: { background: false } }, options: { temperature: 0.5 } } },
+      },
+    },
+  })
+  expect(info.providers?.local.models?.[id]).toMatchObject({
+    settings: { shell: { background: false } },
+    body: { temperature: 0.5 },
+  })
+})

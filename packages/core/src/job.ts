@@ -78,6 +78,7 @@ type Active = {
   scope: Scope.Closeable
   generation: number
   blockingSessions: Map<SessionSchema.ID, number>
+  canBackground: boolean
   isBackgrounded: boolean
   settling: boolean
   consumed: boolean
@@ -128,6 +129,8 @@ export type StartInput = {
   recovery?: Recovery
   notificationID?: SessionMessage.ID
   background?: boolean
+  // Whether a foreground job may be promoted to the background.
+  canBackground?: boolean
   run: Effect.Effect<string, unknown>
   // Runs when the job is cancelled (`cancel`, `cancelSession`), before its work is interrupted. Teardown, such as
   // a server shutdown, interrupts the work without it.
@@ -384,6 +387,7 @@ export const make = Effect.gen(function* () {
               scope,
               generation: yield* Ref.updateAndGet(state.generations, (generation) => generation + 1),
               blockingSessions: new Map<SessionSchema.ID, number>(),
+              canBackground: input.canBackground !== false,
               isBackgrounded: input.background === true,
               settling: false,
               consumed: false,
@@ -488,7 +492,7 @@ export const make = Effect.gen(function* () {
       Effect.fnUntraced(function* (jobs): Effect.fn.Return<readonly [BackgroundResult, Map<string, Active>]> {
         const job = jobs.get(id)
         // Recoverable work may finish before the caller backgrounds it.
-        if (!job || (job.info.status !== "running" && !job.recovery)) return [{}, jobs]
+        if (!job?.canBackground || (job.info.status !== "running" && !job.recovery)) return [{}, jobs]
         if (job.isBackgrounded) return [{ info: snapshot(job) }, jobs]
         const next = yield* markBackground(job)
         return [{ info: snapshot(next), backgrounded: job.backgrounded }, new Map(jobs).set(id, next)]
@@ -508,7 +512,7 @@ export const make = Effect.gen(function* () {
         const next = new Map(jobs)
         for (const [id, job] of jobs) {
           if (job.info.status !== "running") continue
-          if (job.isBackgrounded) continue
+          if (job.isBackgrounded || !job.canBackground) continue
           if (input.type !== undefined && job.info.type !== input.type) continue
           if (!job.blockingSessions.has(input.sessionID)) continue
           const updated = yield* markBackground(job)

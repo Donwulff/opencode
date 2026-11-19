@@ -2,6 +2,7 @@ export * as ConfigMigrateV1 from "./migrate.js"
 
 import { ConfigAgent } from "@opencode/schema/config/agent"
 import { ConfigModel } from "@opencode/schema/config/model"
+import { isRecord } from "@opencode/util/record"
 import { Option, Schema } from "effect"
 import { ConfigAgentV1 } from "./agent.js"
 import { ConfigCommandV1 } from "./command.js"
@@ -214,7 +215,8 @@ function migrateModel(info: typeof ConfigProviderV1.Model.Type, npm: string | un
       ? ConfigProviderOptionsV1.compatibleModel(input)
       : { settings: ConfigProviderOptionsV1.model(input), body: undefined }
   const migrated = options && split(options)
-  const settings = migrated?.settings
+  const shell = isRecord(info.settings) ? info.settings.shell : undefined
+  const settings = shell === undefined ? migrated?.settings : { ...migrated?.settings, shell }
   const compatibility = Model.compatibility(info.interleaved)
   const costs = info.cost && [
     {

@@ -8,13 +8,13 @@ import type { Context } from "@opencode/plugin/effect/plugin"
 import type { SessionHooks } from "@opencode/plugin/effect/session"
 import type { ShellCreateBefore } from "@opencode/plugin/effect/shell"
 import type { Shell as ShellSchema } from "@opencode/schema/shell"
-import type { Tool } from "@opencode/schema/tool"
 import { isRecord } from "@opencode/util/record"
 import { Clock, Deferred, Effect, Fiber, Option, Schema, Struct } from "effect"
 import { Agent } from "../../agent.js"
 import { Environment } from "../../environment/index.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
+import { ModelResolver } from "../../model-resolver.js"
 import { FileAccess } from "../../file-access.js"
 import { Permission } from "../../permission.js"
 import { NonNegativeInt } from "../../schema.js"
@@ -25,6 +25,7 @@ import { Shell } from "../../shell.js"
 import { ShellParse } from "../../shell/parse.js"
 import { ShellSelect } from "../../shell/select.js"
 import { ShellResult } from "../../shell/result.js"
+import { Tool } from "../../tool.js"
 import { toolFailure } from "../runtime.js"
 
 export const name = "shell"
@@ -75,17 +76,6 @@ export const Input = Schema.Struct({
       "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion.",
   }),
 })
-
-// The per-model setting `settings.shell.background: false` runs the model's shell commands in the foreground: the
-// tool hides `background` and a timeout stops the command instead of moving it to the background.
-const shellBackgroundDisabled = (settings: unknown): boolean =>
-  isRecord(settings) && isRecord(settings.shell) && settings.shell.background === false
-
-const modelBackgroundDisabled = (model: Model.Info | undefined, variant: Model.VariantID | undefined): boolean => {
-  if (!model) return false
-  if (shellBackgroundDisabled(model.settings)) return true
-  return variant !== undefined && shellBackgroundDisabled(model.variants.find((item) => item.id === variant)?.settings)
-}
 
 const StructuredOutput = Schema.Struct({
   output: Schema.String,
@@ -197,6 +187,7 @@ const startJob = Effect.fnUntraced(function* (
     readonly sessionID: SessionSchema.ID
     readonly info: ShellSchema.Info
     readonly background?: boolean
+    readonly canBackground?: boolean
     readonly notificationID?: SessionMessage.ID
     readonly timeout?: () => number
   },
@@ -217,6 +208,7 @@ const startJob = Effect.fnUntraced(function* (
     },
     ...(input.notificationID ? { notificationID: input.notificationID } : {}),
     background: input.background,
+    canBackground: input.canBackground,
     run: Effect.gen(function* () {
       const result = yield* shell.result(info)
       if (!result.capture) return yield* new Shell.NotFoundError({ id: info.id })
@@ -308,14 +300,18 @@ export const Plugin = {
     const guard = yield* CommandGuard.make()
     const config = yield* Config.Service
 
-    /** Whether the call's session model runs its shell commands in the foreground only. */
-    const backgroundDisabled = Effect.fn("ShellTool.backgroundDisabled")(function* (sessionID: SessionSchema.ID) {
+    const sessionModel = Effect.fnUntraced(function* (sessionID: SessionSchema.ID) {
       const session = yield* sessions.get(sessionID).pipe(Effect.option)
-      if (Option.isNone(session)) return false
-      // The request model's selection: the session's model, then the agent's.
-      const ref = session.value.model ?? (yield* agents.select(session.value.agent)).info?.model
+      if (Option.isNone(session)) return
+      return session.value.model ?? (yield* agents.select(session.value.agent)).info?.model
+    })
+
+    const backgroundDisabled = Effect.fn("ShellTool.backgroundDisabled")(function* (ref: Model.Ref | undefined) {
       if (!ref) return false
-      return modelBackgroundDisabled(yield* models.get(ref.providerID, ref.id), ref.variant)
+      const model = yield* models.get(ref.providerID, ref.id)
+      if (!model) return false
+      const effective = yield* ModelResolver.withVariant(model, ref.variant).pipe(Effect.orElseSucceed(() => model))
+      return isRecord(effective.settings?.shell) && effective.settings.shell.background === false
     })
 
     const prepare = Effect.fn("ShellTool.prepare")(function* (invocation: ShellCreateBefore, context: Tool.Context) {
@@ -394,7 +390,8 @@ export const Plugin = {
             Effect.gen(function* () {
               // The model's setting may forbid backgrounding; the call then runs in the foreground even if it asks
               // for it, and its timeout stops the command instead of moving it to the background.
-              const canBackground = !(yield* backgroundDisabled(context.sessionID))
+              const model = (yield* Tool.RequestModel) ?? (yield* sessionModel(context.sessionID))
+              const canBackground = !(yield* backgroundDisabled(model))
               const background = input.background === true && canBackground
               // A foreground timeout of 0 falls back to the default, so a call can't block until the command exits.
               const foreground = input.timeout || DEFAULT_TIMEOUT_MS
@@ -457,6 +454,7 @@ export const Plugin = {
                     const { job, settled } = yield* startJob(jobs, shell, {
                       sessionID: context.sessionID,
                       info,
+                      canBackground,
                       timeout: () => finalTimeout,
                     })
                     // Stopped while the command was starting: stop it now.
@@ -535,10 +533,7 @@ export const Plugin = {
       Effect.gen(function* () {
         const tool = event.tools[name]
         if (!tool) return
-        const foregroundOnly = modelBackgroundDisabled(
-          yield* models.get(event.model.providerID, event.model.id),
-          event.model.variant,
-        )
+        const foregroundOnly = yield* backgroundDisabled(event.model)
         tool.description = description(ShellSelect.name(yield* compatibleShell), !foregroundOnly)
         if (!foregroundOnly) return
         // The request's schema is a deep copy, so hiding the parameter cannot change the shared tool.

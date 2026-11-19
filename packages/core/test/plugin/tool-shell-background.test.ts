@@ -55,7 +55,13 @@ it.effect("hides background from a model that forbids it and leaves other models
           model("plain"),
           model("disabled", { settings: { shell: { background: false } } }),
           model("enabled", { settings: { shell: { background: true } } }),
-          model("variant", { variants: [{ id: Model.VariantID.make("quiet"), settings: { shell: { background: false } } }] }),
+          model("variant", {
+            variants: [{ id: Model.VariantID.make("quiet"), settings: { shell: { background: false } } }],
+          }),
+          model("variant-override", {
+            settings: { shell: { background: false } },
+            variants: [{ id: Model.VariantID.make("normal"), settings: { shell: { background: true } } }],
+          }),
           // Malformed settings are ignored.
           model("shell-string", { settings: { shell: "no" } }),
           model("background-string", { settings: { shell: { background: "no" } } }),
@@ -116,7 +122,13 @@ it.effect("hides background from a model that forbids it and leaves other models
     yield* hooks.trigger("session", "context", quiet)
     expect(quiet.tools.shell.input).not.toHaveProperty("properties.background")
 
-    for (const modelRef of [ref("test", "plain"), ref("test", "enabled"), ref("test", "variant"), ref("unknown", "model")]) {
+    for (const modelRef of [
+      ref("test", "plain"),
+      ref("test", "enabled"),
+      ref("test", "variant"),
+      ref("test", "variant-override", "normal"),
+      ref("unknown", "model"),
+    ]) {
       const kept = event(modelRef)
       yield* hooks.trigger("session", "context", kept)
       expect(kept.tools.shell.input).toHaveProperty("properties.background")
