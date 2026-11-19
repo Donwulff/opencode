@@ -221,8 +221,6 @@ export const dict = {
   "dialog.fork.empty": "Нема пораки од кои може да се префрлите",
   "dialog.directory.action.selectFile": "Изберете датотека",
   "dialog.directory.action.selectFolder": "Изберете папка",
-  "dialog.directory.root": "Корен",
-  "dialog.directory.parent": "Родител",
   "dialog.directory.readError": "Не може да се прочита оваа папка",
   "dialog.server.add.title": "Додај сервер",
   "dialog.server.add.url": "Адреса на серверот",
@@ -1237,11 +1235,6 @@ export const dict = {
   "sidebar.recent.unpin": "Откачи",
   "sidebar.recent.moveUp": "Помести нагоре",
   "sidebar.recent.moveDown": "Помести надолу",
-  "settings.experimental.row.newIcons.title": "Нови икони",
-  "settings.experimental.row.newIcons.description": "Прегледајте го ажурираниот сет на икони",
-  "settings.experimental.row.foldUserMessages.title": "Собирај долги пораки",
-  "settings.experimental.row.foldUserMessages.description":
-    "Собирај ги вашите пораки подолги од 12 реда зад копчето Прочитај повеќе",
   "settings.experimental.row.newTimeline.title": "Нова временска линија",
   "settings.experimental.row.newTimeline.description":
     "Редизајнирана временска линија на сесијата што групира што направил агентот, со еден статусен ред под одговорот",
@@ -1251,14 +1244,10 @@ export const dict = {
   "settings.experimental.row.sidebarOrganize.description":
     "Изберете како се прикажуваат сесиите во страничната лента. Важи само за страничните картички.",
   "settings.experimental.sidebarOrganize.recent": "Неодамнешни",
-  "settings.experimental.sidebarOrganize.projects": "Проекти",
   "settings.experimental.sidebarOrganize.list": "Една листа",
   "settings.experimental.sidebarOrganize.customize": "Прилагоди",
-  "sidebar.organize.projects": "Проекти",
   "sidebar.organize.openTab": "Отвори картичка",
   "sidebar.organize.showMore": "Прикажи повеќе",
-  "sidebar.organize.showLess": "Прикажи помалку",
-  "sidebar.organize.empty": "Сè уште нема сесии",
   "sidebar.view.sessions": "Сесии",
   "sidebar.view.options": "Опции за приказ",
   "sidebar.view.grouping": "Групирај по",
@@ -1373,6 +1362,9 @@ export const dict = {
     "Прикажи ги субагентите одделно. Групирај ја другата активност со скриени детали.",
   "settings.timeline.description.quiet":
     "Прикажи ги субагентите одделно и групирај ги уредувањата. Скриј ја другата активност.",
+  "settings.timeline.row.foldUserMessages.title": "Собирај долги пораки",
+  "settings.timeline.row.foldUserMessages.description":
+    "Собирај ги вашите пораки подолги од 12 реда зад копчето Прочитај повеќе",
   "settings.timeline.row.turnDiffs.title": "Променети датотеки",
   "settings.timeline.row.turnDiffs.description": "Наведи ги датотеките што ги променил секој одговор кога ќе заврши",
   "settings.timeline.category.commentary": "Коментари",

@@ -5,7 +5,7 @@ import type { FileDiff } from "@opencode/schema/file-diff"
 import type { ToolFailure } from "@opencode/ai/effect"
 import { Bom } from "@opencode/util/bom"
 import { Context, Effect, Layer } from "effect"
-import { Environment } from "./environment/index.js"
+import type { Environment } from "./environment/index.js"
 import { FileAccess } from "./file-access.js"
 import { FileMutation } from "./file-mutation.js"
 import { Formatter } from "./formatter.js"
@@ -39,7 +39,7 @@ export interface Interface {
     target: FileAccess.Target,
     context: FileAccess.Invocation,
     preview?: FileDiff.Info,
-  ) => Effect.Effect<void, Permission.Error | SessionErrors.NotFoundError>
+  ) => Effect.Effect<void, Permission.Error | SessionErrors.NotFoundError | ToolFailure>
   /** Write approved text, keeping an existing UTF-8 BOM, then format the file. */
   readonly commit: (
     target: FileAccess.Target,
@@ -66,7 +66,6 @@ const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const access = yield* FileAccess.Service
-    const environment = yield* Environment.Service
     const fileMutation = yield* FileMutation.Service
     const formatter = yield* Formatter.Service
     const permission = yield* Permission.Service
@@ -84,6 +83,8 @@ const layer = Layer.effect(
       context: FileAccess.Invocation,
       preview?: FileDiff.Info,
     ) {
+      // A Code Mode BunFile handle may come from a read and never pass through target().
+      yield* guard.path(context.sessionID, target.absolute)
       yield* permission.assert({
         action: "edit",
         resources: [target.resource],
@@ -98,13 +99,13 @@ const layer = Layer.effect(
       if (!(yield* formatter.file(target.absolute))) return written
       return {
         ...written,
-        formatted: yield* FileMutation.syncTextBom(environment.files, target.absolute, written.bom),
+        formatted: yield* FileMutation.syncTextBom(target.environment.files, target.absolute, written.bom),
       } satisfies Written
     })
 
     const write = Effect.fn("FileWrite.write")(function* (input: WriteInput, context: FileAccess.Invocation) {
       const resolved = yield* target(input.path, context)
-      const current = yield* FileMutation.readOptionalText(environment.files, resolved.absolute)
+      const current = yield* FileMutation.readOptionalText(resolved.environment.files, resolved.absolute)
       yield* authorize(
         resolved,
         context,
@@ -120,5 +121,5 @@ const layer = Layer.effect(
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [Environment.node, FileAccess.node, FileMutation.node, Formatter.node, Permission.node, SessionStore.node],
+  deps: [FileAccess.node, FileMutation.node, Formatter.node, Permission.node, SessionStore.node],
 })

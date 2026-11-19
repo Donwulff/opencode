@@ -222,8 +222,6 @@ export const dict = {
   "dialog.fork.empty": "Δεν υπάρχουν μηνύματα για διακλάδωση",
   "dialog.directory.action.selectFile": "Επιλογή αρχείου",
   "dialog.directory.action.selectFolder": "Επιλογή φακέλου",
-  "dialog.directory.root": "Ρίζα",
-  "dialog.directory.parent": "Γονικός",
   "dialog.directory.readError": "Δεν είναι δυνατή η ανάγνωση αυτού του φακέλου",
   "dialog.server.add.title": "Προσθήκη διακομιστή",
   "dialog.server.add.url": "Διεύθυνση διακομιστή",
@@ -1257,11 +1255,6 @@ export const dict = {
   "sidebar.recent.unpin": "Ξεκαρφίτσωμα",
   "sidebar.recent.moveUp": "Μετακίνηση πάνω",
   "sidebar.recent.moveDown": "Μετακίνηση κάτω",
-  "settings.experimental.row.newIcons.title": "Νέα εικονίδια",
-  "settings.experimental.row.newIcons.description": "Προεπισκόπηση του ανανεωμένου συνόλου εικονιδίων",
-  "settings.experimental.row.foldUserMessages.title": "Σύμπτυξη μεγάλων μηνυμάτων",
-  "settings.experimental.row.foldUserMessages.description":
-    "Σύμπτυξη των μηνυμάτων σας άνω των 12 γραμμών πίσω από ένα κουμπί Διαβάστε περισσότερα",
   "settings.experimental.row.newTimeline.title": "Νέο χρονολόγιο",
   "settings.experimental.row.newTimeline.description":
     "Ανασχεδιασμένο χρονολόγιο συνεδρίας που ομαδοποιεί όσα έκανε ο πράκτορας, με μία γραμμή κατάστασης κάτω από τον γύρο",
@@ -1272,14 +1265,10 @@ export const dict = {
   "settings.experimental.row.sidebarOrganize.description":
     "Επιλέξτε πώς εμφανίζονται οι συνεδρίες στην πλευρική γραμμή. Ισχύει μόνο για τις πλευρικές καρτέλες.",
   "settings.experimental.sidebarOrganize.recent": "Πρόσφατες",
-  "settings.experimental.sidebarOrganize.projects": "Έργα",
   "settings.experimental.sidebarOrganize.list": "Μία λίστα",
   "settings.experimental.sidebarOrganize.customize": "Προσαρμογή",
-  "sidebar.organize.projects": "Έργα",
   "sidebar.organize.openTab": "Ανοιχτή καρτέλα",
   "sidebar.organize.showMore": "Εμφάνιση περισσότερων",
-  "sidebar.organize.showLess": "Εμφάνιση λιγότερων",
-  "sidebar.organize.empty": "Δεν υπάρχουν συνεδρίες ακόμα",
   "sidebar.view.sessions": "Συνεδρίες",
   "sidebar.view.options": "Επιλογές προβολής",
   "sidebar.view.grouping": "Ομαδοποίηση κατά",
@@ -1394,6 +1383,9 @@ export const dict = {
     "Εμφάνιση υποπρακτόρων ξεχωριστά. Ομαδοποίηση της υπόλοιπης δραστηριότητας με συμπτυγμένες λεπτομέρειες.",
   "settings.timeline.description.quiet":
     "Εμφάνιση υποπρακτόρων ξεχωριστά και ομαδοποίηση επεξεργασιών. Απόκρυψη της υπόλοιπης δραστηριότητας.",
+  "settings.timeline.row.foldUserMessages.title": "Σύμπτυξη μεγάλων μηνυμάτων",
+  "settings.timeline.row.foldUserMessages.description":
+    "Σύμπτυξη των μηνυμάτων σας άνω των 12 γραμμών πίσω από ένα κουμπί Διαβάστε περισσότερα",
   "settings.timeline.row.turnDiffs.title": "Αλλαγμένα αρχεία",
   "settings.timeline.row.turnDiffs.description": "Λίστα των αρχείων που άλλαξε κάθε γύρος όταν ολοκληρωθεί",
   "settings.timeline.category.commentary": "Σχολιασμός",

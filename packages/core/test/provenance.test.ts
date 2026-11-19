@@ -63,6 +63,7 @@ testEffect(PluginTestLayer).live("writes bounded provenance and separates tool f
     const hooks = yield* PluginHooks.Service
     const event = {
       tool: "write",
+      codemode: false,
       sessionID: Session.ID.make("ses_provenance"),
       agent: Agent.ID.make("build"),
       messageID: SessionMessage.ID.create(),

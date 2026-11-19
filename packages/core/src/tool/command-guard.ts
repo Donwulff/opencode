@@ -20,10 +20,15 @@ export const make = Effect.fn("CommandGuard.make")(function* () {
       if (kind === "review" || kind === "learn")
         return yield* new ToolFailure({ message: `The /${kind} command cannot modify artifacts.` })
     }),
-    image: Effect.fn("CommandGuard.image")(function* (sessionID: Session.ID) {
+    media: Effect.fn("CommandGuard.media")(function* (sessionID: Session.ID, type: "images" | "videos") {
       const kind = yield* command(sessionID)
       if (kind === "review" || kind === "learn")
-        return yield* new ToolFailure({ message: `The /${kind} command cannot generate images.` })
+        return yield* new ToolFailure({ message: `The /${kind} command cannot generate ${type}.` })
+    }),
+    automation: Effect.fn("CommandGuard.automation")(function* (sessionID: Session.ID) {
+      const kind = yield* command(sessionID)
+      if (kind === "review" || kind === "learn")
+        return yield* new ToolFailure({ message: `The /${kind} command cannot modify automations.` })
     }),
     path: Effect.fn("CommandGuard.path")(function* (sessionID: Session.ID, filePath: string) {
       const kind = yield* command(sessionID)

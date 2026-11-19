@@ -11,7 +11,9 @@ import type { Shell as ShellSchema } from "@opencode/schema/shell"
 import { isRecord } from "@opencode/util/record"
 import { Clock, Deferred, Effect, Fiber, Option, Schema, Struct } from "effect"
 import { Agent } from "../../agent.js"
+import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
 import { Environment } from "../../environment/index.js"
+import { Flag } from "../../flag.js"
 import { Job } from "../../job.js"
 import { Model } from "../../model.js"
 import { ModelResolver } from "../../model-resolver.js"
@@ -30,6 +32,7 @@ import { toolFailure } from "../runtime.js"
 
 export const name = "shell"
 export const DEFAULT_TIMEOUT_MS = 2 * 60 * 1_000
+const CODE_MODE_TIMEOUT_MS = 10 * 60 * 1_000
 // How long a call the user interrupted waits for its stopped command to exit before settling with the output so far.
 const INTERRUPT_WAIT = "500 millis"
 
@@ -43,11 +46,7 @@ const OS =
       : process.platform === "linux"
         ? "Linux"
         : process.platform
-// The timeout wording the model sees, per the model's background capability.
-const TIMEOUT_DESCRIPTION = `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}). When it expires, a foreground command moves to the background and a background command is stopped.`
-const FOREGROUND_TIMEOUT_DESCRIPTION = `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}). When it expires, the command is stopped.`
-
-const description = (shell?: string, background = true) =>
+const description = (shell?: string, background = true, codeMode = false) =>
   [
     "Execute a shell command and return its output.",
     ...(shell ? [`Commands run on ${OS} using ${shell}.`] : []),
@@ -55,14 +54,26 @@ const description = (shell?: string, background = true) =>
     "Prefer dedicated tools over shell commands when possible.",
     "When output is large, the full result is saved to a file and a truncated preview is returned.",
     "Rely on automatic truncation unless filtering the output is more useful.",
-    background
-      ? "Commands still running after their timeout move to the background."
-      : `Commands execute in the foreground. The default timeout is ${DEFAULT_TIMEOUT_MS} ms. Specify a longer timeout for tests or builds expected to exceed this duration. When the timeout expires, the command is stopped rather than backgrounded.`,
-    ...(background
+    codeMode
+      ? "Commands still running after their timeout move to the background if the model allows backgrounding."
+      : background
+        ? "Commands still running after their timeout move to the background."
+        : `Commands execute in the foreground. The default timeout is ${DEFAULT_TIMEOUT_MS} ms. Specify a longer timeout for tests or builds expected to exceed this duration. When the timeout expires, the command is stopped rather than backgrounded.`,
+    ...(background && !codeMode
       ? ["Background commands return immediately, and you will be notified when they complete."]
       : []),
     "The current session ID is available in the OPENCODE_SESSION_ID environment variable.",
   ].join(" ")
+
+const timeoutDescription = (foreground: number, background: boolean) =>
+  `Optional timeout in milliseconds (default ${foreground}). ${
+    background
+      ? "When it expires, a foreground command moves to the background and a background command is stopped."
+      : "When it expires, the command is stopped."
+  }`
+
+const timeoutInput = (foreground: number) =>
+  Schema.optionalKey(NonNegativeInt).annotate({ description: timeoutDescription(foreground, true) })
 
 export const Input = Schema.Struct({
   command: Schema.String.annotate({ description: "Shell command string to execute" }),
@@ -70,21 +81,41 @@ export const Input = Schema.Struct({
     description:
       "Working directory to execute the command in. Defaults to the current working directory. When possible, avoid changing directories in the command and set the working directory here instead.",
   }),
-  timeout: Schema.optionalKey(NonNegativeInt).annotate({ description: TIMEOUT_DESCRIPTION }),
+  timeout: timeoutInput(DEFAULT_TIMEOUT_MS),
   background: Schema.optionalKey(Schema.Boolean).annotate({
     description:
       "Run the command in the background and return immediately (useful for dev servers and long-running builds). You do not need to use '&' at the end of the command when using this parameter. You will be notified when it completes. DO NOT poll for completion.",
   }),
 })
 
+const CodeModeInput = Schema.Struct({
+  ...Struct.omit(Input.fields, ["background"]),
+  timeout: Schema.optionalKey(NonNegativeInt).annotate({
+    description: `Optional timeout in milliseconds (default ${CODE_MODE_TIMEOUT_MS}). When it expires, the command moves to the background if the model allows backgrounding, or stops otherwise.`,
+  }),
+})
+
 const StructuredOutput = Schema.Struct({
-  output: Schema.String,
-  exitCode: Schema.NullOr(Schema.Number),
-  wallTimeSeconds: Schema.Number,
-  outputPath: Schema.optionalKey(Schema.String),
-  signal: Schema.optionalKey(Schema.String),
-  shellID: Schema.optionalKey(Schema.String),
-  pid: Schema.optionalKey(NonNegativeInt),
+  shellID: Schema.optionalKey(Schema.String).annotate({
+    description:
+      "Present only while the command is still running in the background. You will be notified when it exits. A result without shellID is final.",
+  }),
+  exitCode: Schema.NullOr(Schema.Number).annotate({
+    description:
+      "The exit code once the command has exited: 0 means success. null while it is still running, or when a signal ended it.",
+  }),
+  signal: Schema.optionalKey(Schema.String).annotate({ description: "The signal that ended the command, if any" }),
+  output: Schema.String.annotate({
+    description:
+      "Combined stdout and stderr as one string; there are no separate stdout or stderr fields. While shellID is present it is a notice instead, and the output streams to outputPath.",
+  }),
+  outputPath: Schema.optionalKey(Schema.String).annotate({
+    description: "File with the full output, when output was truncated or the command is running in the background",
+  }),
+  pid: Schema.optionalKey(NonNegativeInt).annotate({
+    description: "Process ID while the command is running in the background",
+  }),
+  wallTimeSeconds: Schema.Number.annotate({ description: "Seconds since the command started" }),
 })
 
 type Output = ReturnType<typeof ShellResult.output> & {
@@ -291,7 +322,6 @@ export const Plugin = {
     const agents = yield* Agent.Service
     const jobs = yield* Job.Service
     const models = yield* Model.Service
-    const environment = yield* Environment.Service
     const access = yield* FileAccess.Service
     const shell = yield* Shell.Service
     const shellSelect = yield* ShellSelect.Service
@@ -313,6 +343,9 @@ export const Plugin = {
       const effective = yield* ModelResolver.withVariant(model, ref.variant).pipe(Effect.orElseSucceed(() => model))
       return isRecord(effective.settings?.shell) && effective.settings.shell.background === false
     })
+    // Internal plugins are not re-run on config changes, so reload the tool transform instead.
+    const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.tool.reload())
+    const flags = yield* Flag.Service
 
     const prepare = Effect.fn("ShellTool.prepare")(function* (invocation: ShellCreateBefore, context: Tool.Context) {
       yield* guard.shell(context.sessionID, invocation.command)
@@ -335,7 +368,7 @@ export const Plugin = {
           ...Permission.invocation(context),
         })
       // Approval can outlive the directory, so validate immediately before spawning.
-      const workdir = yield* Environment.typeFollowing(environment.files, target.absolute).pipe(
+      const workdir = yield* Environment.typeFollowing(target.environment.files, target.absolute).pipe(
         Effect.catchTag("Environment.NotFound", () =>
           Effect.fail(new Error(`Working directory does not exist: ${target.absolute}`)),
         ),
@@ -382,7 +415,16 @@ export const Plugin = {
       .transform((editor) =>
         editor.add({
           name,
-          options: { codemode: false },
+          // With full_codemode, shell is allowed in Code Mode and pinned so the catalog always lists it.
+          options: flags.resolve(loaded.entries).full_codemode.enabled
+            ? {
+                codemode: {
+                  pinned: true,
+                  description: description(undefined, true, true),
+                  input: CodeModeInput,
+                },
+              }
+            : { codemode: false },
           description: description(),
           input: Input,
           output: StructuredOutput,
@@ -392,9 +434,9 @@ export const Plugin = {
               // for it, and its timeout stops the command instead of moving it to the background.
               const model = (yield* Tool.RequestModel) ?? (yield* sessionModel(context.sessionID))
               const canBackground = !(yield* backgroundDisabled(model))
-              const background = input.background === true && canBackground
+              const background = canBackground && "background" in input && input.background === true
               // A foreground timeout of 0 falls back to the default, so a call can't block until the command exits.
-              const foreground = input.timeout || DEFAULT_TIMEOUT_MS
+              const foreground = input.timeout || (context.codemode ? CODE_MODE_TIMEOUT_MS : DEFAULT_TIMEOUT_MS)
               const timeout = background ? (input.timeout ?? 0) : foreground
               let finalTimeout = timeout
               // Uninterruptible from spawning to blocking, so an interrupt cannot orphan a started command.
@@ -539,7 +581,7 @@ export const Plugin = {
         // The request's schema is a deep copy, so hiding the parameter cannot change the shared tool.
         const properties = isRecord(tool.input.properties) ? tool.input.properties : {}
         delete properties.background
-        if (isRecord(properties.timeout)) properties.timeout.description = FOREGROUND_TIMEOUT_DESCRIPTION
+        if (isRecord(properties.timeout)) properties.timeout.description = timeoutDescription(DEFAULT_TIMEOUT_MS, false)
       })
     yield* ctx.session.hook("context", hook)
     yield* ctx.session.hook("compaction", hook)

@@ -305,3 +305,12 @@ load. Keep search gates in the provider executors, before TinyFish initializatio
 `FileWrite.target` must enforce the command guard before external approval, with
 `SessionStore` explicitly in its service dependencies. Keep image URL policy in
 the new `readImage` path and discard the retired `readBytes` helper.
+
+The merge to `d33b578333` replaces Schedule with Automation and adds experimental
+Code Mode filesystem APIs. Retain Schedule's timing-test synchronization in the
+corresponding Automation tests. Code Mode's file APIs can reuse a read handle,
+so apply the command guard in `FileWrite.authorize` as well as before external
+approval in `FileWrite.target`. Model-facing automation mutations and video
+generation also use the command guard, and the video tool checks reference URLs
+before handing them to a provider. Shell's per-model foreground setting applies
+to both native and Code Mode shell calls, with their respective default timeouts.

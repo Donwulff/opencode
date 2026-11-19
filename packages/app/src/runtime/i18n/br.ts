@@ -438,8 +438,6 @@ export const dict = {
   "dialog.fork.empty": "Nenhuma mensagem para bifurcar",
   "dialog.directory.action.selectFile": "Selecionar arquivo",
   "dialog.directory.action.selectFolder": "Selecionar pasta",
-  "dialog.directory.root": "Raiz",
-  "dialog.directory.parent": "Pasta superior",
   "dialog.directory.readError": "Não foi possível ler esta pasta",
   "dialog.server.add.title": "Adicionar um servidor",
   "dialog.server.add.url": "Endereço do servidor",
@@ -1272,11 +1270,6 @@ export const dict = {
   "sidebar.recent.unpin": "Desafixar",
   "sidebar.recent.moveUp": "Mover para cima",
   "sidebar.recent.moveDown": "Mover para baixo",
-  "settings.experimental.row.newIcons.title": "Novos ícones",
-  "settings.experimental.row.newIcons.description": "Visualizar o conjunto de ícones atualizado",
-  "settings.experimental.row.foldUserMessages.title": "Recolher mensagens longas",
-  "settings.experimental.row.foldUserMessages.description":
-    "Recolher suas mensagens com mais de 12 linhas atrás de um botão Ler mais",
   "settings.experimental.row.newTimeline.title": "Nova linha do tempo",
   "settings.experimental.row.newTimeline.description":
     "Uma linha do tempo da sessão redesenhada que agrupa o que o agente fez, com uma única linha de status abaixo do turno",
@@ -1286,14 +1279,10 @@ export const dict = {
   "settings.experimental.row.sidebarOrganize.description":
     "Escolha como as sessões são listadas na barra lateral. Aplica-se apenas às abas laterais.",
   "settings.experimental.sidebarOrganize.recent": "Recentes",
-  "settings.experimental.sidebarOrganize.projects": "Projetos",
   "settings.experimental.sidebarOrganize.list": "Lista única",
   "settings.experimental.sidebarOrganize.customize": "Personalizar",
-  "sidebar.organize.projects": "Projetos",
   "sidebar.organize.openTab": "Abrir aba",
   "sidebar.organize.showMore": "Mostrar mais",
-  "sidebar.organize.showLess": "Mostrar menos",
-  "sidebar.organize.empty": "Nenhuma sessão ainda",
   "sidebar.view.sessions": "Sessões",
   "sidebar.view.options": "Opções de visualização",
   "sidebar.view.grouping": "Agrupar por",
@@ -1409,6 +1398,9 @@ export const dict = {
     "Mostrar subagentes separadamente. Agrupar outras atividades com detalhes recolhidos.",
   "settings.timeline.description.quiet":
     "Mostrar subagentes separadamente e agrupar edições. Ocultar outras atividades.",
+  "settings.timeline.row.foldUserMessages.title": "Recolher mensagens longas",
+  "settings.timeline.row.foldUserMessages.description":
+    "Recolher suas mensagens com mais de 12 linhas atrás de um botão Ler mais",
   "settings.timeline.row.turnDiffs.title": "Arquivos alterados",
   "settings.timeline.row.turnDiffs.description": "Listar os arquivos alterados em cada turno quando ele terminar",
   "settings.timeline.category.commentary": "Comentários",

@@ -3,8 +3,11 @@ import path from "path"
 import { describe, expect } from "bun:test"
 import { Effect, Exit, Layer, Tracer } from "effect"
 import { FileMutation } from "@opencode/core/file-mutation"
+import { CodeModeTool } from "@opencode/core/codemode/tool"
 import { Database } from "@opencode/core/database/database"
 import { FileWrite } from "@opencode/core/file-write"
+import { Config } from "@opencode/core/config"
+import { Flag } from "@opencode/core/flag"
 import { Formatter } from "@opencode/core/formatter"
 import { AppNodeBuilder } from "@opencode/core/effect/app-node-builder"
 import { LayerNode } from "@opencode/util/effect/layer-node"
@@ -31,7 +34,7 @@ import { toolIdentity, executeTool, registerToolPlugin, toolDefinitions } from "
 const writeToolNode = makeLocationNode({
   name: "test/write-tool-plugin",
   layer: Layer.effectDiscard(registerToolPlugin(WriteTool.Plugin)),
-  deps: [Tool.node, FileWrite.node],
+  deps: [Tool.node, FileWrite.node, Config.node, Flag.node],
 })
 
 const sessionID = Session.ID.make("ses_write_tool_test")
@@ -88,7 +91,16 @@ const withTool = <A, E, R>(
   }).pipe(
     Effect.provide(
       AppNodeBuilder.build(
-        LayerNode.group([Database.node, Tool.node, FileAccess.node, FileMutation.node, writeToolNode]),
+        LayerNode.group([
+          Database.node,
+          Tool.node,
+          FileAccess.node,
+          FileMutation.node,
+          FileWrite.node,
+          Location.node,
+          Permission.node,
+          writeToolNode,
+        ]),
         [
           Environment.node.replace(
             transformEnvironmentFiles((files) => ({
@@ -103,6 +115,7 @@ const withTool = <A, E, R>(
           Location.node.replace(activeLocation),
           Formatter.node.replace(fixture.formatter),
           Permission.node.replace(fixture.permission),
+          Config.node.replace(Config.testLayer()),
         ],
       ),
     ),
@@ -115,7 +128,7 @@ const call = (input: typeof WriteTool.Input.Type, id = "call-write") => ({
   call: { type: "tool-call" as const, id, name: "write", input },
 })
 
-const it = testEffect(Layer.empty)
+const it = testEffect(Layer.succeed(Flag.Overrides, undefined))
 
 describe("WriteTool", () => {
   for (const command of ["review", "learn"]) {
@@ -157,6 +170,26 @@ describe("WriteTool", () => {
             expect(fixture.assertions).toEqual([])
             expect(fixture.writes).toEqual([])
             expect(yield* Effect.promise(() => fs.readdir(tmp.path))).not.toContain("blocked.txt")
+            const existing = path.join(tmp.path, "existing.txt")
+            yield* Effect.promise(() => fs.writeFile(existing, "before"))
+            const permission = yield* Permission.Service
+            const services = yield* CodeModeTool.services
+            const codeMode = CodeModeTool.create(
+              { tools: new Map() },
+              () => Effect.die("The program calls no tools."),
+              permission,
+              services,
+            )
+            const result = yield* codeMode.execute(
+              {
+                code: `const file = Bun.file("existing.txt")
+                  return (await Promise.allSettled([file.write("after"), file.delete()])).map(result => result.status)`,
+              },
+              { sessionID, ...toolIdentity, id: Tool.CallID.make("call_write_guard"), progress: () => Effect.void },
+            )
+            expect(JSON.parse(result.output.output)).toEqual(["rejected", "rejected"])
+            expect(fixture.assertions.map((input) => input.action)).toEqual(["read"])
+            expect(yield* Effect.promise(() => fs.readFile(existing, "utf8"))).toBe("before")
             expect((yield* executeTool(registry, call({ path: "AGENTS.md", content: "instructions" }))).status).toBe(
               command === "learn" ? "completed" : "error",
             )

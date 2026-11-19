@@ -47,11 +47,11 @@ Paths below are relative to `packages/core/src` unless stated otherwise.
 
 The command metadata survives prompt admission and inbox delivery through Schema,
 `session/prompt.ts`, and `session/projector.ts`. The shared `file-write.ts` service
-enforces the guard for edit/write; shell, patch, subagent, image-generation, and
-artifact tools call it directly. Image generation
-and artifact mutations are blocked during both `/review` and `/learn`, before
-downloads, paid generation, or artifact-provider operations. Artifact reads remain
-available.
+enforces the guard for edit/write and Code Mode file mutations, including writes
+and deletes through a BunFile previously opened for reading. Shell, patch,
+subagent, media generation, artifact and automation tools call the guard directly.
+Both commands block image and video generation, artifact mutations, and automation
+mutations. Artifact and automation reads remain available.
 Patch resolution checks both source and move destination. `/learn` permits file
 edits only when the target basename is
 `AGENTS.md` and forbids subagents. Ordinary user input clears the command context.
@@ -159,6 +159,9 @@ The image tool's reference-download gate is separate from image inference. Its
 automatic model selection prefers the session provider, then falls back to another
 available image provider; an explicit model or configured image default can also
 select another provider. Input images and the image prompt go to that provider.
+The video tool checks reference URLs against the Location policy before submitting
+them to the video provider. Video inference transport and the provider's handling
+of those URLs are outside the tool's check.
 
 The Claude Agent provider starts the installed `claude` executable through the
 Claude Agent SDK. Its native tools are disabled; offered tools are dispatched

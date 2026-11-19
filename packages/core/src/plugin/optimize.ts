@@ -30,25 +30,6 @@ export const AnthropicPlugin = make(
   "append",
 )
 
-// Both OpenAIToolsPlugin and AnthropicToolsPlugin are disabled intentionally until we can figure out a good ux for displaying
-// heavy grep/glob usage done via shell or other mechanisms
-
-export const OpenAIToolsPlugin = make("opencode.optimize.openai.tools", (model, tools) => {
-  const ids = [model.id, model.modelID, model.family].join(" ").toLowerCase()
-  if (!ids.includes("gpt")) return undefined
-  delete tools.grep
-  delete tools.glob
-  return undefined
-})
-
-export const AnthropicToolsPlugin = make("opencode.optimize.anthropic.tools", (model, tools) => {
-  const ids = [model.id, model.modelID, model.family].join(" ").toLowerCase()
-  if (!ids.includes("claude")) return undefined
-  delete tools.grep
-  delete tools.glob
-  return undefined
-})
-
 export const KimiPlugin = make("opencode.prompt.kimi", (model) =>
   model.id.toLowerCase().includes("kimi") ? PROMPT_KIMI : undefined,
 )
@@ -78,7 +59,7 @@ export const resolveModel = (ctx: Context, event: SessionHooks["context"]) =>
 
 function make(
   id: string,
-  optimize: (model: Model.Info, tools: SessionHooks["context"]["tools"]) => string | undefined,
+  optimize: (model: Model.Info) => string | undefined,
   mode: "override" | "append" = "override",
 ) {
   return define({
@@ -88,11 +69,10 @@ function make(
       const hook = (event: SessionHooks["context"]) =>
         Effect.gen(function* () {
           const model = yield* resolveModel(ctx, event)
-          // Curate tools before rendering their guidance, including for agents with a custom system prompt.
           const override = config
             ? Config.latest(yield* config.entries(), "providers")?.[event.model.providerID]?.system_prompt
             : undefined
-          const template = override ?? optimize(model, event.tools)
+          const template = override ?? optimize(model)
           if (!template) return
           if ((yield* ctx.agent.get({ agentID: event.agent })).data.system) return
           const system = event.system[0]
