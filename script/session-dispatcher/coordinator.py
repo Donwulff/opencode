@@ -62,26 +62,32 @@ class CodexRPC:
         self.child.stdin.write((json.dumps(message) + '\n').encode())
         self.child.stdin.flush()
 
-    def call(self, method, params):
+    def receive(self, deadline):
+        while True:
+            if b'\n' in self.buffer:
+                line, _, self.buffer = self.buffer.partition(b'\n')
+                return json.loads(line)
+            if not self.selector.select(max(0, deadline - time.monotonic())):
+                raise DispatchError('Codex request timed out; outcome may be unknown')
+            chunk = os.read(self.child.stdout.fileno(), 65536)
+            require(chunk, 'Codex transport closed; outcome may be unknown')
+            self.buffer.extend(chunk)
+            require(len(self.buffer) <= 4 * 1024 * 1024, 'Codex frame exceeds read limit')
+
+    def call(self, method, params, *, on_notification=None):
         self.sequence += 1
         identifier = self.sequence
         self.send({'id': identifier, 'method': method, 'params': params})
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
-            while b'\n' in self.buffer:
-                line, _, self.buffer = self.buffer.partition(b'\n')
-                response = json.loads(line)
-                if 'method' not in response and response.get('id') == identifier:
-                    self.last_error = response.get('error')
-                    require('result' in response, 'Codex rejected ' + method + '; outcome requires reconciliation')
-                    return response['result']
-                # Never answer approval/input requests or execute server-supplied commands.
-            if not self.selector.select(max(0, deadline - time.monotonic())):
-                break
-            chunk = os.read(self.child.stdout.fileno(), 65536)
-            require(chunk, 'Codex transport closed; outcome may be unknown')
-            self.buffer.extend(chunk)
-            require(len(self.buffer) <= 4 * 1024 * 1024, 'Codex frame exceeds read limit')
+            response = self.receive(deadline)
+            if 'method' not in response and response.get('id') == identifier:
+                self.last_error = response.get('error')
+                require('result' in response, 'Codex rejected ' + method + '; outcome requires reconciliation')
+                return response['result']
+            if on_notification and 'method' in response and 'id' not in response:
+                on_notification(response)
+            # Never answer approval/input requests or execute server-supplied commands.
         raise DispatchError('Codex request timed out; outcome may be unknown')
 
     def close(self):

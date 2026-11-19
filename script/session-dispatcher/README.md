@@ -412,6 +412,26 @@ preapproved tasks as capacity permits. `ready` means a reviewable integration
 unit, **not** source correctness, passing runtime tests or an integrated branch.
 Use `review.py` for a separate bounded structured review; merging remains manual.
 
+### Temporary technical reviews
+
+Keep the existing coordinator thread for wake receipts and integration. To
+review a finite list of explicitly queued deliveries independently, run:
+
+```sh
+python3 review_watch.py --config /private/coordinator/config.json \
+  --evidence /private/review-scope.txt --seconds 3600 TASK_ID_ONE TASK_ID_TWO
+```
+
+The watcher waits for verified task and learning receipts and uses the existing
+local Codex app-server socket. Each task gets a fresh, read-only, tool-disabled
+temporary context on `gpt-6.2-sol` and a single structured turn. It does not
+resume the coordinator, write Git, admit OpenCode tasks, or merge. Only list
+tasks whose frozen diffs are approved for this reviewer. The evidence file
+supplies scope and checked evidence. Results and uncertain attempts use the
+existing SQLite review receipts. The watcher leaves prior attempts in place.
+The `review.py` and integration-gate CLI also default to `gpt-6.2-sol` and
+keep their existing operator-shell rules.
+
 ### Bounded coordinator wake-ups
 
 `coordinator.py` is an optional notifier for the same ledger, not another

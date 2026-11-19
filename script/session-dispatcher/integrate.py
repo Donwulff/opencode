@@ -283,7 +283,7 @@ def main():
     enroll = commands.add_parser('enroll')
     enroll.add_argument('task_id')
     enroll.add_argument('--target', required=True)
-    enroll.add_argument('--model', required=True)
+    enroll.add_argument('--model', default=review.DEFAULT_MODEL)
     enroll.add_argument('--evidence', required=True)
     enroll.add_argument('--risk', choices=sorted(review.RISKS), action='append', default=[])
     for name in ('status','advance','review','approve','defer','watch'):
