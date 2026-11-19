@@ -3,15 +3,16 @@
 
 import argparse
 from functools import partial
+from hashlib import sha256
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import sys
 import time
 
 from coordinator import CodexRPC, load_config
-from dispatch import Dispatcher, DispatchError, require
-from review import DEFAULT_MODEL, SCHEMA, plan, run
+from dispatch import Dispatcher, DispatchError, git, require
+from review import DEFAULT_MODEL, MAX_INPUT_BYTES, SCHEMA, plan, run
 
 
 def temporary_review(config, review, directory, timeout, *, client_factory=CodexRPC):
@@ -77,27 +78,61 @@ def temporary_review(config, review, directory, timeout, *, client_factory=Codex
             client.close()
 
 
+def review_context(repository, assignment, pins):
+    require(isinstance(pins, list), 'Review context must list pinned Git files')
+    files = []
+    size = 0
+    for pin in pins:
+        require(isinstance(pin, dict) and set(pin) == {'commit', 'path', 'sha256'},
+                'Each context file requires commit, path and sha256')
+        commit, path, checksum = pin['commit'], pin['path'], pin['sha256']
+        require(isinstance(commit, str) and re.fullmatch(r'(?:[0-9a-f]{40}|[0-9a-f]{64})', commit)
+                and isinstance(checksum, str) and re.fullmatch(r'[0-9a-f]{64}', checksum),
+                'Context files require full commit and SHA-256 pins')
+        require(isinstance(path, str) and path and not PurePosixPath(path).is_absolute()
+                and '..' not in PurePosixPath(path).parts and '\0' not in path,
+                'Invalid Git context path')
+        require(git(repository, 'rev-parse', '--verify', commit + '^{commit}').decode().strip() == commit,
+                'Context pin must identify the commit itself')
+        obj = f'{commit}:{path}'
+        require(git(repository, 'cat-file', '-t', obj).strip() == b'blob', 'Review context must name a file')
+        size += int(git(repository, 'cat-file', '-s', obj))
+        require(size <= MAX_INPUT_BYTES, 'Pinned review context exceeds the review input bound')
+        content = git(repository, 'cat-file', 'blob', obj)
+        require(sha256(content).hexdigest() == checksum, f'Review context hash mismatch for {path}')
+        files.append({**pin, 'text': content.decode()})
+    return {'original_assignment': assignment['text'],
+            'declared_dependencies': assignment.get('dependencies', []), 'files': files}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', required=True, help='Existing private coordinator configuration')
     parser.add_argument('--evidence', required=True, help='Operator-reviewed scope and evidence summary')
+    parser.add_argument('--context-file', help='JSON map from task ID to reviewed Git file pins')
     parser.add_argument('--seconds', type=int, default=3600)
     parser.add_argument('task_ids', nargs='+', help='Exactly the delivery IDs authorized for review')
     args = parser.parse_args()
     config = load_config(args.config)
     deadline = time.monotonic() + args.seconds
     evidence = Path(args.evidence).read_text()
+    pins = json.loads(Path(args.context_file).read_text()) if args.context_file else {}
     pending = dict.fromkeys(args.task_ids)
     backend = partial(temporary_review, config)
     failed = False
     dispatcher = Dispatcher(config['database'])
     try:
         require(1 <= args.seconds <= 86400 and evidence.strip(), 'Invalid watch bound or empty evidence')
+        require(isinstance(pins, dict) and pins.keys() <= pending.keys(),
+                'Review context may include only explicitly selected task IDs')
+        assignments = {}
         for task_id in pending:
             require(re.fullmatch(r'[A-Za-z0-9_-]{1,80}', task_id), 'Invalid task ID')
             row = dispatcher.db.execute('SELECT spec FROM queued WHERE task_id=?', (task_id,)).fetchone()
-            require(row and json.loads(row['spec']).get('purpose', 'delivery') == 'delivery',
+            assignment = json.loads(row['spec']) if row else None
+            require(assignment and assignment.get('purpose', 'delivery') == 'delivery',
                     'An explicitly queued delivery is required')
+            assignments[task_id] = assignment
         while pending and time.monotonic() < deadline:
             for task_id in list(pending):
                 existing = dispatcher.db.execute("SELECT 1 FROM sqlite_master WHERE name='review'").fetchone()
@@ -118,7 +153,8 @@ def main():
                     require(row['queue'] == 'ready' and row['stage'] == 'ready', 'Delivery did not reach reviewable state')
                     remaining = int(deadline - time.monotonic())
                     require(remaining > 0, 'Review window expired before admission')
-                    frozen = plan(dispatcher, task_id, DEFAULT_MODEL, [], evidence)
+                    context = review_context(config['repository'], assignments[task_id], pins.get(task_id, []))
+                    frozen = plan(dispatcher, task_id, DEFAULT_MODEL, [], evidence, context=context)
                     result = run(dispatcher, task_id, frozen, timeout=min(600, remaining), app_server=backend)
                     print(json.dumps({'task': task_id, 'state': result['state']}), flush=True)
                     failed |= result['state'] not in ('reviewed', 'reviewed_with_risks')

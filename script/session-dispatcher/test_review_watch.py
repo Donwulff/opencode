@@ -1,8 +1,11 @@
+from hashlib import sha256
+import subprocess
+from tempfile import TemporaryDirectory
 import unittest
 from pathlib import Path
 
 from dispatch import DispatchError
-from review_watch import temporary_review
+from review_watch import review_context, temporary_review
 
 
 class FakeRPC:
@@ -68,3 +71,27 @@ class TemporaryReviewTests(unittest.TestCase):
         fake = FakeRPC([item('temporary', 'agentMessage', phase='final_answer', text='final'), terminal('failed')])
         with self.assertRaisesRegex(DispatchError, 'confirmed'):
             self.review(fake)
+
+
+class ReviewContextTests(unittest.TestCase):
+    def test_assignment_and_pinned_predecessor_use_frozen_bytes(self):
+        assignment = {'text': 'Preserve the existing contract.', 'dependencies': [{'task': 'prior'}]}
+        with TemporaryDirectory() as directory:
+            repo = Path(directory)
+            subprocess.run(['git', 'init', '-q', str(repo)], check=True)
+            file = repo / 'contract.md'
+            data = b'Previously accepted contract.\n'
+            file.write_bytes(data)
+            subprocess.run(['git', '-C', str(repo), 'add', 'contract.md'], check=True)
+            subprocess.run(['git', '-C', str(repo), '-c', 'user.name=Fixture',
+                            '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgSign=false',
+                            'commit', '-qm', 'Prior contract'], check=True)
+            commit = subprocess.check_output(['git', '-C', str(repo), 'rev-parse', 'HEAD'], text=True).strip()
+            pin = {'commit': commit, 'path': 'contract.md', 'sha256': sha256(data).hexdigest()}
+            file.write_text('Uncommitted draft')
+            context = review_context(repo, assignment, [pin])
+            self.assertEqual(context, {'original_assignment': assignment['text'],
+                                      'declared_dependencies': assignment['dependencies'],
+                                      'files': [{**pin, 'text': data.decode()}]})
+            with self.assertRaisesRegex(DispatchError, 'hash mismatch'):
+                review_context(repo, assignment, [{**pin, 'sha256': '0' * 64}])

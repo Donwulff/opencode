@@ -426,9 +426,17 @@ The watcher waits for verified task and learning receipts and uses the existing
 local Codex app-server socket. Each task gets a fresh, read-only, tool-disabled
 temporary context on `gpt-6.2-sol` and a single structured turn. It does not
 resume the coordinator, write Git, admit OpenCode tasks, or merge. Only list
-tasks whose frozen diffs are approved for this reviewer. The evidence file
-supplies scope and checked evidence. Results and uncertain attempts use the
-existing SQLite review receipts. The watcher leaves prior attempts in place.
+tasks whose frozen diffs are approved for this reviewer. Each packet contains
+the original assignment and declared dependencies. The evidence file supplies
+scope and checked evidence. Use `--context-file` to add relevant prior changes,
+source files or retained test results as UTF-8 Git blobs. The file maps task IDs
+to lists of objects with a full `commit`, repository-relative `path` and
+`sha256` of the exact bytes. Choose the referenced files explicitly and include
+the applicable prior contract for follow-up changes. The watcher checks the
+pins before submitting any review for that task.
+
+Results and uncertain attempts use the existing SQLite review receipts. The
+watcher leaves prior attempts in place.
 The `review.py` and integration-gate CLI also default to `gpt-6.2-sol` and
 keep their existing operator-shell rules.
 

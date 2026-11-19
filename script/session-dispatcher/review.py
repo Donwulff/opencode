@@ -14,6 +14,7 @@ from lifecycle import Lifecycle
 
 
 DEFAULT_MODEL = "gpt-6.2-sol"
+MAX_INPUT_BYTES = 1024 * 1024
 
 RISKS = {
     "source_ambiguity": "xhigh", "memory_safety": "xhigh", "conflicting_evidence": "xhigh",
@@ -26,7 +27,7 @@ SCHEMA = {"type": "object", "additionalProperties": False, "required": ["assessm
                          "escalation": {"type": "array", "items": {"type": "string", "enum": list(RISKS)}}}}
 
 
-def plan(dispatcher, task_id, model, risks, evidence, *, integration=None):
+def plan(dispatcher, task_id, model, risks, evidence, *, integration=None, context=None):
     require(model and all(risk in RISKS for risk in risks), "Explicit model and known risk flags required")
     unit = Lifecycle(dispatcher).result(task_id)
     # Read acknowledgements are revalidated, but never change the review's immutable input.
@@ -46,9 +47,12 @@ def plan(dispatcher, task_id, model, risks, evidence, *, integration=None):
         risks = sorted(set(risks) | {"unexpected_diff"})
     effort = "xhigh" if any(RISKS[risk] == "xhigh" for risk in risks) else "high" if risks else "medium"
     template = Path(__file__).with_name("templates").joinpath("review.txt").read_text()
-    assignment = encoded({"unit": unit, "risk_flags": risks, "source_paths": source_paths,
-                          "operator_evidence": evidence, "patches": patches, "integration": integration})
-    require(len(assignment.encode()) <= 1024 * 1024, "Review input too large; narrow the review rather than truncate evidence")
+    packet = {"unit": unit, "risk_flags": risks, "source_paths": source_paths,
+              "operator_evidence": evidence, "patches": patches, "integration": integration}
+    if context is not None:
+        packet["context"] = context
+    assignment = encoded(packet)
+    require(len(assignment.encode()) <= MAX_INPUT_BYTES, "Review input too large; narrow the review rather than truncate evidence")
     prompt = Template(template).substitute(assignment=assignment)
     return {"model": model, "effort": effort, "risk_flags": risks, "template_hash": digest(template),
             "unit_hash": digest(unit), "evidence_hash": digest(evidence), "integration_hash": digest(integration),
