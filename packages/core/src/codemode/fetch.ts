@@ -48,8 +48,9 @@ const fetch = (input: string | URL, init: Init = {}) =>
         ),
       )
     // Redirects are followed here so each new URL meets the same deny rules as the webfetch tool's hops.
-    const check = (next: string) =>
-      permission.assertNotDenied({
+    const check = Effect.fnUntraced(function* (next: string) {
+      yield* Security.assertUrl(execution.config, next, "codemode.fetch")
+      yield* permission.assertNotDenied({
         action: "webfetch",
         resources: [next],
         metadata: { ...display([next, init]), redirectedFrom: url },
@@ -57,6 +58,7 @@ const fetch = (input: string | URL, init: Init = {}) =>
         agent: execution.agent,
         source,
       })
+    })
     const signal = AbortSignal.any([execution.signal, AbortSignal.timeout(TIMEOUT_MS)])
     let target = url
     let request = init

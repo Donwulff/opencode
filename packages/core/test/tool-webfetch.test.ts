@@ -11,6 +11,7 @@ import { Permission } from "@opencode/core/permission"
 import { Session } from "@opencode/core/session"
 import { Tool } from "@opencode/core/tool"
 import { WebFetchTool } from "@opencode/core/tool/plugin/webfetch"
+import { Document } from "@opencode/schema/config"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { testEffect } from "./lib/effect"
 import { permissionLayer } from "./lib/permission"
@@ -532,6 +533,35 @@ describe("WebFetchTool registration", () => {
         error: { message: "Permission denied: webfetch" },
       })
       expect(checks.map((check) => check.resources)).toEqual([[target]])
+      expect(requests.map((request) => request.url)).toEqual([url])
+    }),
+  )
+
+  testEffect(
+    toolLayer([
+      LayerNodePlatform.httpClient.replace(http),
+      Config.node.replace(
+        Config.testLayer([
+          new Document({
+            type: "document",
+            info: { security: { mode: "strict", external_domains: ["example.com"], audit_log_enabled: false } },
+          }),
+        ]),
+      ),
+    ]),
+  ).effect("checks the Location URL policy before following a redirect", () =>
+    Effect.gen(function* () {
+      reset()
+      const registry = yield* Tool.Service
+      const url = "https://example.com/start"
+      respond = () =>
+        Effect.succeed(new Response("", { status: 302, headers: { location: "https://blocked.example.invalid/" } }))
+
+      expect(yield* executeTool(registry, call({ url, format: "text" }))).toMatchObject({
+        status: "error",
+        error: { message: expect.stringContaining("Fetch blocked (URL not in allowlist (mode: strict))") },
+      })
+      expect(checks).toEqual([])
       expect(requests.map((request) => request.url)).toEqual([url])
     }),
   )

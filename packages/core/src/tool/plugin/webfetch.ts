@@ -161,12 +161,16 @@ export const Plugin = {
 
               const { body, contentType } = yield* Effect.gen(function* () {
                 const check = (next: string) =>
-                  permission.assertNotDenied({
-                    action: name,
-                    resources: [next],
-                    metadata: { ...input, url: next },
-                    ...Permission.invocation(context),
-                  })
+                  Security.assertUrl(config, next, "webfetch").pipe(
+                    Effect.andThen(
+                      permission.assertNotDenied({
+                        action: name,
+                        resources: [next],
+                        metadata: { ...input, url: next },
+                        ...Permission.invocation(context),
+                      }),
+                    ),
+                  )
                 const response = yield* execute(http, check, url, input.format).pipe(
                   Effect.catchIf(isCloudflareChallenge, () => execute(http, check, url, input.format, "opencode")),
                 )
