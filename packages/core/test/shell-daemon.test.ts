@@ -16,6 +16,7 @@ import { Global } from "@opencode/util/global"
 import { FSUtil } from "@opencode/util/fs-util"
 import { LayerNode } from "@opencode/util/effect/layer-node"
 import { AppProcess } from "@opencode/util/process"
+import { withEnv } from "./fixture/env"
 import { hostEnvironmentLayer } from "./fixture/environment"
 import { tempGlobalLayer } from "./fixture/global"
 import { location, tempLocationLayer } from "./fixture/location"
@@ -30,6 +31,30 @@ const windows = process.platform === "win32"
 const lines = (count: number) => Array.from({ length: count }, (_, index) => `line ${index + 1}\n`).join("")
 
 describe("Shell on the process daemon", () => {
+  const wrapper = process.platform === "linux" ? (Bun.which("bwrap") ?? Bun.which("unshare")) : null
+  if (wrapper) {
+    it.live("passes the network sandbox program and arguments to the daemon", () =>
+      withEnv({ OPENCODE_SPAWN_SANDBOX: "1" }, () =>
+        Effect.gen(function* () {
+          const env = yield* daemonShells()
+          yield* env.withShell(env.directory, (shell) =>
+            Effect.gen(function* () {
+              yield* shell.create({ shell: "/bin/sh", command: "echo hi" })
+              expect(env.created()).toMatchObject([
+                {
+                  program: wrapper,
+                  args: expect.arrayContaining([path.basename(wrapper) === "bwrap" ? "--unshare-net" : "--net"]),
+                  metadata: { shell: "/bin/sh", command: "echo hi" },
+                },
+              ])
+              expect(env.spawned()).toBe(0)
+            }),
+          )
+        }),
+      ),
+    )
+  }
+
   it.live("runs a command with the server's environment, an absolute cwd and its metadata", () =>
     Effect.gen(function* () {
       const env = yield* daemonShells()
