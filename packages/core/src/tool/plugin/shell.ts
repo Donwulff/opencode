@@ -1,6 +1,3 @@
-import { Config } from "../../config.js"
-import { auditLogger } from "../../util/audit.js"
-import { CommandGuard } from "../command-guard.js"
 export * as ShellTool from "./shell.js"
 
 import { ToolFailure } from "@opencode/ai/effect"
@@ -9,8 +6,10 @@ import type { SessionHooks } from "@opencode/plugin/effect/session"
 import type { ShellCreateBefore } from "@opencode/plugin/effect/shell"
 import type { Shell as ShellSchema } from "@opencode/schema/shell"
 import { isRecord } from "@opencode/util/record"
-import { Clock, Deferred, Effect, Fiber, Option, Schema, Struct } from "effect"
+import { Clock, Deferred, Effect, Fiber, Option, Schema, Stream, Struct } from "effect"
 import { Agent } from "../../agent.js"
+import { Bus } from "../../bus.js"
+import { Config } from "../../config.js"
 import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
 import { Environment } from "../../environment/index.js"
 import { Flag } from "../../flag.js"
@@ -28,6 +27,8 @@ import { ShellPermissions } from "../../shell/permissions.js"
 import { ShellSelect } from "../../shell/select.js"
 import { ShellResult } from "../../shell/result.js"
 import { Tool } from "../../tool.js"
+import { auditLogger } from "../../util/audit.js"
+import { CommandGuard } from "../command-guard.js"
 import { toolFailure } from "../runtime.js"
 
 export const name = "shell"
@@ -214,6 +215,19 @@ const notify = Effect.fnUntraced(function* (
   if (info.notificationID) yield* jobs.completeBackground(info.notificationID)
 })
 
+// Waits for the command to end and reads what it printed.
+const finished = Effect.fnUntraced(function* (shell: Shell.Interface, info: ShellSchema.Info) {
+  const result = yield* shell.result(info)
+  if (!result.capture) return yield* new Shell.NotFoundError({ id: info.id })
+  const completed = result.info.time.completed ?? (yield* Clock.currentTimeMillis)
+  return {
+    ...ShellResult.output(result),
+    status: "completed" as const,
+    wallTimeSeconds: wallTimeSeconds(result.info.time, completed),
+    ...(result.capture.truncated ? { outputPath: result.info.file } : {}),
+  }
+})
+
 // The job that waits on a command for its call (or its session, once backgrounded).
 const startJob = Effect.fnUntraced(function* (
   jobs: Job.Interface,
@@ -244,17 +258,7 @@ const startJob = Effect.fnUntraced(function* (
     ...(input.notificationID ? { notificationID: input.notificationID } : {}),
     background: input.background,
     canBackground: input.canBackground,
-    run: Effect.gen(function* () {
-      const result = yield* shell.result(info)
-      if (!result.capture) return yield* new Shell.NotFoundError({ id: info.id })
-      const completed = result.info.time.completed ?? (yield* Clock.currentTimeMillis)
-      return {
-        ...ShellResult.output(result),
-        status: "completed" as const,
-        wallTimeSeconds: wallTimeSeconds(result.info.time, completed),
-        ...(result.capture.truncated ? { outputPath: result.info.file } : {}),
-      }
-    }).pipe(
+    run: finished(shell, info).pipe(
       Effect.tap((output) => Deferred.succeed(settled, output)),
       Effect.map((output) => resultMessages(output, input.timeout?.()).join("\n\n")),
       // Interrupting the job (its registry closing) stops the command too, unless the server is handing its daemon
@@ -327,7 +331,7 @@ export const Plugin = {
     const jobs = yield* Job.Service
     const models = yield* Model.Service
     const access = yield* FileAccess.Service
-    const workingDirectory = yield* Environment.workingDirectory
+    const currentWorkingDirectory = yield* Environment.workingDirectoryResolver
     const shell = yield* Shell.Service
     const shellSelect = yield* ShellSelect.Service
     const compatibleShell = shellSelect.resolve({ priority: "compat" })
@@ -346,7 +350,8 @@ export const Plugin = {
       const model = yield* models.get(ref.providerID, ref.id)
       if (!model) return false
       const effective = yield* ModelResolver.withVariant(model, ref.variant).pipe(Effect.orElseSucceed(() => model))
-      return isRecord(effective.settings?.shell) && effective.settings.shell.background === false
+      const shell = effective.settings?.shell
+      return isRecord(shell) && shell.background === false
     })
     // Internal plugins are not re-run on config changes, so reload the tool transform instead.
     const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.tool.reload())
@@ -358,6 +363,7 @@ export const Plugin = {
       requested: { readonly cwd: string; readonly target: FileAccess.Target },
     ) {
       yield* guard.shell(context.sessionID, invocation.command)
+      const workingDirectory = yield* currentWorkingDirectory
       // Resolved before the hooks ran; only a hook that moved the working directory needs it resolved again. It always
       // resolves from a base, so a moved path is a plain path on the machine the command was asked for.
       const target =
@@ -377,10 +383,10 @@ export const Plugin = {
         command: invocation.command,
         program: invocation.shell,
         target,
-        rules: Effect.gen(function* () {
+        policy: Effect.gen(function* () {
           const session = yield* sessions.get(context.sessionID)
           const agent = yield* agents.resolve(context.agent)
-          return Permission.merge(agent?.permissions ?? [], session.permissions ?? [])
+          return Permission.Policy.fromRules(agent?.permissions ?? [], session.permissions ?? [])
         }),
       })
       yield* Effect.forEach(
@@ -438,8 +444,17 @@ export const Plugin = {
       })
     })
 
+    // The descriptions name the selected shell, so they're rebuilt whenever it changes.
+    const bus = yield* Bus.Service
+    yield* bus.subscribe(ShellSelect.Event.Updated).pipe(
+      Stream.runForEach(() => ctx.tool.reload()),
+      Effect.forkScoped({ startImmediately: true }),
+    )
+    const runSync = Effect.runSyncWith(yield* Effect.context())
     yield* ctx.tool
-      .transform((editor) =>
+      .transform((editor) => {
+        // Named in both the direct and the Code Mode description, so a model knows the shell either way.
+        const shellName = ShellSelect.name(runSync(compatibleShell))
         editor.add({
           name,
           // With full_codemode, shell is allowed in Code Mode and pinned so the catalog always lists it.
@@ -447,12 +462,12 @@ export const Plugin = {
             ? {
                 codemode: {
                   pinned: true,
-                  description: description(undefined, true, true),
+                  description: description(shellName, true, true),
                   input: CodeModeInput,
                 },
               }
             : { codemode: false },
-          description: description(),
+          description: description(shellName),
           input: Input,
           output: StructuredOutput,
           execute: (input, context) =>
@@ -461,6 +476,7 @@ export const Plugin = {
               // for it, and its timeout stops the command instead of moving it to the background.
               const model = (yield* Tool.RequestModel) ?? (yield* sessionModel(context.sessionID))
               const canBackground = !(yield* backgroundDisabled(model))
+              // Code Mode input has no background parameter.
               const background = canBackground && "background" in input && input.background === true
               // A foreground timeout of 0 falls back to the default, so a call can't block until the command exits.
               const foreground = input.timeout || (context.codemode ? CODE_MODE_TIMEOUT_MS : DEFAULT_TIMEOUT_MS)
@@ -469,8 +485,8 @@ export const Plugin = {
               // Uninterruptible from spawning to blocking, so an interrupt cannot orphan a started command.
               return yield* Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
-                  // Listens for the user's stop for the whole call, starting before the command does, so a stop
-                  // always reaches this tool through `cancel` instead of interrupting it, even while the command starts.
+                  // Listens for the user's stop for the whole call, starting before the command does, so a stop always
+                  // reaches this tool through `cancel` instead of interrupting it, even while the command starts.
                   const stopped = yield* Deferred.make<void>()
                   const listener = context.cancel
                     ? yield* context.cancel.pipe(
@@ -485,11 +501,23 @@ export const Plugin = {
                       Effect.fail(new ToolFailure({ message: "Command interrupted by the user before it started." })),
                     ),
                   )
+                  // An automation's code has nobody to hear how a backgrounded command ends. There a timeout stops the
+                  // command and fails the call, and the command gets no job the session could move to the background or
+                  // be told about.
+                  const timeoutBackgrounds = !background && canBackground && context.automation === undefined
                   return yield* Effect.gen(function* () {
+                    const workingDirectory = yield* currentWorkingDirectory
                     // The same default `Shell.create` gives the hooks, so `prepare` can tell whether one moved it.
                     const cwd = input.workdir ?? workingDirectory.absolute
                     const target = yield* restore(
-                      Effect.raceFirst(access.resolve({ path: cwd, kind: "directory" }), stoppedBeforeStart),
+                      Effect.raceFirst(
+                        access.resolve({
+                          path: cwd,
+                          base: input.workdir === undefined ? workingDirectory : undefined,
+                          kind: "directory",
+                        }),
+                        stoppedBeforeStart,
+                      ),
                     )
                     const info = yield* shell.create(
                       {
@@ -501,7 +529,7 @@ export const Plugin = {
                         timeout,
                         shell: yield* compatibleShell,
                         metadata: { sessionID: context.sessionID },
-                        waited: !background,
+                        waited: timeoutBackgrounds,
                         toolCall: {
                           sessionID: context.sessionID,
                           assistantMessageID: context.messageID,
@@ -519,10 +547,19 @@ export const Plugin = {
                             Effect.raceFirst(prepare(invocation, context, { cwd, target }), stoppedBeforeStart),
                           )
                           // A foreground timeout moves the command to the background instead of stopping it.
-                          if (!background && canBackground) invocation.timeout = 0
+                          if (timeoutBackgrounds) invocation.timeout = 0
                         }),
                     )
                     yield* context.progress({ shellID: info.id })
+
+                    if (context.automation) {
+                      const output = yield* restore(finished(shell, info)).pipe(
+                        Effect.onInterrupt(() => shell.stop(info.id, "killed").pipe(Effect.ignore)),
+                      )
+                      if (output.timeout)
+                        return yield* new ToolFailure({ message: resultMessages(output, finalTimeout).join("\n\n") })
+                      return output
+                    }
 
                     const { job, settled } = yield* startJob(jobs, shell, {
                       sessionID: context.sessionID,
@@ -598,8 +635,8 @@ export const Plugin = {
                 Effect.mapError(toolFailure(`Unable to execute command: ${input.command}`)),
               )
             }),
-        }),
-      )
+        })
+      })
       .pipe(Effect.orDie)
 
     const hook = (event: SessionHooks["context"]) =>

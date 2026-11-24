@@ -14,6 +14,7 @@ import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import { Permission } from "@opencode/core/permission"
 import { AgentPlugin } from "@opencode/core/plugin/agent"
+import { PlanPlugin } from "@opencode/core/plugin/plan"
 import { AbsolutePath } from "@opencode/core/schema"
 import { ConfigNormalize } from "@opencode/core/config/normalize"
 import { ConfigAgentV1 } from "@opencode/core/v1/config/agent"
@@ -183,6 +184,41 @@ permissions: [{ action: edit, resource: "*", effect: deny }]`,
       expect(Permission.evaluate("external_directory", "C:\\Users\\test\\cache\\files\\*", permissions).effect).toBe(
         "deny",
       )
+    }),
+  )
+
+  it.effect("uses a configured plan reminder as the plan agent's selected instructions", () =>
+    Effect.gen(function* () {
+      const agents = yield* Agent.Service
+      const global = yield* Global.Service
+      const directory = path.join(global.home, ".opencode", "plan")
+      yield* PlanPlugin.Plugin.effect(
+        host({
+          agent: agentHost(agents),
+          tool: {
+            transform: () => Effect.die("unused tool.transform"),
+            reload: () => Effect.die("unused tool.reload"),
+            list: () => Effect.die("unused tool.list"),
+            hook: () => Effect.succeed({ dispose: Effect.void }),
+          },
+        }),
+      )
+      const entries = [
+        new Document({
+          type: "document",
+          info: decode({ agents: { plan: { plan_reminder: "Use {plan} only" } } }),
+        }),
+      ]
+      yield* ConfigAgentPlugin.Plugin.effect(host({ agent: agentHost(agents) })).pipe(
+        Effect.provide(Config.testLayer(entries)),
+      )
+      const plan = yield* agents.get(Agent.ID.make("plan"))
+      if (!plan) throw new Error("expected plan agent")
+      expect(plan.plan_reminder).toBe("Use {plan} only")
+      if (!plan.instructions || typeof plan.instructions === "string")
+        throw new Error("expected selected and unselected instructions")
+      expect(plan.instructions.selected).toBe(`Use ${directory} only`)
+      expect(plan.instructions.unselected).toContain("NO LONGER in Plan mode")
     }),
   )
 

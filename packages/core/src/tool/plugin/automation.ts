@@ -73,9 +73,7 @@ export const Plugin = {
       Effect.gen(function* () {
         yield* guard.automation(sessionID)
         const session = yield* caller(sessionID)
-        const info = yield* automations.get(id)
-        if (info.projectID !== session.projectID) return yield* new Automation.NotFoundError({ automationID: id })
-        return info
+        return yield* automations.get(id, { projectID: session.projectID })
       })
     const failure = (error: { readonly message: string }) => new ToolFailure({ message: error.message, error })
 

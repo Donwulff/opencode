@@ -23,6 +23,7 @@ import { Location } from "../location.js"
 import { Permission } from "../permission.js"
 import type { Config } from "../config.js"
 import { PositiveInt } from "../schema.js"
+import { CodeModeApi } from "./api.js"
 import { CodeModeBun } from "./bun.js"
 import { CodeModeCatalog } from "./catalog.js"
 import { CodeModeDiffs } from "./diffs.js"
@@ -86,6 +87,9 @@ export const services = Effect.map(
   Context.pick(Location.Service, FileAccess.Service, FileMutation.Service, FileWrite.Service),
 )
 
+/** What `opencode://` fetch acts through: this process's OpenCode API and the session's Location. */
+export type Api = CodeModeApi.Service | Location.Service
+
 export type Inventory = {
   readonly tools: ReadonlyMap<string, Info>
   readonly namespaces?: ReadonlyMap<string, ToolNamespace>
@@ -98,11 +102,12 @@ const runExtensions = (full: boolean) => (full ? extensions : fetchOnly)
 const executionServices = (
   context: ToolContext,
   permission: Permission.Interface,
-  services: Context.Context<Services> | undefined,
-  config: Config.Interface | undefined,
+  services?: Context.Context<Services>,
+  api?: Context.Context<Api>,
+  config?: Config.Interface,
 ) =>
   Effect.map(Effect.abortSignal, (signal) =>
-    (services ?? Context.empty()).pipe(
+    Context.merge(services ?? Context.empty(), api ?? Context.empty()).pipe(
       Context.add(CodeModeExecution.Service, { ...context, config, signal }),
       Context.add(Permission.Service, permission),
     ),
@@ -112,8 +117,11 @@ const executionServices = (
 // the runtime also has Bun's file APIs.
 const description = (full: boolean) =>
   [
-    "Run JavaScript in a confined Code Mode runtime to script tool calls and HTTP requests and compose their results.",
+    full
+      ? "Run JavaScript in a confined Code Mode runtime to work with files and data, script tool calls and HTTP requests, and compose their results."
+      : "Run JavaScript in a confined Code Mode runtime to script tool calls and HTTP requests and compose their results.",
     "Write plain JavaScript and send it exactly as written: no code fence, and no JSON or other wrapper around it.",
+    "Each call is a fresh program; nothing carries over from earlier calls.",
     full
       ? "`fetch` is available for HTTP requests, and Bun's file APIs (`Bun.file`, `Bun.write`, `Bun.Glob`) for files, in place of Node's `fs`. Imports and timers are unavailable: there is no `setTimeout` or sleep. All other external access goes through `tools`."
       : "`fetch` is available for HTTP requests. Imports, direct filesystem access, and timers are unavailable: there is no `setTimeout` or sleep. All other external access goes through `tools`.",
@@ -146,13 +154,15 @@ export const create = (
   permission: Permission.Interface,
   /** With `full_codemode`, the session's services, which turn on the experimental `path` and `Bun` globals. */
   services?: Context.Context<Services>,
+  /** What `opencode://` fetch sends requests through. Without it, `opencode://` fails as unavailable. */
+  api?: Context.Context<Api>,
   config?: Config.Interface,
 ) => {
   return {
     name: "execute",
     description: description(services !== undefined),
     input: services ? FullInput : CodeMode.Input,
-    freeform: { type: "text" },
+    freeform: { type: "text", field: "code" },
     output: ExecuteOutput,
     execute: ({ code }, context) =>
       Effect.gen(function* () {
@@ -228,7 +238,7 @@ export const create = (
               lock.withPermit(Ref.get(trailing).pipe(Effect.flatMap((pending) => (pending ? publish : Effect.void)))),
             ),
             // Readers outlive the fetch call that returned them, up to the end of this program's scope.
-            Effect.provide(yield* executionServices(context, permission, services, config)),
+            Effect.provide(yield* executionServices(context, permission, services, api, config)),
             Effect.provideService(CodeModeDiffs.Service, diffs),
           )
         const toolCalls = yield* Ref.get(calls)
@@ -376,6 +386,7 @@ export const check = (
     readonly context: ToolContext
     readonly permission: Permission.Interface
     readonly services?: Context.Context<Services>
+    readonly api?: Context.Context<Api>
     readonly config?: Config.Interface
   },
   executeTool: (name: string, tool: Info, input: unknown) => Effect.Effect<Result, Error>,
@@ -393,8 +404,9 @@ export const check = (
         hooks: {},
       }),
       (program) =>
-        Effect.flatMap(executionServices(input.context, input.permission, input.services, input.config), (services) =>
-          Effect.provide(program, services),
+        Effect.flatMap(
+          executionServices(input.context, input.permission, input.services, input.api, input.config),
+          (services) => Effect.provide(program, services),
         ),
       Effect.scoped,
     )

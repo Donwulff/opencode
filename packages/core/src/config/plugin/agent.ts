@@ -93,7 +93,18 @@ export const Plugin = define({
               Object.assign(agent.request.body, item.request.body ?? {})
             }
             if (item.system !== undefined) agent.system = item.system
-            if (item.plan_reminder !== undefined) agent.plan_reminder = item.plan_reminder
+            if (item.plan_reminder !== undefined) {
+              agent.plan_reminder = item.plan_reminder
+              // The plan plugin's instructions are the default reminder. A configured reminder replaces the text
+              // sent while Plan is selected; leaving still uses the plugin's unselected text.
+              if (agentID === Agent.ID.make("plan") && agent.instructions && typeof agent.instructions !== "string") {
+                const directory = path.join(global.home, ".opencode", "plan")
+                agent.instructions = {
+                  selected: item.plan_reminder.replaceAll("{{plan}}", directory).replaceAll("{plan}", directory),
+                  unselected: agent.instructions.unselected,
+                }
+              }
+            }
             if (item.description !== undefined) agent.description = item.description
             if (item.mode !== undefined) agent.mode = item.mode
             if (item.hidden !== undefined) agent.hidden = item.hidden
@@ -180,7 +191,12 @@ const decode = Effect.fnUntraced(function* (
     })
     return
   }
-  const agent = decoded.success
+  // Native rules may still name the media tools by their old experimental names.
+  const permissions = decoded.success.permissions?.map((rule) => ({
+    ...rule,
+    action: ConfigMigrateV1.renamedTool(rule.action),
+  }))
+  const agent = permissions ? ConfigAgent.Info.make({ ...decoded.success, permissions }) : decoded.success
   const info = Info.make({
     agents: { [name]: file.primary ? ConfigAgent.Info.make({ ...agent, mode: "primary" }) : agent },
   })
