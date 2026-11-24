@@ -29,6 +29,7 @@ import { Token } from "../util/token.js"
 import type { SessionContext } from "./context.js"
 import { SessionEvent } from "./event.js"
 import { SessionHistory } from "./history.js"
+import { ModelInference } from "../model-inference.js"
 import type { SessionMessage } from "./message.js"
 import { SessionModelRequest } from "./model-request.js"
 import { SessionRunnerModel } from "./runner/model.js"
@@ -352,7 +353,7 @@ export const layer = Layer.effect(
       const settings = state.get()
       if (!settings.background || !settings.auto) return
       const context = yield* load
-      if (context.model.compaction?.type === "native") return
+      if (context.model.foregroundOnly || context.model.compaction?.type === "native") return
       // An unknown window has an infinite ceiling, which this never reaches. Past the ceiling it still starts: at the
       // end of a turn, the next prompt then swaps it in instead of waiting for a summary.
       const ceiling = calculateCeiling(context.model.limit, settings.buffer)
@@ -386,6 +387,7 @@ export const layer = Layer.effect(
       if (age > cacheLifetime(context.model.cache?.ttl) - CACHE_MARGIN) return
 
       const model = yield* selectModel(context, settings.buffer, false)
+      if (model.context.model.foregroundOnly) return
       const usage: SessionUsage.Recorded[] = []
       const fiber = yield* summarize({ reason: "auto", context: model.context }, model.cap, settings.keep, {
         messages: context.messages.slice(0, anchorIndex),
@@ -577,14 +579,17 @@ export const layer = Layer.effect(
           return Effect.gen(function* () {
             const history = yield* SessionHistory.load(db, context.session.id, "local").pipe(Effect.orDie)
             const retained = recentUserMessages(history, context.model, keep)
-            const response = yield* llm.compact(request, { ...prepared.options, mechanism: "trigger" })
+            const response = yield* llm
+              .compact(request, { ...prepared.options, mechanism: "trigger" })
+              .pipe(ModelInference.serialize(context.model, request))
             return yield* toResult([...retained, Message.assistant(response.checkpoint)], response.usage)
           })
         }
         if (ai.canCompact(request)) {
-          return llm
-            .compact(request, { mechanism: "endpoint", http: prepared.options.http })
-            .pipe(Effect.flatMap((response) => toResult(response.replacement, response.usage)))
+          return llm.compact(request, { mechanism: "endpoint", http: prepared.options.http }).pipe(
+            ModelInference.serialize(context.model, request),
+            Effect.flatMap((response) => toResult(response.replacement, response.usage)),
+          )
         }
         return unsupported(`Native compaction is not supported for ${request.model.provider}/${request.model.route.id}`)
       }
@@ -830,6 +835,7 @@ export const layer = Layer.effect(
             }
           },
         ),
+        ModelInference.serialize(context.model, request),
       )
     }
 

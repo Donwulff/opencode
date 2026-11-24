@@ -13,6 +13,7 @@ import { llmClient } from "../effect/app-node-platform.js"
 import { SessionContext } from "./context.js"
 import { SessionEvent } from "./event.js"
 import { SessionHistory } from "./history.js"
+import { ModelInference } from "../model-inference.js"
 import type { SessionRunnerModel } from "./runner/model.js"
 import { SessionSchema } from "./schema.js"
 import { SessionUsage } from "./usage.js"
@@ -25,7 +26,7 @@ const titleChanged = Symbol("Session title changed")
 
 export interface Interface {
   /** Generates an initial title or regenerates one from bounded conversation history. */
-  readonly generate: (sessionID: SessionSchema.ID) => Effect.Effect<void>
+  readonly generate: (sessionID: SessionSchema.ID, options?: { readonly background: boolean }) => Effect.Effect<void>
 }
 
 export class Service extends Context.Service<Service, Interface>()("@opencode/SessionTitle") {}
@@ -95,6 +96,7 @@ export const layer = Layer.effect(
           }
           return Effect.void
         }),
+        ModelInference.serialize(input.model, prepared.request),
         Effect.catchTag("AI.Error", () =>
           Effect.sync(() => {
             failed = true
@@ -113,7 +115,10 @@ export const layer = Layer.effect(
         .find((line) => line.length > 0)
     })
 
-    const generate = Effect.fn("SessionTitle.generate")(function* (sessionID: SessionSchema.ID) {
+    const generate = Effect.fn("SessionTitle.generate")(function* (
+      sessionID: SessionSchema.ID,
+      options?: { readonly background: boolean },
+    ) {
       const session = yield* store.get(sessionID)
       if (!session) return
       const firstUser = yield* SessionHistory.firstUserMessage(db, session.id)
@@ -143,6 +148,7 @@ export const layer = Layer.effect(
         : messagePrompt(firstUser.text)
       const selection = yield* context.selectTitle(session)
       if (!selection) return
+      if (options?.background && (selection.primary?.foregroundOnly || selection.selected.foregroundOnly)) return
       const title =
         (yield* attempt({ session, agent: selection.agent, text, model: selection.selected })) ??
         (selection.primary && !isDeepStrictEqual(selection.selected.ref, selection.primary.ref)

@@ -110,7 +110,7 @@ it.effect("hides background from a model that forbids it and leaves other models
           },
         },
       })
-      expect(disabled.tools.shell.description).toContain("Commands execute in the foreground.")
+      expect(disabled.tools.shell.description).toContain("Shell calls run one at a time in the foreground.")
       expect(disabled.tools.shell.description).toContain("The default timeout is 120000 ms.")
       expect(disabled.tools.shell.description).toContain("Specify a longer timeout for tests or builds expected to exceed this duration.")
       expect(disabled.tools.shell.description).toContain("the command is stopped rather than backgrounded.")

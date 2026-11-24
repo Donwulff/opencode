@@ -221,6 +221,20 @@ resolverIt.effect("resolves dynamic models with their catalog metadata", () =>
   }),
 )
 
+resolverIt.effect("carries the selected variant's foreground-only policy to inference", () =>
+  Effect.gen(function* () {
+    const resolver = yield* ModelResolver.Service
+    const foreground = VariantID.make("foreground")
+    const catalog = {
+      ...selected,
+      variants: [{ id: foreground, settings: { shell: { background: false } } }],
+    }
+
+    expect((yield* resolver.resolveModel(catalog, foreground)).foregroundOnly).toBe(true)
+    expect((yield* resolver.resolveModel(catalog)).foregroundOnly).toBeUndefined()
+  }),
+)
+
 testEffect(Layer.empty).effect("attributes each stateless completion without creating a stored session", () =>
   Effect.gen(function* () {
     const sessions: string[] = []

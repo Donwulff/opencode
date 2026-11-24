@@ -14,6 +14,7 @@ import {
   VideoModelSchema,
 } from "@opencode/ai/effect"
 import { Auth, mergeTransport } from "@opencode/ai/route"
+import { isRecord } from "@opencode/util/record"
 import { Context, Effect, Layer, Schema, Struct } from "effect"
 import { AISDK } from "./aisdk.js"
 import { Credential } from "./credential.js"
@@ -133,6 +134,10 @@ export interface Resolved {
   readonly compaction?: Provider.Compaction
   /** Prompt-cache settings from the provider, model and variant; omitted keeps the provider defaults. */
   readonly cache?: Provider.Cache
+  /** The selected model or variant opts out of overlapping shell and inference work. */
+  readonly foregroundOnly?: boolean
+  /** The configured backend for AI SDK routes, which use a synthetic route URL. */
+  readonly inferenceBaseURL?: string
   /** Provider transport policy; omitted means HTTP. */
   readonly transport?: Provider.Transport
   /** Milliseconds without streamed data before a WebSocket exchange fails; `false` disables the limit. */
@@ -472,6 +477,9 @@ export const resolveModel = (
   dependencies?: Dependencies,
 ) => withVariant(model, variant).pipe(Effect.flatMap((model) => fromCatalogModel(model, credential, dependencies)))
 
+export const shellForegroundOnly = (settings: Info["settings"]) =>
+  isRecord(settings?.shell) && settings.shell.background === false
+
 export const hasPackage = (model: Info) => Boolean(model.package)
 
 /** Resolves catalog selections into runtime models for the current Location. */
@@ -522,6 +530,15 @@ export const layer = Layer.effect(
         limit: selected.limit,
         compaction: runtimeInfo.settings?.compaction,
         cache: runtimeInfo.settings?.cache,
+        ...(shellForegroundOnly(runtimeInfo.settings)
+          ? {
+              foregroundOnly: true,
+              inferenceBaseURL:
+                runtime.route.protocol === "ai-sdk" && typeof runtimeInfo.settings?.baseURL === "string"
+                  ? runtimeInfo.settings.baseURL
+                  : undefined,
+            }
+          : {}),
         // The WebSocket transport can't present a client certificate, so `tls` keeps the model on HTTP.
         transport: Provider.tls(provider?.settings ?? {}) ? "http" : provider?.settings?.transport,
         chunkTimeout: Provider.timeout(provider?.settings?.chunkTimeout),

@@ -11,6 +11,7 @@ import { Agent } from "../../agent.js"
 import { Bus } from "../../bus.js"
 import { Config } from "../../config.js"
 import { ConfigEntryObserver } from "../../config/plugin/entry-observer.js"
+import { KeyedMutex } from "../../effect/keyed-mutex.js"
 import { Environment } from "../../environment/index.js"
 import { Flag } from "../../flag.js"
 import { Job } from "../../job.js"
@@ -34,6 +35,7 @@ import { toolFailure } from "../runtime.js"
 export const name = "shell"
 export const DEFAULT_TIMEOUT_MS = 2 * 60 * 1_000
 const CODE_MODE_TIMEOUT_MS = 10 * 60 * 1_000
+const foregroundCalls = KeyedMutex.makeUnsafe<SessionSchema.ID>()
 // How long a call the user interrupted waits for its stopped command to exit before settling with the output so far.
 const INTERRUPT_WAIT = "500 millis"
 
@@ -59,7 +61,7 @@ const description = (shell?: string, background = true, codeMode = false) =>
       ? "Commands still running after their timeout move to the background if the model allows backgrounding."
       : background
         ? "Commands still running after their timeout move to the background."
-        : `Commands execute in the foreground. The default timeout is ${DEFAULT_TIMEOUT_MS} ms. Specify a longer timeout for tests or builds expected to exceed this duration. When the timeout expires, the command is stopped rather than backgrounded.`,
+        : `Shell calls run one at a time in the foreground. The default timeout is ${DEFAULT_TIMEOUT_MS} ms. Specify a longer timeout for tests or builds expected to exceed this duration. When the timeout expires, the command is stopped rather than backgrounded.`,
     ...(background && !codeMode
       ? ["Background commands return immediately, and you will be notified when they complete."]
       : []),
@@ -350,8 +352,7 @@ export const Plugin = {
       const model = yield* models.get(ref.providerID, ref.id)
       if (!model) return false
       const effective = yield* ModelResolver.withVariant(model, ref.variant).pipe(Effect.orElseSucceed(() => model))
-      const shell = effective.settings?.shell
-      return isRecord(shell) && shell.background === false
+      return ModelResolver.shellForegroundOnly(effective.settings)
     })
     // Internal plugins are not re-run on config changes, so reload the tool transform instead.
     const loaded = yield* ConfigEntryObserver.observe(config, ctx.event, ctx.tool.reload())
@@ -474,8 +475,9 @@ export const Plugin = {
             Effect.gen(function* () {
               // The model's setting may forbid backgrounding; the call then runs in the foreground even if it asks
               // for it, and its timeout stops the command instead of moving it to the background.
-              const model = (yield* Tool.RequestModel) ?? (yield* sessionModel(context.sessionID))
-              const canBackground = !(yield* backgroundDisabled(model))
+              const request = yield* Tool.RequestModel
+              const model = request?.ref ?? (yield* sessionModel(context.sessionID))
+              const canBackground = !(request?.foregroundOnly ?? (yield* backgroundDisabled(model)))
               // Code Mode input has no background parameter.
               const background = canBackground && "background" in input && input.background === true
               // A foreground timeout of 0 falls back to the default, so a call can't block until the command exits.
@@ -483,7 +485,7 @@ export const Plugin = {
               const timeout = background ? (input.timeout ?? 0) : foreground
               let finalTimeout = timeout
               // Uninterruptible from spawning to blocking, so an interrupt cannot orphan a started command.
-              return yield* Effect.uninterruptibleMask((restore) =>
+              const execute = Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
                   // Listens for the user's stop for the whole call, starting before the command does, so a stop always
                   // reaches this tool through `cancel` instead of interrupting it, even while the command starts.
@@ -634,6 +636,7 @@ export const Plugin = {
                 Effect.map((output) => toolResult(output, finalTimeout)),
                 Effect.mapError(toolFailure(`Unable to execute command: ${input.command}`)),
               )
+              return yield* canBackground ? execute : foregroundCalls.withLock(context.sessionID)(execute)
             }),
         })
       })
@@ -643,7 +646,7 @@ export const Plugin = {
       Effect.gen(function* () {
         const tool = event.tools[name]
         if (!tool) return
-        const foregroundOnly = yield* backgroundDisabled(event.model)
+        const foregroundOnly = (yield* Tool.RequestModel)?.foregroundOnly ?? (yield* backgroundDisabled(event.model))
         tool.description = description(ShellSelect.name(yield* compatibleShell), !foregroundOnly)
         if (!foregroundOnly) return
         // The request's schema is a deep copy, so hiding the parameter cannot change the shared tool.

@@ -18,6 +18,7 @@ import { ToolOutput } from "../../tool-output.js"
 import { QuestionTool } from "../../tool/plugin/question.js"
 import { StepFailedError } from "../error.js"
 import { SessionEvent } from "../event.js"
+import { ModelInference } from "../../model-inference.js"
 import { SessionMessage } from "../message.js"
 import { SessionModelRequest } from "../model-request.js"
 import { SessionSchema } from "../schema.js"
@@ -159,6 +160,8 @@ export const make = Effect.gen(function* () {
           })
         }),
       ),
+      // Release before joining tools. A tool can itself wait for a request to this backend.
+      ModelInference.serialize(input.model, input.prepared.request),
       Effect.ensuring(publisher.flush()),
     )
 

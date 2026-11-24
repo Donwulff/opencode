@@ -1294,6 +1294,26 @@ it.effect("background summaries stay off when disabled", () =>
   }),
 )
 
+it.effect("skips speculative summaries but compacts foreground-only models when needed", () =>
+  Effect.gen(function* () {
+    requests = []
+    const compaction = yield* SessionCompaction.Service
+    const session = yield* insertSession(Session.ID.make("ses_precompute_foreground"))
+    const history = precomputeHistory()
+    const context = (messages: readonly SessionMessage.Info[]) => ({
+      ...loaded(session, messages),
+      model: { ...resolved, foregroundOnly: true },
+    })
+
+    yield* compaction.precompute(Effect.succeed(context(history.near)))
+    expect(yield* compaction.compact({ reason: "auto", context: context(history.due) })).toEqual({
+      status: "completed",
+    })
+    expect(requests).toHaveLength(1)
+    expect(JSON.stringify(requests[0].messages)).toContain("Third answer")
+  }),
+)
+
 it.effect("automatic compaction swaps in the background summary without another model call", () =>
   Effect.gen(function* () {
     requests = []

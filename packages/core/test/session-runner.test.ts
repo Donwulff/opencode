@@ -241,6 +241,7 @@ const makeRunnerState = (compaction?: SessionRunnerModel.Resolved["compaction"])
     }).pipe(Effect.andThen(Deferred.succeed(barrier.release, undefined)), Effect.asVoid)
   return {
     currentModel: model,
+    foregroundOnly: false,
     compaction,
     modelResolveHook: resolvesModel,
     systemBaseline: "Initial context",
@@ -366,13 +367,16 @@ const layer = Layer.unwrap(
         state.modelResolveHook.pipe(
           Effect.map(() => {
             const selected = session.model?.id === "replacement" ? replacementModel : state.currentModel
-            return SessionRunnerModel.resolved(selected, {
-              capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
-              cost: [],
-              limit: modelLimits.get(String(selected.id)) ?? defaultModelLimit,
-              variant: session.model?.variant,
-              compaction: state.compaction,
-            })
+            return {
+              ...SessionRunnerModel.resolved(selected, {
+                capabilities: { tools: true, input: ["text", "image"], output: ["text"] },
+                cost: [],
+                limit: modelLimits.get(String(selected.id)) ?? defaultModelLimit,
+                variant: session.model?.variant,
+                compaction: state.compaction,
+              }),
+              foregroundOnly: state.foregroundOnly,
+            }
           }),
         ),
     })
@@ -1050,6 +1054,20 @@ describe("SessionRunnerLLM", () => {
 
     expect((yield* s.session.get(sessionID)).title).toBe("Generated title")
     yield* Fiber.interrupt(fiber)
+  })
+
+  scenario("skips automatic title inference for a foreground-only model", function* (s) {
+    s.foregroundOnly = true
+    yield* prepareTitleGeneration
+    const fallback = (yield* s.session.get(sessionID)).title
+    yield* s.llm.push(TestLLM.text("Assistant response", "text-response"))
+
+    yield* s.runPrompt("Keep the default title")
+    yield* TestClock.adjust(1)
+
+    expect(s.requests).toHaveLength(1)
+    expect(s.requests[0]?.system.map((part) => part.text)).not.toContain("Generate a title.")
+    expect((yield* s.session.get(sessionID)).title).toBe(fallback)
   })
 
   scenario("does not automatically replace an existing session title", function* (s) {
@@ -5613,25 +5631,51 @@ describe("SessionRunnerLLM", () => {
     expect(s.requests[0]?.promptCacheKey).toBe(parentID)
   })
 
-  scenario("runs different sessions concurrently", function* (s) {
-    yield* insertSession(otherSessionID)
-    yield* s.admit("Run first")
-    yield* s.session.prompt({
-      sessionID: otherSessionID,
-      text: "Run second",
-      resume: false,
+  for (const foregroundOnly of [false, true]) {
+    const mode = foregroundOnly ? "on" : "off"
+    scenario(`runs different sessions concurrently with foreground-only mode ${mode}`, function* (s) {
+      s.foregroundOnly = foregroundOnly
+      yield* insertSession(otherSessionID)
+      yield* s.admit("Run first")
+      yield* s.session.prompt({
+        sessionID: otherSessionID,
+        text: "Run second",
+        resume: false,
+      })
+
+      const stream = yield* s.llm.gate()
+
+      const first = yield* s.resume.pipe(Effect.forkChild)
+      yield* stream.started
+      const second = yield* s.session.resume(otherSessionID).pipe(Effect.forkChild)
+      yield* stream.started
+
+      expect(s.requests).toHaveLength(2)
+      expect(s.requests.map((request) => request.promptCacheKey)).toEqual([sessionID, otherSessionID])
+      yield* stream.release
+      yield* Fiber.join(first)
+      yield* Fiber.join(second)
     })
+  }
 
-    const stream = yield* s.llm.gate()
+  scenario("waits for the parent's provider stream before starting a foreground-only child", function* (s) {
+    s.foregroundOnly = true
+    yield* insertSession(otherSessionID, sessionID)
+    yield* s.admit("Run parent")
+    yield* s.session.prompt({ sessionID: otherSessionID, text: "Run child", resume: false })
 
+    const parent = yield* s.llm.gate()
     const first = yield* s.resume.pipe(Effect.forkChild)
-    yield* stream.started
-    const second = yield* s.session.resume(otherSessionID).pipe(Effect.forkChild)
-    yield* stream.started
+    yield* parent.started
+    const child = yield* s.llm.gate()
+    const second = yield* s.session.resume(otherSessionID).pipe(Effect.forkChild({ startImmediately: true }))
+    yield* TestClock.adjust(1)
 
-    expect(s.requests).toHaveLength(2)
-    expect(s.requests.map((request) => request.promptCacheKey)).toEqual([sessionID, otherSessionID])
-    yield* stream.release
+    expect(s.requests).toHaveLength(1)
+    yield* parent.release
+    yield* child.started
+    expect(s.requests.map((request) => request.promptCacheKey)).toEqual([sessionID, sessionID])
+    yield* child.release
     yield* Fiber.join(first)
     yield* Fiber.join(second)
   })

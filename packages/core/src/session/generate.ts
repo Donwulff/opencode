@@ -12,6 +12,7 @@ import { SessionContext } from "./context.js"
 import { SessionEvent } from "./event.js"
 import type { AgentNotFoundError } from "./error.js"
 import { SessionHistory } from "./history.js"
+import { ModelInference } from "../model-inference.js"
 import { SessionModelRequest } from "./model-request.js"
 import { ModelRetry } from "../model-retry.js"
 import type { SessionRunnerModel } from "./runner/model.js"
@@ -70,7 +71,9 @@ export const generate = Effect.fn("SessionGenerate.generate")(function* (input: 
       providerID: model.ref.providerID,
       modelID: model.ref.id,
     })
-    const response = yield* llm.generate(prepared.request, prepared.options).pipe(ModelRetry.retry)
+    const response = yield* llm
+      .generate(prepared.request, prepared.options)
+      .pipe(ModelInference.serialize(model, prepared.request), ModelRetry.retry)
     const usage = SessionUsage.record(response.usage, model.cost)
     yield* bus.publish(SessionEvent.UsageRecorded, { sessionID: selection.session.id, source: "generate", ...usage })
     return { text: response.text, ...usage }

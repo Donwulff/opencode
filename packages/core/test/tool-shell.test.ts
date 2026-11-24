@@ -2485,6 +2485,70 @@ describe("ShellTool per-model background", () => {
     }),
   )
 
+  for (const mode of ["direct", "Code Mode"]) {
+    it.effect(`serializes concurrent foreground shell requests through ${mode}`, () =>
+      withTempDir((tmp) => {
+        reset()
+        return withSession(tmp.path, (registry) =>
+          Effect.gen(function* () {
+            yield* modelWithSettings({ shell: { background: false } })
+            const hooks = yield* PluginHooks.Service
+            const firstCommand = helloCommand.replace("hello", "first")
+            const secondCommand = helloCommand.replace("hello", "second")
+            const firstPreparing = yield* Deferred.make<void>()
+            const secondRequested = yield* Deferred.make<void>()
+            const secondPreparing = yield* Deferred.make<void>()
+            const release = yield* Deferred.make<void>()
+            let requested = 0
+            yield* hooks.register("tool", "execute.before", (event) =>
+              Effect.suspend(() =>
+                event.tool === "shell" && ++requested === 2
+                  ? Deferred.succeed(secondRequested, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+            )
+            yield* hooks.register("shell", "create.before", (event) => {
+              if (event.command === firstCommand)
+                return Deferred.succeed(firstPreparing, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              return Deferred.succeed(secondPreparing, undefined).pipe(Effect.asVoid)
+            })
+            const run = (command: string, id: string) => {
+              if (mode === "direct") return executeTool(registry, call({ command }, id))
+              return executeTool(registry, {
+                sessionID,
+                ...toolIdentity,
+                call: {
+                  type: "tool-call",
+                  id,
+                  name: "execute",
+                  input: { code: `return await tools.shell(${JSON.stringify({ command })})` },
+                },
+              })
+            }
+            if (mode === "Code Mode")
+              yield* registry.transform((editor) =>
+                editor.update("shell", (tool) => {
+                  tool.options = { ...tool.options, codemode: true }
+                }),
+              )
+
+            const first = yield* run(firstCommand, "call-serialized-first").pipe(Effect.forkChild)
+            yield* Deferred.await(firstPreparing)
+            const second = yield* run(secondCommand, "call-serialized-second").pipe(Effect.forkChild)
+            yield* Deferred.await(secondRequested)
+            yield* TestClock.adjust(1)
+            expect(yield* Deferred.isDone(secondPreparing)).toBe(false)
+
+            yield* Deferred.succeed(release, undefined)
+            expect((yield* Fiber.join(first)).status).toBe("completed")
+            expect((yield* Fiber.join(second)).status).toBe("completed")
+            expect(yield* Deferred.isDone(secondPreparing)).toBe(true)
+          }),
+        )
+      }),
+    )
+  }
+
   it.live("stops a backgrounded call when its timeout expires instead of moving it to the background", () =>
     withTempDir((tmp) => {
       reset()

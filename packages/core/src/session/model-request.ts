@@ -273,6 +273,7 @@ export const layer = Layer.effect(
     >(kind: SessionRequestKind, input: Input, shape: (draft: SessionRequest, tools: Definitions) => Effect.Effect<S>) {
       const session = input.session
       const model = input.model
+      const requestModel = { ref: model.ref, foregroundOnly: model.foregroundOnly }
       const scope = { sessionID: session.id, agent: input.agent, model: model.ref, kind }
       const tools = input.tools ?? {
         definitions: [],
@@ -303,7 +304,7 @@ export const layer = Layer.effect(
                 : {},
         },
         Object.fromEntries(Array.from(given, ([d, t]) => [t.name, d])),
-      )
+      ).pipe(Effect.provideService(Tool.RequestModel, requestModel))
       // Match by identity first, then by key. Entries matching neither were invented by a
       // hook and are dropped. `t.name` stays the real name so execution can map renames back.
       const byName = new Map(tools.definitions.map((t) => [t.name, t]))
@@ -438,7 +439,7 @@ export const layer = Layer.effect(
         // plugin tools do.
         executeTool: (call: Parameters<Prepared["executeTool"]>[0]) =>
           tools.execute({ ...call, definitions: hooked }).pipe(
-            Effect.provideService(Tool.RequestModel, model.ref),
+            Effect.provideService(Tool.RequestModel, requestModel),
             Effect.catchCauseFilter(
               (cause) => {
                 const decline = cause.reasons

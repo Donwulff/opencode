@@ -104,10 +104,10 @@ export interface NormalizedResult extends Tool.Result {
   readonly content: ReadonlyArray<Tool.Content>
 }
 
-/** The resolved catalog identity for a tool call issued by a model request. */
-export const RequestModel = Context.Reference<Model.Ref | undefined>("@opencode/Tool/RequestModel", {
-  defaultValue: () => undefined,
-})
+/** The effective model and policy for tools issued by a particular model request. */
+export const RequestModel = Context.Reference<
+  { readonly ref: Model.Ref; readonly foregroundOnly?: boolean } | undefined
+>("@opencode/Tool/RequestModel", { defaultValue: () => undefined })
 
 export interface Snapshot {
   readonly definitions: ReadonlyArray<ToolDefinition>
@@ -417,6 +417,7 @@ const layer = Layer.effect(
                   found
                     ? executeTool(found.registration, found.id, event.input, { ...ctx, codemode: true })
                     : executeTool(codemode.tool, name, event.input, ctx)
+                if ((yield* RequestModel)?.foregroundOnly) return yield* run(context)
                 const background = yield* CodeModeJob.Current
                 return yield* background
                   ? background(context, run, full && !found ? executeOptions(event.input) : undefined)

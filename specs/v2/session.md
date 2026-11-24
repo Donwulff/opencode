@@ -79,6 +79,24 @@ At drain start, orphan reconciliation fails tool calls still projected as stream
 
 After a local outcome, continuation reloads projected history and begins a new Step. The runner never delegates orchestration to an in-memory tool loop.
 
+## Foreground-only Model Execution
+
+A model or variant configured with `settings.shell.background: false` runs shell
+tool calls one at a time within a Session, including calls inside Code Mode.
+Code Mode scripts issued by that model also stay in the foreground.
+
+Within a server process, OpenCode queues requests that use this setting and share
+both a backend URL and a prompt cache key. For AI SDK routes without a configured
+URL, the provider ID identifies the backend. Sessions with independent cache keys
+can advance concurrently on the same backend. A child or fork that shares the
+source Session's cache key also shares its inference queue on that backend.
+
+The queue covers primary steps, compaction, title generation and session-scoped
+text generation. Stateless text generation uses fresh session attribution each
+time. Automatic titles and speculative compaction summaries are skipped for these
+models. Required or user-requested compaction still runs, and `/fork` can still
+copy a Session without starting inference.
+
 ## Retry Is Narrow And Observable
 
 Generic scheduled retry covers rate-limit and provider-internal failures, transport failures that are unsent or have unknown delivery, and provider output classified as an incomplete stream. The initial request plus at most four retries use jittered exponential backoff, increased when the provider supplies a longer retry delay.
