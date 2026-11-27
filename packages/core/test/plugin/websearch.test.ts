@@ -70,7 +70,10 @@ describe("built-in web search providers", () => {
         expect(requests).toEqual([])
       }),
     )
+  })
 
+  // Exa stands in for Parallel and Firecrawl, which share its WebSearchMcp request path.
+  ;[WebSearchExa.Plugin, WebSearchTavily.Plugin, WebSearchTinyFish.Plugin].forEach((plugin) => {
     it.effect(`releases rate-limited HTTP requests for ${plugin.id} before caching their errors`, () =>
       Effect.gen(function* () {
         resetWebSearchFixture("Rate limited", 429)

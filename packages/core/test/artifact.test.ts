@@ -57,6 +57,7 @@ const buildLayer = (artifactsEnabled: boolean, dir: string) => {
       Location.node,
       Permission.node,
       Session.node,
+      SessionInbox.node,
       SessionStore.node,
       Tool.node,
     ]),

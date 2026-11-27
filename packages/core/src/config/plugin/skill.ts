@@ -2,9 +2,11 @@ export * as ConfigSkillPlugin from "./skill.js"
 
 import { define } from "@opencode/plugin/effect/plugin"
 import type { Entry } from "@opencode/schema/config"
+import type { ConfigSecurity } from "@opencode/schema/config/security"
 import { FSUtil } from "@opencode/util/fs-util"
 import { Global } from "@opencode/util/global"
 import path from "path"
+import { isDeepStrictEqual } from "node:util"
 import { Effect, FiberMap, PubSub, Semaphore, Stream } from "effect"
 import { Config } from "../../config.js"
 import { Watcher } from "../../filesystem/watcher.js"
@@ -26,9 +28,10 @@ export const Plugin = define({
     const global = yield* Global.Service
     const location = yield* Location.Service
     const watcher = yield* Watcher.Service
-    const loaded: { entries: Entry[]; skills: Skill.Info[] } = {
-      entries: yield* config.entries(),
+    const loaded: { sources: Source[]; skills: Skill.Info[]; complete: boolean; security?: ConfigSecurity.Info } = {
+      sources: [],
       skills: [],
+      complete: false,
     }
     const watches = yield* FiberMap.make<string>()
     const changes = yield* PubSub.sliding<string>(1)
@@ -77,14 +80,14 @@ export const Plugin = define({
       return [target]
     })
 
-    const sources = () => {
+    function resolve(entries: Entry[]) {
       const result: Source[] = []
       const add = (source: Source) => {
         if (result.some((item) => Skill.Source.equals(item, source))) return
         result.push(source)
       }
-      const directories = loaded.entries.flatMap((entry) => (entry.type === "directory" ? [entry.path] : []))
-      const items = loaded.entries.flatMap((entry) => (entry.type === "document" ? (entry.info.skills ?? []) : []))
+      const directories = entries.flatMap((entry) => (entry.type === "directory" ? [entry.path] : []))
+      const items = entries.flatMap((entry) => (entry.type === "document" ? (entry.info.skills ?? []) : []))
       for (const directory of directories) {
         add(Skill.DirectorySource.make({ type: "directory", path: AbsolutePath.make(path.join(directory, "skill")) }))
         add(Skill.DirectorySource.make({ type: "directory", path: AbsolutePath.make(path.join(directory, "skills")) }))
@@ -109,7 +112,7 @@ export const Plugin = define({
       const directories =
         source.type === "directory"
           ? [source.path]
-          : yield* discovery.pull(source.url, Config.latest(loaded.entries, "security")).pipe(
+          : yield* discovery.pull(source.url, loaded.security).pipe(
               Effect.catchCause((cause) =>
                 Effect.logWarning("failed to load skill source", {
                   source: Skill.Source.key(source),
@@ -117,6 +120,8 @@ export const Plugin = define({
                 }).pipe(Effect.as([] as AbsolutePath[])),
               ),
             )
+      // A failed pull yields no directories, the same as an empty index.
+      if (source.type === "url" && directories.length === 0) loaded.complete = false
       const roots = (yield* Effect.forEach(directories, watchDirectory)).flat()
       const skills: Skill.Info[] = []
       for (const directory of directories) {
@@ -148,9 +153,25 @@ export const Plugin = define({
 
     const refresh = Effect.fn("ConfigSkillPlugin.refresh")(
       function* (file?: string) {
+        // Without a changed file the rescan comes from config. The same sources are already loaded and
+        // watched, so skip it unless the last rescan left a remote source unloaded.
+        if (!file) {
+          const entries = yield* config.entries()
+          const sources = resolve(entries)
+          const security = Config.latest(entries, "security")
+          if (
+            loaded.complete &&
+            isDeepStrictEqual(loaded.sources, sources) &&
+            isDeepStrictEqual(loaded.security, security)
+          )
+            return false
+          loaded.sources = sources
+          loaded.security = security
+        }
         yield* FiberMap.clear(watches)
+        loaded.complete = true
         const skills = new Map<Skill.ID, Skill.Info>()
-        const current = sources()
+        const current = loaded.sources
         for (const source of current) {
           for (const skill of yield* load(source)) skills.set(skill.id, skill)
         }
@@ -162,6 +183,7 @@ export const Plugin = define({
             skills: loaded.skills.map((skill) => skill.id),
           })
         }
+        return true
       },
       (effect, ..._args: [file?: string]) => lock.withPermit(effect),
     )
@@ -174,19 +196,16 @@ export const Plugin = define({
       Stream.runForEach((file) => refresh(file).pipe(Effect.andThen(ctx.skill.reload()))),
       Effect.forkScoped({ startImmediately: true }),
     )
+    // Subscribe before the first config read so an update in between still triggers a rescan.
+    yield* ctx.event.subscribe({ types: ["config.updated"] }).pipe(
+      Stream.runForEach(() =>
+        refresh().pipe(Effect.flatMap((rescanned) => (rescanned ? ctx.skill.reload() : Effect.void))),
+      ),
+      Effect.forkScoped({ startImmediately: true }),
+    )
     yield* refresh()
     yield* ctx.skill.transform((editor) => {
       for (const skill of loaded.skills) editor.add(skill)
     })
-    yield* ctx.event.subscribe({ types: ["config.updated"] }).pipe(
-      Stream.runForEach(() =>
-        config.entries().pipe(
-          Effect.tap((entries) => Effect.sync(() => (loaded.entries = entries))),
-          Effect.andThen(refresh()),
-          Effect.andThen(ctx.skill.reload()),
-        ),
-      ),
-      Effect.forkScoped({ startImmediately: true }),
-    )
   }),
 })

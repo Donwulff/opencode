@@ -1,17 +1,18 @@
 import { CrossSpawnSpawner } from "@opencode/util/cross-spawn-spawner"
 import { makeLocationNode } from "@opencode/util/effect/app-node"
 import { Global } from "@opencode/util/global"
-import { Context, Effect, Layer, PlatformError, Schema } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import { ChildProcessSpawner } from "effect/process"
 import { posix, type PlatformPath } from "node:path"
-import type { Driver } from "./driver.js"
-import { Failed, type Files } from "./files.js"
+import { type Driver, EnvironmentDriver } from "./driver.js"
+import type { Files } from "./files.js"
 import { makeFiles } from "./exec-defaults.js"
 import { makeLocalDriver } from "./local.js"
 import { EnvironmentUnavailable } from "./unavailable.js"
 import { Location } from "../location.js"
 import { AbsolutePath } from "../schema.js"
-import { Workspace } from "../workspace.js"
+import type { Workspace } from "@opencode/schema/workspace"
+import { WorkspaceConnector } from "./workspace-connector.js"
 
 // An environment's name: what a path will later use to say where it lives.
 export const ID = Schema.String.pipe(Schema.brand("Environment.ID"))
@@ -58,63 +59,50 @@ export interface Interface extends Options {
 export class Service extends Context.Service<Service, Interface>()("@opencode/Environment") {}
 
 export const make = (id: ID, driver: Driver, options?: Options): Interface => ({
+  ...driver.options,
   ...options,
   id,
+  // `local` is owned exclusively by the explicit `options` argument so a remote driver can never claim host privileges.
   local: options?.local === true,
   files: makeFiles(driver),
   spawner: driver.spawner,
 })
 
-/** The computer the server runs on. */
+/**
+ * The computer the server runs on. Runtimes without local execution (such as workerd) have neither local
+ * process spawning nor a local host filesystem, so they fall back to the unavailable spawner without node:fs.
+ */
 export const local = (spawner: ChildProcessSpawner.ChildProcessSpawner["Service"]) =>
-  make(
-    localID,
-    makeLocalDriver(spawner),
-    // Runtimes without local process execution (such as workerd) cannot host local commands or search.
-    spawner === EnvironmentUnavailable.spawner
-      ? {}
-      : { local: true, home: Effect.sync(() => Global.Path.home), rg: Effect.succeed("rg") },
-  )
+  spawner === EnvironmentUnavailable.spawner
+    ? make(localID, { spawner }, { path: posix })
+    : make(localID, makeLocalDriver(spawner), {
+        local: true,
+        home: Effect.sync(() => Global.Path.home),
+        rg: Effect.succeed("rg"),
+      })
 
 /** A workspace sandbox environment; runs ripgrep through its own spawner and uses POSIX path rules. */
 export const workspace = (id: Workspace.ID, driver: Driver) =>
-  make(ID.make(id), driver, { path: posix, rg: Effect.succeed("rg") })
+  make(ID.make(id), driver, {
+    path: posix,
+    rg: Effect.succeed("rg"),
+    ...driver.options,
+    local: false,
+  })
 
 /**
  * A total environment handle that fails every file and command operation loudly with `cause` instead of
  * silently falling back to the server host.
  */
-export const unavailable = (id: ID, cause: Error): Interface => {
-  const spawner = ChildProcessSpawner.make(() =>
-    Effect.fail(
-      PlatformError.systemError({
-        _tag: "Unknown",
-        module: "Environment",
-        method: "spawn",
-        description: cause.message,
-        cause,
-      }),
-    ),
-  )
-  const fail = (path: string) => Effect.fail(new Failed({ path, cause }))
-  return make(
+export const unavailable = (id: ID, cause: Error): Interface =>
+  make(
     id,
-    {
-      spawner,
-      overrides: {
-        read: (path) => fail(path),
-        write: (path) => fail(path),
-        stat: (path) => fail(path),
-        list: (path) => fail(path),
-        remove: (path) => fail(path),
-        move: (from) => fail(from),
-        mkdir: (path) => fail(path),
-        append: (path) => fail(path),
-      },
-    },
+    EnvironmentDriver.lazy(Effect.fail(cause), {
+      module: "Environment",
+      spawnDescription: cause.message,
+    }),
     { path: posix, shell: "sh" },
   )
-}
 
 /**
  * A session's own working directory, bound to its environment, provided by the runner around a step.
@@ -124,42 +112,30 @@ export const CurrentWorkingDirectory = Context.Reference<
   { readonly absolute: AbsolutePath; readonly environment: Interface } | undefined
 >("@opencode/Environment/CurrentWorkingDirectory", { defaultValue: () => undefined })
 
-/** The place of a path or a command that names no directory: the Location's directory, in its environment. */
-export const workingDirectory = Effect.gen(function* () {
+/** Build once inside a Location layer; resolves CurrentWorkingDirectory per call, falling back to the Location's default. */
+export const workingDirectoryResolver = Effect.gen(function* () {
   const location = yield* Location.Service
   const environment = yield* Service
-  return { absolute: location.directory, environment }
+  const fallback = { absolute: location.directory, environment }
+  return Effect.map(CurrentWorkingDirectory, (cwd) => cwd ?? fallback)
 })
-
-/** Build once inside a Location layer; resolves CurrentWorkingDirectory per call, falling back to the Location's default. */
-export const workingDirectoryResolver = Effect.map(workingDirectory, (fallback) =>
-  Effect.gen(function* () {
-    return (yield* CurrentWorkingDirectory) ?? fallback
-  }),
-)
 
 const layer = Layer.effect(
   Service,
   Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const location = yield* Location.Service
-    const workspaces = yield* Workspace.Service
+    const connector = yield* WorkspaceConnector.Service
     if (!location.workspaceID) return Service.of(local(spawner))
-    const driver = yield* workspaces.connect(location.workspaceID).pipe(
-      // Environment has no error channel; an unknown or destroyed placement is a configuration defect by design.
-      Effect.mapError(
-        (cause) => new Error(`Failed to bind Environment to workspace ${location.workspaceID}`, { cause }),
-      ),
-      Effect.orDie,
-    )
-    return Service.of(workspace(location.workspaceID, driver))
+    // An unknown or destroyed placement surfaces on each operation, not here.
+    return Service.of(workspace(location.workspaceID, yield* connector.connect(location.workspaceID)))
   }),
 )
 
 export const node = makeLocationNode({
   service: Service,
   layer,
-  deps: [CrossSpawnSpawner.node, Location.node, Workspace.node],
+  deps: [CrossSpawnSpawner.node, Location.node, WorkspaceConnector.node],
 })
 
 export * as EnvironmentService from "./environment.js"

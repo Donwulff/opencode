@@ -30,11 +30,11 @@ Paths below are relative to `packages/core/src` unless stated otherwise.
 | Image reference downloads | `tool/plugin/image-generate.ts` checks input image URLs before permission and download                                          | Initial URL only; redirects and image inference transport remain outside this gate.                                                                                                    |
 | Code Mode HTTP requests   | `codemode/fetch.ts` checks the latest Location URL policy before permissions and transport on the initial URL and every redirect | Arbitrary HTTP methods are supported.                                                                                                 |
 | Artifact tools            | `tool/plugin/artifact.ts` blocks create/update/delete during `/review` and `/learn`                                             | Requires `experimental.artifacts`; provider plugins can publish remotely and remain executable trust inputs.                                                                           |
-| Built-in web search       | Exa, Parallel, Firecrawl, Tavily, TinyFish, and Console-hosted search check their endpoint before sending queries               | Search snippets are not sanitized. Console search rejects redirects; other providers and third-party plugins need separate review.                                                     |
+| Built-in web search       | Exa, Parallel, Firecrawl, Tavily, TinyFish, and Console-hosted search check their endpoint before sending queries               | Console search checks redirect destinations and strips credentials across origins. Search snippets are not sanitized. Other providers and third-party plugins need separate redirect review. |
 | TinyFish authentication   | The URL check precedes credential use, MCP initialize, initialized notification, and search                                     | Preserve that order when merging handshake changes.                                                                                                                                    |
 | Remote instructions       | `config/plugin/instruction.ts` checks URLs and strips Unicode tag/zero-width characters before caching content                  | Config reload checks policy again. A denied URL loses its cached copy; an allowed URL with a failed fetch can retain the last good copy. Local instruction files remain trusted input. |
 | Remote skill discovery    | `config/plugin/skill.ts` passes effective security settings to `skill/discovery.ts`; the catalog and file downloads are checked | Skill paths are also checked for traversal and cross-origin references. Redirects remain a gap.                                                                                        |
-| Console Library           | `plugin/provider/opencode.ts` checks the latest URL policy before shared-cache reads and skill downloads, and sanitizes inline instructions | Skill downloads reject redirects. Instructions arrive in the Console config response, whose request remains outside the URL gate.                                                    |
+| Console Library           | `plugin/provider/opencode.ts` checks the initial URL and redirect origins for skill downloads, rechecks those origins on shared-cache hits, and sanitizes inline instructions | Instructions arrive in the Console config response, whose request remains outside the URL gate. |
 | Provider discovery        | `plugin/provider/autodiscover.ts` checks the model-list endpoint before requesting it                                           | Discovery protection is distinct from model inference transport.                                                                                                                       |
 | Provider availability     | `plugin/provider/restrict.ts` disables unconfigured providers when requested and checks provider `settings.baseURL`             | Providers without that setting, model-specific endpoint overrides, and arbitrary transport calls are not comprehensively covered. This is a registry filter, not a network firewall.   |
 | Model catalog refresh     | Config registers the `models-dev.ts` guard; it honors URL policy and `models_dev_enabled`                                       | The guard is process-global, installed by Location config; last registration wins. Startup before registration and multiple Locations are not a strong isolation boundary.             |
@@ -54,7 +54,8 @@ Both commands block image and video generation, artifact mutations, and automati
 mutations. Artifact and automation reads remain available.
 Patch resolution checks both source and move destination. `/learn` permits file
 edits only when the target basename is
-`AGENTS.md` and forbids subagents. Ordinary user input clears the command context.
+`AGENTS.md` and forbids subagents through both the subagent tool and Code Mode's `agent()`.
+Ordinary user input clears the command context.
 The October 26 merge to upstream `7359a48573` moves preparation and admission into
 one session Location scope and extends media-blob storage. The fork retains
 `command` at invocation, prompt-hook input, inbox admission, and delivery; stored
@@ -154,6 +155,11 @@ egress boundary. The voice and Console-search gates above check those specific
 setup/query paths; they do not retrofit every existing AI request. Console
 configuration polling and usage-limit reads are also direct HTTP paths outside
 these URL gates.
+
+Mobile push posts encrypted notifications to the built-in relay origins for
+registered devices. Registration validates the callback origin and path, and the
+sender does not follow redirects. This process-global service uses its relay
+allowlist independently of Location URL policy.
 
 The image tool's reference-download gate is separate from image inference. Its
 automatic model selection prefers the session provider, then falls back to another

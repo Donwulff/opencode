@@ -1,5 +1,5 @@
 import { isDeepStrictEqual } from "node:util"
-import { Duration, Effect, Equal, FiberHandle, Option, Schema, Scope, Semaphore, Stream } from "effect"
+import { Duration, Effect, Equal, FiberHandle, Option, Random, Schema, Scope, Semaphore, Stream } from "effect"
 import type { IntegrationOAuthMethodRegistration } from "@opencode/plugin/effect/integration"
 import { define } from "@opencode/plugin/effect/plugin"
 import type { SessionHttpResponse } from "@opencode/plugin/effect/session"
@@ -37,6 +37,8 @@ import { ProviderRefresh } from "./refresh.js"
 
 const clientID = "opencode-cli"
 const methodID = Integration.MethodID.make("device")
+const pollInterval = Duration.minutes(5)
+const pollJitter = Duration.minutes(1)
 const Device = Schema.Struct({
   device_code: Schema.String,
   user_code: Schema.String,
@@ -76,7 +78,11 @@ const SkillBundle = Schema.Struct({
   slug: Schema.String,
   files: Schema.Array(Schema.Struct({ path: Schema.String, content: Schema.String })),
 })
-type ConsoleSkill = { readonly skill: Skill.Info; readonly files: Record<string, string> }
+type ConsoleSkill = {
+  readonly skill: Skill.Info
+  readonly files: Record<string, string>
+  readonly redirectOrigins: readonly string[]
+}
 type ConsoleConfig = NonNullable<Effect.Success<ReturnType<typeof fetchConfig>>> & {
   readonly instructions: (typeof ConsoleInstructions.Type)["instructions"]
   readonly skills: (typeof ConsoleSkills.Type)["skills"]
@@ -225,7 +231,7 @@ export const OpencodePlugin = define<
     const artifacts = yield* OpencodeArtifacts.make(ctx, http)
 
     // Every project signed in to the same workspace shares one fetch, reused while it is younger than `maxAge`.
-    const load = Effect.fn("OpencodePlugin.load")(function* (maxAge: Duration.Input = Duration.minutes(1)) {
+    const load = Effect.fn("OpencodePlugin.load")(function* (maxAge: Duration.Input = pollInterval) {
       const connection = yield* ctx.integration.connection.active("opencode")
       if (!connection) {
         reported = undefined
@@ -412,15 +418,20 @@ export const OpencodePlugin = define<
             // Every project shares one download per skill. Any other version, or a failure, downloads again; a failed
             // download keeps the last copy that loaded.
             // Cached results and failed-load fallbacks must still pass this Location's policy.
-            return Security.assertUrl(
-              config,
-              `${server}/api/v2/skills/${encodeURIComponent(item.slug)}`,
-              "skill",
-            ).pipe(
+            return Security.assertUrl(config, `${server}/api/v2/skills/${encodeURIComponent(item.slug)}`, "skill").pipe(
               Effect.andThen(
                 cache.get(input).pipe(
                   Effect.filterOrFail((cached) => cached.version === item.version),
                   Effect.catch(() => cache.get({ ...input, force: true })),
+                  Effect.tap((cached) =>
+                    Effect.forEach(
+                      cached.skill.redirectOrigins,
+                      (origin) => Security.assertUrl(config, origin, "skill"),
+                      {
+                        discard: true,
+                      },
+                    ),
+                  ),
                   Effect.map((cached) => cached.skill),
                 ),
               ),
@@ -462,7 +473,9 @@ export const OpencodePlugin = define<
               providerID,
             }),
           )
-          const response = yield* follow(http, request).pipe(
+          const response = yield* follow(http, request, (origin) =>
+            Security.assertUrl(config, origin, "websearch"),
+          ).pipe(
             Effect.flatMap(HttpClientResponse.schemaBodyJson(WebSearch.Response)),
             Effect.scoped,
             Effect.timeoutOrElse({
@@ -585,12 +598,19 @@ export const OpencodePlugin = define<
     // Console config can change independently of local credential activity, so re-fetch
     // periodically and only rebuild the catalog and search providers when the snapshot differs.
     // Only while connected: a signed-out location runs no timer and no credential lookups.
+    // Additive jitter stays >= pollInterval so SharedCache never skips a wake-up as still fresh.
     const polling = yield* FiberHandle.make<void, never>()
+    const nextPoll = Effect.gen(function* () {
+      const jitter = yield* Random.nextIntBetween(0, Duration.toMillis(pollJitter))
+      return Duration.millis(Duration.toMillis(pollInterval) + jitter)
+    })
     const poll = Effect.fnUntraced(function* () {
       if (!snapshot.connection) return yield* FiberHandle.clear(polling)
-      yield* FiberHandle.run(polling, Effect.sleep(Duration.minutes(1)).pipe(Effect.andThen(check()), Effect.forever), {
-        onlyIfMissing: true,
-      })
+      yield* FiberHandle.run(
+        polling,
+        nextPoll.pipe(Effect.flatMap(Effect.sleep), Effect.andThen(check()), Effect.forever),
+        { onlyIfMissing: true },
+      )
     })
     yield* ProviderRefresh.onSwitch("opencode", refresh().pipe(Effect.andThen(poll())))
     yield* poll()
@@ -720,6 +740,7 @@ const CREDENTIAL_HEADERS = new Set(["authorization", "cookie", "proxy-authorizat
 function follow(
   http: HttpClient.HttpClient,
   request: HttpClientRequest.HttpClientRequest,
+  checkRedirect: (origin: string) => Effect.Effect<void, Error>,
   redirects = 0,
 ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError | Error, Scope.Scope> {
   // Scoped per hop so a caller's timeout or interruption aborts the request in flight.
@@ -737,7 +758,8 @@ function follow(
             Stream.runDrain,
             // The redirect's own body is irrelevant, so failing to read it must not fail the download.
             Effect.ignore,
-            Effect.andThen(follow(http, redirected(request, target, response.status), redirects + 1)),
+            Effect.andThen(checkRedirect(target.origin)),
+            Effect.andThen(follow(http, redirected(request, target, response.status), checkRedirect, redirects + 1)),
           ),
         )
       }),
@@ -750,6 +772,7 @@ function redirectTarget(request: HttpClientRequest.HttpClientRequest, location: 
       const target = new URL(location, request.url)
       if (target.protocol !== "http:" && target.protocol !== "https:")
         throw new Error(`redirect to unsupported protocol ${target.protocol}`)
+      if (target.username || target.password) throw new Error("redirect URL contains credentials")
       return target
     },
     catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
@@ -783,12 +806,15 @@ function downloadSkill(
     if (!SkillDiscovery.isSafeSegment(slug)) return yield* Effect.fail(new Error(`unsafe skill slug: ${slug}`))
     const url = `${server}/api/v2/skills/${encodeURIComponent(slug)}`
     yield* Security.assertUrl(config, url, "skill")
+    // The policy matches hosts. Retain origins so the cache and audit log never need the presigned URL.
+    const redirectOrigins = new Set<string>()
     const bundle = yield* follow(
       http,
-      HttpClientRequest.get(url).pipe(
-        HttpClientRequest.acceptJson,
-        HttpClientRequest.setHeaders(headers),
-      ),
+      HttpClientRequest.get(url).pipe(HttpClientRequest.acceptJson, HttpClientRequest.setHeaders(headers)),
+      (origin) =>
+        Security.assertUrl(config, origin, "skill").pipe(
+          Effect.tap(() => Effect.sync(() => redirectOrigins.add(origin))),
+        ),
     ).pipe(Effect.flatMap(HttpClientResponse.schemaBodyJson(SkillBundle)), Effect.scoped, Effect.timeout("30 seconds"))
     if (bundle.slug !== slug) return yield* Effect.fail(new Error(`expected skill ${slug}, received ${bundle.slug}`))
     const unsafe = bundle.files.find((file) => !SkillDiscovery.isSafeRelativePath(file.path))
@@ -802,6 +828,7 @@ function downloadSkill(
       files: Object.fromEntries(
         bundle.files.filter((file) => file.path !== "SKILL.md").map((file) => [file.path, file.content]),
       ),
+      redirectOrigins: [...redirectOrigins],
     } satisfies ConsoleSkill
   })
 }

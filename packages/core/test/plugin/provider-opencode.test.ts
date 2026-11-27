@@ -4,7 +4,7 @@ import { LLMClient, RequestExecutor } from "@opencode/ai/route"
 import { Document, Event, Info } from "@opencode/schema/config"
 import { ConfigPolicy } from "@opencode/schema/config/policy"
 import { Money } from "@opencode/schema/money"
-import { Effect, Fiber, Layer, Schema, Stream } from "effect"
+import { Effect, Fiber, Layer, Random, Schema, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Agent } from "@opencode/core/agent"
@@ -699,6 +699,78 @@ describe("OpencodePlugin", () => {
     ),
   )
 
+  it.live("offers only the voice and transcription models Console's config leaves on, at the URLs it gives them", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() =>
+        Bun.serve({
+          port: 0,
+          fetch: (request) => {
+            const origin = new URL(request.url).origin
+            return Response.json({
+              providers: {
+                opencode: {
+                  models: {
+                    "gpt-live-1": { disabled: true },
+                    "gpt-live-1.1": {
+                      type: "realtime",
+                      name: "GPT-Live 1.1",
+                      settings: { baseURL: `${origin}/inference/openai/v1` },
+                    },
+                    "gpt-transcribe": {
+                      type: "transcription",
+                      name: "GPT-Transcribe",
+                      package: "@opencode/ai/protocols/openai-transcription",
+                      settings: { baseURL: `${origin}/inference/openai/v1` },
+                    },
+                  },
+                },
+              },
+            })
+          },
+        }),
+      ),
+      (server) =>
+        Effect.gen(function* () {
+          const credentials = yield* Credential.Service
+          const providers = yield* Provider.Service
+          const models = yield* Model.Service
+          // The models.dev catalog lists both voice models, at production's inference.
+          yield* providers.transform((editor) => {
+            editor.update(Provider.ID.opencode, (provider) => {
+              provider.package = "@opencode/ai/providers/openai-compatible"
+            })
+            for (const id of ["gpt-live-1", "gpt-live-1.1"])
+              editor.models.update(Provider.ID.opencode, Model.ID.make(id), (model) => {
+                model.type = "realtime"
+                model.settings = { baseURL: "https://opencode.ai/inference/openai/v1" }
+              })
+          })
+          yield* credentials.create({
+            integrationID: Integration.ID.make("opencode"),
+            value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: server.url.origin } }),
+          })
+
+          yield* addPlugin()
+
+          const offered = (type: Model.Type) =>
+            models
+              .available([type])
+              .pipe(
+                Effect.map((list) =>
+                  list
+                    .filter((model) => model.providerID === "opencode")
+                    .map((model) => [model.id, model.settings?.baseURL]),
+                ),
+              )
+          expect(yield* offered("realtime")).toEqual([["gpt-live-1.1", `${server.url.origin}/inference/openai/v1`]])
+          expect(yield* offered("transcription")).toEqual([
+            ["gpt-transcribe", `${server.url.origin}/inference/openai/v1`],
+          ])
+        }),
+      (server) => Effect.promise(() => server.stop(true)),
+    ),
+  )
+
   it.effect("refreshes hosted search with Console config, retains it on failure, and skips unchanged snapshots", () =>
     Effect.acquireUseRelease(
       Effect.sync(() => {
@@ -740,26 +812,28 @@ describe("OpencodePlugin", () => {
           expect(yield* websearch.providers()).toEqual([])
 
           state.advertised = true
-          yield* TestClock.adjust("50 seconds")
+          yield* TestClock.adjust("4 minutes")
           yield* drain
           expect(state.requests).toBe(1)
           expect(rebuilds).toEqual(initial)
           expect(yield* websearch.providers()).toEqual([])
 
-          yield* TestClock.adjust("10 seconds")
+          yield* TestClock.adjust("2 minutes")
           yield* drain
           expect(state.requests).toBe(2)
           expect(rebuilds).toEqual({ provider: initial.provider + 1, websearch: initial.websearch + 1 })
           expect(yield* websearch.providers()).toContainEqual(consoleSearch)
 
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(state.requests).toBe(3)
           expect(rebuilds).toEqual({ provider: initial.provider + 1, websearch: initial.websearch + 1 })
           expect(yield* websearch.providers()).toContainEqual(consoleSearch)
 
           state.failing = true
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
+          yield* drain
+          yield* TestClock.adjust("10 seconds")
           yield* drain
           // The failed fetch and its 3 retries.
           expect(state.requests).toBe(7)
@@ -768,7 +842,7 @@ describe("OpencodePlugin", () => {
 
           state.failing = false
           state.advertised = false
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(state.requests).toBe(8)
           expect(rebuilds).toEqual({ provider: initial.provider + 2, websearch: initial.websearch + 2 })
@@ -816,25 +890,25 @@ describe("OpencodePlugin", () => {
             {},
           ]) {
             state.policies = [env, malformed]
-            yield* TestClock.adjust("1 minute")
+            yield* TestClock.adjust("6 minutes")
             yield* drain
             expect(yield* consolePolicies(config)).toEqual([sudo])
             expect(yield* providers.get(Provider.ID.opencode)).toBeDefined()
           }
 
           state.policies = [env, { action: "tool.use", resource: "shell:*", effect: "future-effect" }]
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(yield* consolePolicies(config)).toEqual([env])
 
           state.policies = [{ action: "future.use", future: { values: [true] } }]
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(yield* consolePolicies(config)).toEqual([])
           expect(yield* providers.get(Provider.ID.opencode)).toBeDefined()
 
           state.policies = [{ action: "future.use", effect: { next: true } }, env]
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(yield* consolePolicies(config)).toEqual([env])
         }),
@@ -885,14 +959,14 @@ describe("OpencodePlugin", () => {
           expect(yield* status()).toBeUndefined()
 
           state.sso = true
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           const url = `${server.url.origin}/console/auth/sso/ssoconn%2F1/start?redirectTo=%2Fconsole%2F`
           expect(yield* status()).toEqual({ status: "needs_auth", message: "Sign in with SSO again to use Acme", url })
           expect(yield* consolePolicies(config)).toEqual([sudo])
 
           state.sso = false
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(yield* status()).toBeUndefined()
           expect(yield* consolePolicies(config)).toEqual([sudo])
@@ -1016,7 +1090,7 @@ describe("OpencodePlugin", () => {
             () => Response.json({ _tag: "Forbidden", orgId: "org", connectionId: "ssoconn" }, { status: 403 }),
           ]) {
             state.body = body()
-            yield* TestClock.adjust("1 minute")
+            yield* TestClock.adjust("6 minutes")
             yield* drain
             expect((yield* integrations.get(Integration.ID.make("opencode")))?.connections[0]?.status).toBeUndefined()
             expect(yield* consolePolicies(config)).toEqual([sudo])
@@ -1042,7 +1116,7 @@ describe("OpencodePlugin", () => {
       yield* addPlugin().pipe(Effect.provideService(HttpClient.HttpClient, http))
       yield* drain
       state.status = 503
-      yield* TestClock.adjust("1 minute")
+      yield* TestClock.adjust("6 minutes")
       yield* drain
       yield* TestClock.adjust("10 seconds")
       yield* drain
@@ -1178,13 +1252,47 @@ describe("OpencodePlugin", () => {
           expect((yield* credentials.get(credential.id))?.value).toMatchObject({ access: "revoked" })
 
           state.revoked = false
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(yield* status()).toBeUndefined()
           expect(state.refreshes).toBe(0)
         }),
       ({ server }) => Effect.promise(() => server.stop(true)),
     ),
+  )
+
+  it.effect("adds 0-1 minute jitter on top of the 5-minute Console config poll interval", () =>
+    Effect.gen(function* () {
+      const credentials = yield* Credential.Service
+      const state = { requests: 0 }
+      const server = {
+        fetch: (request: Request) => {
+          if (new URL(request.url).pathname !== "/api/v2/config") return new Response(null, { status: 404 })
+          state.requests++
+          return Response.json({ providers: {} })
+        },
+      }
+      yield* credentials.create({
+        integrationID: Integration.ID.make("opencode"),
+        value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: "https://console.test" } }),
+      })
+      yield* addPlugin().pipe(
+        inProcess(server),
+        Effect.provideService(Random.Random, { nextIntUnsafe: () => 0, nextDoubleUnsafe: () => 0.5 }),
+      )
+      yield* drain
+      expect(state.requests).toBe(1)
+
+      // 5 minutes + drain is still before 5m30s (base 5m + 30s jitter).
+      yield* TestClock.adjust("5 minutes")
+      yield* drain
+      expect(state.requests).toBe(1)
+
+      // Crossing 5m30s triggers the jittered poll and refreshes SharedCache.
+      yield* TestClock.adjust("30 seconds")
+      yield* drain
+      expect(state.requests).toBe(2)
+    }),
   )
 
   it.live("loads and executes hosted web search from the connected OpenCode server", () =>
@@ -1362,21 +1470,21 @@ describe("OpencodePlugin", () => {
       const discovery = yield* InstructionDiscovery.Service
       const skills = yield* Skill.Service
       const requests: string[] = []
-      const state = { version: 1 }
-      const policy = (allowed: boolean) =>
+      const state = { version: 1, instructions: "follow\u200B this\u{E0001} guide" }
+      const policy = (external_domains: readonly string[]) =>
         config.setEntries([
           new Document({
             type: "document",
             info: new Info({
               security: {
                 mode: "strict",
-                external_domains: allowed ? ["opencode.ai"] : [],
+                external_domains,
                 audit_log_enabled: false,
               },
             }),
           }),
         ])
-      yield* policy(true)
+      yield* policy(["opencode.ai", "storage.example"])
       yield* credentials.create({
         integrationID: Integration.ID.make("opencode"),
         value: Credential.Key.make({ type: "key", key: "secret" }),
@@ -1386,17 +1494,21 @@ describe("OpencodePlugin", () => {
           HttpClient.HttpClient,
           HttpClient.make((request) => {
             requests.push(request.url)
-            expect(request.headers.authorization).toBe("Bearer secret")
-            const response =
-              request.url.endsWith("/api/v2/config")
-                ? new Response(JSON.stringify({ providers: {} }), {
-                    status: 200,
-                    headers: { "content-type": "application/json", "x-opencode-instructions-skills": "1" },
-                  })
-                : request.url.endsWith("/api/v2/instructions")
-                  ? Response.json({ instructions: [{ id: "guide", content: "follow\u200B this\u{E0001} guide" }] })
-                  : request.url.endsWith("/api/v2/skills")
-                    ? Response.json({ skills: [{ slug: "guide", version: String(state.version) }] })
+            expect(Object.hasOwn(request.headers, "authorization")).toBe(
+              !request.url.startsWith("https://storage.example/"),
+            )
+            if (request.headers.authorization) expect(request.headers.authorization).toBe("Bearer secret")
+            const response = request.url.endsWith("/api/v2/config")
+              ? new Response(JSON.stringify({ providers: {} }), {
+                  status: 200,
+                  headers: { "content-type": "application/json", "x-opencode-instructions-skills": "1" },
+                })
+              : request.url.endsWith("/api/v2/instructions")
+                ? Response.json({ instructions: [{ id: "guide", content: state.instructions }] })
+                : request.url.endsWith("/api/v2/skills")
+                  ? Response.json({ skills: [{ slug: "guide", version: String(state.version) }] })
+                  : request.url.endsWith("/api/v2/skills/guide")
+                    ? Response.redirect("https://storage.example/guide.json", 302)
                     : Response.json({
                         slug: "guide",
                         files: [
@@ -1416,36 +1528,60 @@ describe("OpencodePlugin", () => {
         new InstructionDiscovery.File({ path: "OpenCode Console instruction guide", content: "follow this guide" }),
       ])
       expect((yield* skills.get(Skill.ID.make("guide")))?.path).toBe(AbsolutePath.make("skill://guide/SKILL.md"))
-      expect(yield* skills.files(Skill.ID.make("guide"))).toEqual(new Map([["reference.md", "Reference text"]]))
+      expect((yield* skills.files(Skill.ID.make("guide")))?.map(String)).toEqual(["reference.md"])
       expect(requests).toEqual([
         "https://opencode.ai/console/api/v2/config",
         "https://opencode.ai/console/api/v2/instructions",
         "https://opencode.ai/console/api/v2/skills",
         "https://opencode.ai/console/api/v2/skills/guide",
+        "https://storage.example/guide.json",
       ])
 
-      yield* policy(false)
-      state.version++
-      yield* TestClock.adjust("1 minute")
+      yield* policy(["opencode.ai"])
+      // Change the Console snapshot without changing the skill version, so it attempts to reuse the cached bundle.
+      state.instructions = "Updated guide"
+      yield* TestClock.adjust("6 minutes")
       yield* drain
       expect(yield* skills.get(Skill.ID.make("guide"))).toBeUndefined()
-      expect(yield* skills.files(Skill.ID.make("guide"))).toBeUndefined()
-      expect(requests.slice(4)).toEqual([
+      expect(requests.slice(5)).toEqual([
         "https://opencode.ai/console/api/v2/config",
         "https://opencode.ai/console/api/v2/instructions",
         "https://opencode.ai/console/api/v2/skills",
       ])
 
-      yield* policy(true)
       state.version++
-      yield* TestClock.adjust("1 minute")
+      yield* TestClock.adjust("6 minutes")
       yield* drain
-      expect((yield* skills.get(Skill.ID.make("guide")))?.path).toBe(AbsolutePath.make("skill://guide/SKILL.md"))
-      expect(requests.slice(7)).toEqual([
+      expect(yield* skills.get(Skill.ID.make("guide"))).toBeUndefined()
+      expect(yield* skills.files(Skill.ID.make("guide"))).toBeUndefined()
+      expect(requests.slice(8)).toEqual([
         "https://opencode.ai/console/api/v2/config",
         "https://opencode.ai/console/api/v2/instructions",
         "https://opencode.ai/console/api/v2/skills",
         "https://opencode.ai/console/api/v2/skills/guide",
+      ])
+
+      yield* policy([])
+      state.version++
+      yield* TestClock.adjust("6 minutes")
+      yield* drain
+      expect(requests.slice(12)).toEqual([
+        "https://opencode.ai/console/api/v2/config",
+        "https://opencode.ai/console/api/v2/instructions",
+        "https://opencode.ai/console/api/v2/skills",
+      ])
+
+      yield* policy(["opencode.ai", "storage.example"])
+      state.version++
+      yield* TestClock.adjust("6 minutes")
+      yield* drain
+      expect((yield* skills.get(Skill.ID.make("guide")))?.path).toBe(AbsolutePath.make("skill://guide/SKILL.md"))
+      expect(requests.slice(15)).toEqual([
+        "https://opencode.ai/console/api/v2/config",
+        "https://opencode.ai/console/api/v2/instructions",
+        "https://opencode.ai/console/api/v2/skills",
+        "https://opencode.ai/console/api/v2/skills/guide",
+        "https://storage.example/guide.json",
       ])
     }),
   )
@@ -1787,13 +1923,13 @@ describe("OpencodePlugin", () => {
 
       // The config is unchanged, so config keeps the Console document it already holds.
       state.instruction = "Use spaces."
-      yield* TestClock.adjust("1 minute")
+      yield* TestClock.adjust("6 minutes")
       yield* drain
       expect(yield* loaded).toEqual({ instructions: ["Use spaces."], skill: "Deploys the service." })
 
       // A Console error keeps both, through the retries.
       state.lists = 503
-      yield* TestClock.adjust("1 minute")
+      yield* TestClock.adjust("6 minutes")
       yield* drain
       yield* TestClock.adjust("10 seconds")
       yield* drain
@@ -1801,63 +1937,64 @@ describe("OpencodePlugin", () => {
 
       // A 404 means the workspace has none.
       state.lists = 404
-      yield* TestClock.adjust("1 minute")
+      yield* TestClock.adjust("6 minutes")
       yield* drain
       expect(yield* loaded).toEqual({ instructions: [], skill: undefined })
     }),
   )
 
-  it.effect("applies Console policies while its instructions and skills fail, and keeps a list over a malformed one", () =>
-    Effect.gen(function* () {
-      const credentials = yield* Credential.Service
-      const config = yield* Config.Service
-      const discovery = yield* InstructionDiscovery.Service
-      const sudo: ConfigPolicy.Info = { action: "tool.use", resource: "shell:sudo *", effect: "deny" }
-      const state: { lists: "down" | "ok" | "malformed" } = { lists: "down" }
-      const server = {
-        fetch: (request: Request) => {
-          const path = new URL(request.url).pathname
-          if (path === "/api/v2/config")
-            return Response.json({ providers: {}, policies: [sudo] }, withLists)
-          if (path !== "/api/v2/instructions" && path !== "/api/v2/skills") return new Response(null, { status: 404 })
-          if (state.lists === "down") return new Response("Unavailable", { status: 503 })
-          if (path === "/api/v2/skills") return Response.json({ skills: [] })
-          if (state.lists === "malformed") return Response.json({ instructions: [{ id: "style" }] })
-          return Response.json({ instructions: [{ id: "style", content: "Use tabs." }] })
-        },
-      }
-      const instructions = discovery
-        .list()
-        .pipe(
-          Effect.map((files) =>
-            Array.isArray(files)
-              ? files.filter((file) => file.path.startsWith("OpenCode Console")).map((file) => file.content)
-              : [],
-          ),
-        )
-      yield* credentials.create({
-        integrationID: Integration.ID.make("opencode"),
-        value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: "https://console.test" } }),
-      })
+  it.effect(
+    "applies Console policies while its instructions and skills fail, and keeps a list over a malformed one",
+    () =>
+      Effect.gen(function* () {
+        const credentials = yield* Credential.Service
+        const config = yield* Config.Service
+        const discovery = yield* InstructionDiscovery.Service
+        const sudo: ConfigPolicy.Info = { action: "tool.use", resource: "shell:sudo *", effect: "deny" }
+        const state: { lists: "down" | "ok" | "malformed" } = { lists: "down" }
+        const server = {
+          fetch: (request: Request) => {
+            const path = new URL(request.url).pathname
+            if (path === "/api/v2/config") return Response.json({ providers: {}, policies: [sudo] }, withLists)
+            if (path !== "/api/v2/instructions" && path !== "/api/v2/skills") return new Response(null, { status: 404 })
+            if (state.lists === "down") return new Response("Unavailable", { status: 503 })
+            if (path === "/api/v2/skills") return Response.json({ skills: [] })
+            if (state.lists === "malformed") return Response.json({ instructions: [{ id: "style" }] })
+            return Response.json({ instructions: [{ id: "style", content: "Use tabs." }] })
+          },
+        }
+        const instructions = discovery
+          .list()
+          .pipe(
+            Effect.map((files) =>
+              Array.isArray(files)
+                ? files.filter((file) => file.path.startsWith("OpenCode Console")).map((file) => file.content)
+                : [],
+            ),
+          )
+        yield* credentials.create({
+          integrationID: Integration.ID.make("opencode"),
+          value: Credential.Key.make({ type: "key", key: "secret", metadata: { server: "https://console.test" } }),
+        })
 
-      // Once the lists' retries run out, startup still applies the config's policies, just without the lists.
-      const started = yield* addPlugin().pipe(inProcess(server), Effect.forkChild({ startImmediately: true }))
-      yield* TestClock.adjust("10 seconds")
-      yield* Fiber.join(started)
-      expect(yield* consolePolicies(config)).toEqual([sudo])
-      expect(yield* instructions).toEqual([])
+        // Once the lists' retries run out, startup still applies the config's policies, just without the lists.
+        const started = yield* addPlugin().pipe(inProcess(server), Effect.forkChild({ startImmediately: true }))
+        yield* TestClock.adjust("10 seconds")
+        yield* Fiber.join(started)
+        expect(yield* consolePolicies(config)).toEqual([sudo])
+        expect(yield* instructions).toEqual([])
 
-      state.lists = "ok"
-      yield* TestClock.adjust("1 minute")
-      yield* drain
-      expect(yield* instructions).toEqual(["Use tabs."])
+        state.lists = "ok"
+        yield* TestClock.adjust("6 minutes")
+        yield* drain
+        expect(yield* instructions).toEqual(["Use tabs."])
 
-      state.lists = "malformed"
-      yield* TestClock.adjust("1 minute")
-      yield* drain
-      expect(yield* instructions).toEqual(["Use tabs."])
-      expect(yield* consolePolicies(config)).toEqual([sudo])
-    }),
+        state.lists = "malformed"
+        yield* TestClock.adjust("6 minutes")
+        yield* drain
+        expect(yield* instructions).toEqual(["Use tabs."])
+        expect(yield* consolePolicies(config)).toEqual([sudo])
+      }),
   )
 
   it.effect("requests Console instructions and skills together", () =>
@@ -2570,7 +2707,7 @@ describe("OpencodePlugin with a Console config", () => {
           expect(yield* websearch.default()).toBeUndefined()
 
           state.selected = true
-          yield* TestClock.adjust("1 minute")
+          yield* TestClock.adjust("6 minutes")
           yield* drain
           expect(yield* announced(opencode)).toEqual(opencode)
           expect(yield* websearch.providers()).toContainEqual(opencode)
